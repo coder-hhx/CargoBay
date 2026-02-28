@@ -48,7 +48,7 @@ OrbStack is great, but it's **closed-source and macOS-only**. Docker Desktop is 
 | **Linux** | Planned | ❌ | ✅ | ✅ | ✅ |
 | **Docker management** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Linux VMs** | In Progress | ✅ | ❌ | ❌ | Indirect |
-| **Kubernetes** | Planned | ✅ | ✅ | ✅ | K3s |
+| **Kubernetes** | Planned | ✅ | ✅ | ✅ | ✅ (K3s) |
 | **Auto port forwarding** | Planned | ✅ | ✅ | ❌ | ✅ |
 | **VirtioFS file sharing** | In Progress | ✅ | ✅ | ❌ | ✅ |
 | **Tech stack** | Rust | Swift | Go + Electron | Electron + TS | Go |
