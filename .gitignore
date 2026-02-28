@@ -1,0 +1,20 @@
+# Build
+/target/
+/dist/
+
+# Dependencies
+/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+.env.*
+
+# Internal docs (never commit)
+/internal/

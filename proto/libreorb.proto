@@ -1,0 +1,101 @@
+syntax = "proto3";
+package libreorb;
+
+service VMService {
+  rpc CreateVM(CreateVMRequest) returns (CreateVMResponse);
+  rpc StartVM(StartVMRequest) returns (StartVMResponse);
+  rpc StopVM(StopVMRequest) returns (StopVMResponse);
+  rpc DeleteVM(DeleteVMRequest) returns (DeleteVMResponse);
+  rpc ListVMs(ListVMsRequest) returns (ListVMsResponse);
+  rpc GetVMStatus(GetVMStatusRequest) returns (GetVMStatusResponse);
+  rpc MountVirtioFS(MountVirtioFSRequest) returns (MountVirtioFSResponse);
+  rpc UnmountVirtioFS(UnmountVirtioFSRequest) returns (UnmountVirtioFSResponse);
+  rpc ListVirtioFSMounts(ListVirtioFSMountsRequest) returns (ListVirtioFSMountsResponse);
+}
+
+message CreateVMRequest {
+  string name = 1;
+  uint32 cpus = 2;
+  uint64 memory_mb = 3;
+  uint64 disk_gb = 4;
+  bool rosetta = 5;
+  repeated SharedDirectory shared_dirs = 6;
+}
+
+message CreateVMResponse {
+  string vm_id = 1;
+}
+
+message StartVMRequest {
+  string vm_id = 1;
+}
+
+message StartVMResponse {}
+
+message StopVMRequest {
+  string vm_id = 1;
+}
+
+message StopVMResponse {}
+
+message DeleteVMRequest {
+  string vm_id = 1;
+}
+
+message DeleteVMResponse {}
+
+message ListVMsRequest {}
+
+message ListVMsResponse {
+  repeated VMInfo vms = 1;
+}
+
+message GetVMStatusRequest {
+  string vm_id = 1;
+}
+
+message GetVMStatusResponse {
+  string vm_id = 1;
+  string status = 2;
+  bool rosetta_enabled = 3;
+  repeated SharedDirectory shared_dirs = 4;
+}
+
+message VMInfo {
+  string vm_id = 1;
+  string name = 2;
+  string status = 3;
+  uint32 cpus = 4;
+  uint64 memory_mb = 5;
+  bool rosetta_enabled = 6;
+  repeated SharedDirectory shared_dirs = 7;
+}
+
+message SharedDirectory {
+  string tag = 1;
+  string host_path = 2;
+  string guest_path = 3;
+  bool read_only = 4;
+}
+
+message MountVirtioFSRequest {
+  string vm_id = 1;
+  SharedDirectory share = 2;
+}
+
+message MountVirtioFSResponse {}
+
+message UnmountVirtioFSRequest {
+  string vm_id = 1;
+  string tag = 2;
+}
+
+message UnmountVirtioFSResponse {}
+
+message ListVirtioFSMountsRequest {
+  string vm_id = 1;
+}
+
+message ListVirtioFSMountsResponse {
+  repeated SharedDirectory mounts = 1;
+}

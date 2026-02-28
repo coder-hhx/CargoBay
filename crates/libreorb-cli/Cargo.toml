@@ -1,0 +1,16 @@
+[package]
+name = "libreorb-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for CargoBay"
+
+[[bin]]
+name = "cargobay"
+path = "src/main.rs"
+
+[dependencies]
+libreorb-core = { path = "../libreorb-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tonic = "0.12"
+bollard = "0.18"

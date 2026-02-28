@@ -1,0 +1,15 @@
+[package]
+name = "libreorb-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core library: hypervisor abstraction, VM management"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tonic = "0.12"
+prost = "0.13"
+thiserror = "2"
+tracing = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12"

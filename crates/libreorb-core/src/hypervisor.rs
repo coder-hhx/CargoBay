@@ -1,0 +1,101 @@
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum HypervisorError {
+    #[error("VM creation failed: {0}")]
+    CreateFailed(String),
+    #[error("VM not found: {0}")]
+    NotFound(String),
+    #[error("unsupported platform")]
+    Unsupported,
+    #[error("Rosetta not available: {0}")]
+    RosettaUnavailable(String),
+    #[error("VirtioFS error: {0}")]
+    VirtioFsError(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Unified hypervisor interface across platforms.
+pub trait Hypervisor: Send + Sync {
+    fn create_vm(&self, config: VmConfig) -> Result<String, HypervisorError>;
+    fn start_vm(&self, id: &str) -> Result<(), HypervisorError>;
+    fn stop_vm(&self, id: &str) -> Result<(), HypervisorError>;
+    fn delete_vm(&self, id: &str) -> Result<(), HypervisorError>;
+    fn list_vms(&self) -> Result<Vec<VmInfo>, HypervisorError>;
+
+    /// Check if Rosetta x86_64 translation is available on this platform.
+    fn rosetta_available(&self) -> bool { false }
+
+    /// Mount a host directory into the VM via VirtioFS.
+    fn mount_virtiofs(&self, _vm_id: &str, _share: &SharedDirectory) -> Result<(), HypervisorError> {
+        Err(HypervisorError::VirtioFsError("VirtioFS not supported on this platform".into()))
+    }
+
+    /// Unmount a VirtioFS share from the VM.
+    fn unmount_virtiofs(&self, _vm_id: &str, _tag: &str) -> Result<(), HypervisorError> {
+        Err(HypervisorError::VirtioFsError("VirtioFS not supported on this platform".into()))
+    }
+
+    /// List active VirtioFS mounts for a VM.
+    fn list_virtiofs_mounts(&self, _vm_id: &str) -> Result<Vec<SharedDirectory>, HypervisorError> {
+        Ok(vec![])
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VmConfig {
+    pub name: String,
+    pub cpus: u32,
+    pub memory_mb: u64,
+    pub disk_gb: u64,
+    /// Enable Rosetta x86_64 translation (macOS Apple Silicon only).
+    pub rosetta: bool,
+    /// Directories to share via VirtioFS.
+    pub shared_dirs: Vec<SharedDirectory>,
+}
+
+impl Default for VmConfig {
+    fn default() -> Self {
+        Self {
+            name: "default".into(),
+            cpus: 2,
+            memory_mb: 2048,
+            disk_gb: 20,
+            rosetta: false,
+            shared_dirs: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SharedDirectory {
+    /// Tag used to identify the mount inside the VM.
+    pub tag: String,
+    /// Host path to share.
+    pub host_path: String,
+    /// Guest mount point (e.g., /mnt/host).
+    pub guest_path: String,
+    /// Read-only mount.
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct VmInfo {
+    pub id: String,
+    pub name: String,
+    pub state: VmState,
+    pub cpus: u32,
+    pub memory_mb: u64,
+    /// Whether Rosetta x86_64 translation is enabled.
+    pub rosetta_enabled: bool,
+    /// Active VirtioFS mounts.
+    pub shared_dirs: Vec<SharedDirectory>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VmState {
+    Running,
+    Stopped,
+    Creating,
+}

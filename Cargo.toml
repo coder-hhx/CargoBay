@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/libreorb-cli",
+    "crates/libreorb-daemon",
+    "crates/libreorb-core",
+    "crates/libreorb-gui/src-tauri",
+]

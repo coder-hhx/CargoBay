@@ -1,0 +1,244 @@
+// Windows hypervisor: Hyper-V via Windows Hypervisor Platform (WHP) API.
+//
+// On Windows, we use the Windows Hypervisor Platform API for near-native VM performance.
+// This requires Windows 10 Pro/Enterprise/Education with Hyper-V enabled,
+// or Windows 11 with WSL2 integration.
+//
+// VirtioFS: Windows does not natively support VirtioFS. We use Plan 9 filesystem
+// protocol (9P) as a fallback for host-guest file sharing, or virtiofs-windows
+// (experimental) via a FUSE-based userspace driver.
+//
+// Rosetta: Not available on Windows. x86_64 emulation on ARM Windows uses
+// Windows' built-in x86 emulation layer.
+
+use crate::hypervisor::{Hypervisor, HypervisorError, SharedDirectory, VmConfig, VmInfo, VmState};
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// Windows hypervisor backed by Hyper-V / Windows Hypervisor Platform.
+pub struct WindowsHypervisor {
+    vms: Mutex<HashMap<String, VmEntry>>,
+    next_id: Mutex<u64>,
+}
+
+struct VmEntry {
+    info: VmInfo,
+    /// Plan 9 / VirtioFS share handles.
+    _share_handles: HashMap<String, u64>,
+}
+
+impl WindowsHypervisor {
+    pub fn new() -> Self {
+        Self {
+            vms: Mutex::new(HashMap::new()),
+            next_id: Mutex::new(1),
+        }
+    }
+
+    /// Check if Hyper-V / Windows Hypervisor Platform is available.
+    pub fn hyperv_available() -> bool {
+        // Check for WHvCapabilityCodeHypervisorPresent
+        // In real implementation, call WHvGetCapability from WinHvPlatform.dll
+        #[cfg(target_os = "windows")]
+        {
+            // Check if Hyper-V service is running
+            std::path::Path::new(r"C:\Windows\System32\vmcompute.exe").exists()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    }
+
+    /// Detect Docker socket on Windows.
+    /// Docker Desktop on Windows uses named pipe: //./pipe/docker_engine
+    pub fn detect_docker_socket() -> Option<String> {
+        let candidates = [
+            r"//./pipe/docker_engine".to_string(),
+            r"//./pipe/dockerDesktopLinuxEngine".to_string(),
+        ];
+
+        // On Windows, check if named pipes exist
+        for pipe in &candidates {
+            #[cfg(target_os = "windows")]
+            {
+                if std::path::Path::new(pipe).exists() {
+                    return Some(pipe.clone());
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = pipe;
+            }
+        }
+
+        // Fallback: check WSL2 Docker socket
+        #[cfg(target_os = "windows")]
+        {
+            let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
+            let wsl_sock = format!(r"{}\\.docker\run\docker.sock", userprofile);
+            if std::path::Path::new(&wsl_sock).exists() {
+                return Some(wsl_sock);
+            }
+        }
+
+        None
+    }
+}
+
+impl Hypervisor for WindowsHypervisor {
+    fn create_vm(&self, config: VmConfig) -> Result<String, HypervisorError> {
+        if !Self::hyperv_available() {
+            return Err(HypervisorError::CreateFailed(
+                "Hyper-V not available. Enable Hyper-V in Windows Features (requires Windows 10 Pro+ or Windows 11).".into(),
+            ));
+        }
+
+        if config.rosetta {
+            return Err(HypervisorError::RosettaUnavailable(
+                "Rosetta is only available on macOS Apple Silicon. Windows ARM uses its own x86 emulation.".into(),
+            ));
+        }
+
+        for dir in &config.shared_dirs {
+            if !std::path::Path::new(&dir.host_path).exists() {
+                return Err(HypervisorError::VirtioFsError(
+                    format!("Host path does not exist: {}", dir.host_path),
+                ));
+            }
+        }
+
+        let mut id_counter = self.next_id.lock().unwrap();
+        let id = format!("hv-{}", *id_counter);
+        *id_counter += 1;
+
+        let info = VmInfo {
+            id: id.clone(),
+            name: config.name,
+            state: VmState::Stopped,
+            cpus: config.cpus,
+            memory_mb: config.memory_mb,
+            rosetta_enabled: false,
+            shared_dirs: config.shared_dirs,
+        };
+
+        let entry = VmEntry {
+            info,
+            _share_handles: HashMap::new(),
+        };
+
+        self.vms.lock().unwrap().insert(id.clone(), entry);
+
+        // TODO: Real implementation using Windows Hypervisor Platform:
+        // 1. WHvCreatePartition()
+        // 2. WHvSetPartitionProperty() — set processor count, memory
+        // 3. WHvSetupPartition()
+        // 4. WHvMapGpaRange() — map memory
+        // 5. WHvCreateVirtualProcessor() — create vCPUs
+        // 6. Load kernel + initrd
+        // 7. Set up virtio devices (virtio-net, virtio-blk)
+        // 8. For file sharing: use Plan 9 / SMB pass-through
+        //    (native VirtioFS not yet supported on Windows host)
+
+        Ok(id)
+    }
+
+    fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
+        let mut vms = self.vms.lock().unwrap();
+        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+        entry.info.state = VmState::Running;
+
+        // TODO: Real implementation:
+        // 1. WHvRunVirtualProcessor() in separate threads per vCPU
+        // 2. Handle VM exits (I/O, MMIO, hypercalls)
+        // 3. Set up Plan 9 / SMB shares for file sharing
+        // 4. Optional: Start WSL2 integration for Docker compatibility
+
+        Ok(())
+    }
+
+    fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
+        let mut vms = self.vms.lock().unwrap();
+        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+        entry.info.state = VmState::Stopped;
+        entry._share_handles.clear();
+
+        // TODO: WHvCancelRunVirtualProcessor(), clean up
+
+        Ok(())
+    }
+
+    fn delete_vm(&self, id: &str) -> Result<(), HypervisorError> {
+        self.vms
+            .lock()
+            .unwrap()
+            .remove(id)
+            .ok_or(HypervisorError::NotFound(id.into()))?;
+
+        // TODO: WHvDeletePartition()
+
+        Ok(())
+    }
+
+    fn list_vms(&self) -> Result<Vec<VmInfo>, HypervisorError> {
+        Ok(self
+            .vms
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.info.clone())
+            .collect())
+    }
+
+    fn rosetta_available(&self) -> bool {
+        false // Rosetta is macOS-only
+    }
+
+    fn mount_virtiofs(
+        &self,
+        vm_id: &str,
+        share: &SharedDirectory,
+    ) -> Result<(), HypervisorError> {
+        if !std::path::Path::new(&share.host_path).exists() {
+            return Err(HypervisorError::VirtioFsError(format!(
+                "Host path does not exist: {}",
+                share.host_path
+            )));
+        }
+
+        let mut vms = self.vms.lock().unwrap();
+        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+
+        if entry.info.shared_dirs.iter().any(|d| d.tag == share.tag) {
+            return Err(HypervisorError::VirtioFsError(format!(
+                "Mount tag already exists: {}",
+                share.tag
+            )));
+        }
+
+        entry.info.shared_dirs.push(share.clone());
+
+        // TODO: On Windows, use Plan 9 protocol (9P) or SMB for file sharing.
+        // Native VirtioFS is not supported on Windows host yet.
+        // Fallback: net use \\<vm-ip>\share or Hyper-V integration services.
+
+        Ok(())
+    }
+
+    fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
+        let mut vms = self.vms.lock().unwrap();
+        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+        entry.info.shared_dirs.retain(|d| d.tag != tag);
+        entry._share_handles.remove(tag);
+        Ok(())
+    }
+
+    fn list_virtiofs_mounts(
+        &self,
+        vm_id: &str,
+    ) -> Result<Vec<SharedDirectory>, HypervisorError> {
+        let vms = self.vms.lock().unwrap();
+        let entry = vms.get(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+        Ok(entry.info.shared_dirs.clone())
+    }
+}
