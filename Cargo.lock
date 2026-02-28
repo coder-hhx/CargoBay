@@ -2101,18 +2101,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "libreorb-cli"
+name = "cargobay-cli"
 version = "0.1.0"
 dependencies = [
  "bollard",
  "clap",
- "libreorb-core",
+ "cargobay-core",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tonic",
 ]
 
 [[package]]
-name = "libreorb-core"
+name = "cargobay-core"
 version = "0.1.0"
 dependencies = [
  "prost",
@@ -2124,10 +2128,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "libreorb-daemon"
+name = "cargobay-daemon"
 version = "0.1.0"
 dependencies = [
- "libreorb-core",
+ "cargobay-core",
  "tokio",
  "tonic",
  "tracing",
@@ -2135,11 +2139,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "libreorb-gui"
+name = "cargobay-gui"
 version = "0.1.0"
 dependencies = [
  "bollard",
+ "futures-util",
  "log",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",

@@ -9,7 +9,7 @@ pub mod linux;
 pub mod windows;
 
 pub mod proto {
-    tonic::include_proto!("libreorb");
+    tonic::include_proto!("cargobay");
 }
 
 /// Create the platform-appropriate hypervisor implementation.

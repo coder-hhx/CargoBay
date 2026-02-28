@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/libreorb-cli",
-    "crates/libreorb-daemon",
-    "crates/libreorb-core",
-    "crates/libreorb-gui/src-tauri",
+    "crates/cargobay-cli",
+    "crates/cargobay-daemon",
+    "crates/cargobay-core",
+    "crates/cargobay-gui/src-tauri",
 ]

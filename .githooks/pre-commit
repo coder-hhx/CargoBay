@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+required_name="coder-hhx"
+required_email="houhaixu_email@163.com"
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+check_ident() {
+  local label="$1"
+  local var="$2"
+
+  local ident name email
+  ident="$(git var "$var")"
+  name="${ident%% <*}"
+  email="${ident#*<}"
+  email="${email%%>*}"
+
+  if [[ "$name" != "$required_name" || "$email" != "$required_email" ]]; then
+    echo "ERROR: $label identity must be: ${required_name} <${required_email}>"
+    echo "Found: ${name} <${email}>"
+    echo
+    echo "Fix with:"
+    echo "  git config --local user.name \"${required_name}\""
+    echo "  git config --local user.email \"${required_email}\""
+    exit 1
+  fi
+}
+
+check_ident "Author" "GIT_AUTHOR_IDENT"
+check_ident "Committer" "GIT_COMMITTER_IDENT"
+
+# Skip doc enforcement for merge/cherry-pick/revert commits.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  exit 0
+fi
+if git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null; then
+  exit 0
+fi
+if git rev-parse -q --verify REVERT_HEAD >/dev/null; then
+  exit 0
+fi
+
+required_docs=(
+  "README.md"
+  "README.zh.md"
+  "docs/TUTORIAL.md"
+  "docs/TUTORIAL.zh.md"
+  "CHANGELOG.md"
+  "CHANGELOG.zh.md"
+)
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR || true)"
+if [[ -z "${staged_files}" ]]; then
+  exit 0
+fi
+
+docs_staged=0
+for doc in "${required_docs[@]}"; do
+  if printf '%s\n' "$staged_files" | grep -Fqx "$doc"; then
+    docs_staged=1
+    break
+  fi
+done
+
+if [[ "$docs_staged" -ne 1 ]]; then
+  echo "ERROR: Before committing, stage an update to at least one of:"
+  for doc in "${required_docs[@]}"; do
+    echo "  - $doc"
+  done
+  exit 1
+fi
+
+# i18n (docs): if one language is updated, the other must be updated too.
+doc_pairs=(
+  "README.md:README.zh.md"
+  "docs/TUTORIAL.md:docs/TUTORIAL.zh.md"
+  "CHANGELOG.md:CHANGELOG.zh.md"
+)
+
+any_pair_ok=0
+for pair in "${doc_pairs[@]}"; do
+  a="${pair%%:*}"
+  b="${pair#*:}"
+
+  a_staged=0
+  b_staged=0
+  printf '%s\n' "$staged_files" | grep -Fqx "$a" && a_staged=1
+  printf '%s\n' "$staged_files" | grep -Fqx "$b" && b_staged=1
+
+  if [[ "$a_staged" -eq 1 || "$b_staged" -eq 1 ]]; then
+    if [[ "$a_staged" -ne 1 || "$b_staged" -ne 1 ]]; then
+      echo "ERROR: Docs i18n required. Stage both:"
+      echo "  - $a"
+      echo "  - $b"
+      exit 1
+    fi
+  fi
+
+  if [[ "$a_staged" -eq 1 && "$b_staged" -eq 1 ]]; then
+    any_pair_ok=1
+  fi
+done
+
+if [[ "$any_pair_ok" -ne 1 ]]; then
+  echo "ERROR: i18n required. Stage both language versions for at least one of:"
+  for pair in "${doc_pairs[@]}"; do
+    echo "  - ${pair%%:*} + ${pair#*:}"
+  done
+  exit 1
+fi
+
+# i18n (app): enforce that UI translations are complete and synced (en + zh only).
+i18n_file="crates/cargobay-gui/src/i18n/messages.ts"
+if [[ -f "$i18n_file" ]]; then
+  python_bin=""
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    if python -c "import sys; raise SystemExit(0 if sys.version_info[0] == 3 else 1)" >/dev/null 2>&1; then
+      python_bin="python"
+    else
+      echo "ERROR: python is not Python 3 (required for i18n checks)."
+      exit 1
+    fi
+  else
+    echo "ERROR: python3 is required for i18n checks (missing)."
+    exit 1
+  fi
+
+  staged_content="$(git show ":$i18n_file" 2>/dev/null || cat "$i18n_file")"
+  printf "%s" "$staged_content" | "$python_bin" -c '
+import re, sys
+
+s = sys.stdin.read()
+lines = s.splitlines()
+
+def extract_lang_keys(lang):
+    in_block = False
+    depth = 0
+    keys = []
+
+    for line in lines:
+        if not in_block:
+            if re.match(rf"^\s*{re.escape(lang)}\s*:\s*\{{", line):
+                in_block = True
+                depth += line.count("{") - line.count("}")
+            continue
+
+        stripped = line.lstrip()
+        if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
+            pass
+        else:
+            m = re.match(r"^\s*([A-Za-z0-9_]+)\s*:\s*", line)
+            if m:
+                keys.append(m.group(1))
+
+        depth += line.count("{") - line.count("}")
+        if depth <= 0:
+            break
+
+    return keys
+
+def top_level_langs():
+    langs = set()
+    in_messages = False
+    depth = 0
+    for line in lines:
+        if not in_messages:
+            if "export const messages" in line:
+                in_messages = True
+                depth += line.count("{") - line.count("}")
+            continue
+
+        if depth == 1:
+            m = re.match(r"^\s*([A-Za-z0-9_]+)\s*:\s*\{", line)
+            if m:
+                langs.add(m.group(1))
+
+        depth += line.count("{") - line.count("}")
+        if in_messages and depth <= 0:
+            break
+    return langs
+
+langs = top_level_langs()
+expected = {"en", "zh"}
+if langs != expected:
+    missing = sorted(expected - langs)
+    extra = sorted(langs - expected)
+    if missing:
+        print("ERROR: i18n: missing language blocks:", ", ".join(missing))
+    if extra:
+        print("ERROR: i18n: unsupported language blocks:", ", ".join(extra))
+    sys.exit(1)
+
+en_keys = extract_lang_keys("en")
+zh_keys = extract_lang_keys("zh")
+
+en_set = set(en_keys)
+zh_set = set(zh_keys)
+
+missing_in_zh = sorted(en_set - zh_set)
+missing_in_en = sorted(zh_set - en_set)
+
+if missing_in_zh or missing_in_en:
+    if missing_in_zh:
+        print("ERROR: i18n: missing zh keys:", ", ".join(missing_in_zh))
+    if missing_in_en:
+        print("ERROR: i18n: missing en keys:", ", ".join(missing_in_en))
+    sys.exit(1)
+
+sys.exit(0)
+'
+fi

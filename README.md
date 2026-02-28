@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="CargoBay" width="128" />
+  <img src="https://raw.githubusercontent.com/coder-hhx/CargoBay/master/assets/logo.png" alt="CargoBay" width="128" />
 </p>
 
 <h1 align="center">CargoBay</h1>
@@ -7,6 +7,11 @@
 <p align="center">
   <strong>Free, open-source alternative to OrbStack.</strong><br>
   Lightweight Linux VMs, Docker containers, and Kubernetes — all in one app.
+</p>
+
+<p align="center">
+  <strong>English</strong> ·
+  <a href="README.zh.md">中文</a>
 </p>
 
 <p align="center">
@@ -59,12 +64,21 @@ OrbStack is great, but it's **closed-source and macOS-only**. Docker Desktop is 
 |---------|-------|-------|---------|--------|
 | Docker container management | ✅ | ✅ | ✅ | Working |
 | Dashboard & GUI | ✅ | ✅ | ✅ | Working |
+| Image search (Docker Hub / Quay) | ✅ | ✅ | ✅ | Working |
+| Import / Push images (docker load/push) | ✅ | ✅ | ✅ | Working |
+| Package image from container (docker commit) | ✅ | ✅ | ✅ | Working |
 | Lightweight Linux VMs | ✅ Virtualization.framework | ✅ KVM | ✅ Hyper-V | In Progress |
 | Rosetta x86_64 translation | ✅ Apple Silicon | — | — | In Progress |
 | VirtioFS file sharing | ✅ | ✅ virtiofsd | ✅ Plan 9/SMB | In Progress |
 | CLI (VM + Docker + Mount) | ✅ | ✅ | ✅ | Working |
 | Dark/Light theme + i18n | ✅ | ✅ | ✅ | Working |
 | Kubernetes (K3s) | 📋 | 📋 | 📋 | Planned |
+
+## Platform Compatibility
+
+- **macOS**: Supports Apple Silicon (M-series) and Intel (x86_64). Rosetta x86_64 is available only on Apple Silicon with macOS 13+.
+- **Windows**: Targets Windows 10 and Windows 11. VM backend relies on Hyper-V (typically Pro/Enterprise/Education + Hyper-V enabled).
+- **Linux**: VM backend relies on KVM (`/dev/kvm` required).
 
 ## Tech Stack
 
@@ -89,6 +103,12 @@ cargo build --release
 
 # CLI usage
 cargobay status                              # Show platform info
+cargobay image search nginx --source all --limit 20
+cargobay image load ./image.tar
+cargobay image push ghcr.io/owner/image:tag
+cargobay docker run nginx:latest --name web --cpus 2 --memory 512 --pull
+cargobay image pack-container web myorg/web:snapshot
+cargobay docker login-cmd web
 cargobay docker ps                           # List containers
 cargobay vm create myvm --cpus 4 --memory 4096 --rosetta  # Create VM with Rosetta
 cargobay mount add --vm myvm --tag code --host-path ~/code --guest-path /mnt/code

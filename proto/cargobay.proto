@@ -1,5 +1,5 @@
 syntax = "proto3";
-package libreorb;
+package cargobay;
 
 service VMService {
   rpc CreateVM(CreateVMRequest) returns (CreateVMResponse);

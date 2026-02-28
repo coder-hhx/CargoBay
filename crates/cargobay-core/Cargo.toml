@@ -1,5 +1,5 @@
 [package]
-name = "libreorb-core"
+name = "cargobay-core"
 version = "0.1.0"
 edition = "2021"
 description = "Core library: hypervisor abstraction, VM management"

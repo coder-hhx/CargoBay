@@ -1,5 +1,5 @@
 [package]
-name = "libreorb-daemon"
+name = "cargobay-daemon"
 version = "0.1.0"
 edition = "2021"
 description = "CargoBay daemon: VM lifecycle, gRPC server"
@@ -9,7 +9,7 @@ name = "cargobay-daemon"
 path = "src/main.rs"
 
 [dependencies]
-libreorb-core = { path = "../libreorb-core" }
+cargobay-core = { path = "../cargobay-core" }
 tokio = { version = "1", features = ["full"] }
 tonic = "0.12"
 tracing = "0.1"

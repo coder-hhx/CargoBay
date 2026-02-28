@@ -1,0 +1,956 @@
+use bollard::Docker;
+use bollard::container::{
+    Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
+    StartContainerOptions, StopContainerOptions,
+};
+use bollard::image::CreateImageOptions;
+use bollard::service::HostConfig;
+use clap::{Parser, Subcommand};
+use futures_util::stream::TryStreamExt;
+use reqwest::header::WWW_AUTHENTICATE;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::path::Path;
+
+#[derive(Parser)]
+#[command(name = "cargobay", version = "0.1.0", about = "Free, open-source alternative to OrbStack")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// VM management commands
+    Vm {
+        #[command(subcommand)]
+        command: VmCommands,
+    },
+    /// Docker container management
+    Docker {
+        #[command(subcommand)]
+        command: DockerCommands,
+    },
+    /// Image management commands
+    Image {
+        #[command(subcommand)]
+        command: ImageCommands,
+    },
+    /// File sharing management (VirtioFS)
+    Mount {
+        #[command(subcommand)]
+        command: MountCommands,
+    },
+    /// Show system status and platform info
+    Status,
+}
+
+#[derive(Subcommand)]
+enum VmCommands {
+    /// Create a new VM
+    Create {
+        name: String,
+        #[arg(long, default_value = "2")]
+        cpus: u32,
+        #[arg(long, default_value = "2048")]
+        memory: u64,
+        #[arg(long, default_value = "20")]
+        disk: u64,
+        /// Enable Rosetta x86_64 translation (macOS Apple Silicon only)
+        #[arg(long)]
+        rosetta: bool,
+    },
+    /// Start a VM
+    Start { name: String },
+    /// Stop a VM
+    Stop { name: String },
+    /// Delete a VM
+    Delete { name: String },
+    /// List all VMs
+    List,
+    /// Print an SSH login command for a VM (requires an SSH endpoint)
+    LoginCmd {
+        name: String,
+        #[arg(long, default_value = "root")]
+        user: String,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// SSH port (required until VM networking/port-forwarding is implemented)
+        #[arg(long)]
+        port: Option<u16>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DockerCommands {
+    /// List containers
+    Ps,
+    /// Start a container
+    Start { id: String },
+    /// Stop a container
+    Stop { id: String },
+    /// Remove a container
+    Rm { id: String },
+    /// Run a new container from an image
+    Run {
+        image: String,
+        /// Optional container name
+        #[arg(long)]
+        name: Option<String>,
+        /// Limit CPU cores (e.g. 2)
+        #[arg(long)]
+        cpus: Option<u32>,
+        /// Limit memory in MB (e.g. 2048)
+        #[arg(long)]
+        memory: Option<u64>,
+        /// Pull image before creating the container
+        #[arg(long)]
+        pull: bool,
+    },
+    /// Print a shell login command for a container
+    LoginCmd {
+        container: String,
+        #[arg(long, default_value = "/bin/sh")]
+        shell: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ImageCommands {
+    /// Search images (Docker Hub / Quay) or list tags for a registry reference
+    Search {
+        query: String,
+        /// dockerhub | quay | all
+        #[arg(long, default_value = "all")]
+        source: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// List tags for an OCI image reference (e.g. ghcr.io/org/image)
+    Tags {
+        reference: String,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Load a local image archive into Docker (same as `docker load -i`)
+    Load { path: String },
+    /// Push an image to a registry (same as `docker push`)
+    Push { reference: String },
+    /// Package an image from an existing container (same as `docker commit`)
+    PackContainer { container: String, tag: String },
+}
+
+#[derive(Subcommand)]
+enum MountCommands {
+    /// Mount a host directory into a VM via VirtioFS
+    Add {
+        /// VM name or ID
+        #[arg(long)]
+        vm: String,
+        /// Tag for the mount
+        #[arg(long)]
+        tag: String,
+        /// Host path to share
+        #[arg(long)]
+        host_path: String,
+        /// Guest mount point
+        #[arg(long, default_value = "/mnt/host")]
+        guest_path: String,
+        /// Mount as read-only
+        #[arg(long)]
+        readonly: bool,
+    },
+    /// Unmount a VirtioFS share from a VM
+    Remove {
+        /// VM name or ID
+        #[arg(long)]
+        vm: String,
+        /// Tag of the mount to remove
+        #[arg(long)]
+        tag: String,
+    },
+    /// List VirtioFS mounts for a VM
+    List {
+        /// VM name or ID
+        #[arg(long)]
+        vm: String,
+    },
+}
+
+fn detect_docker_socket() -> Option<String> {
+    // Unix socket detection (macOS / Linux)
+    #[cfg(unix)]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let candidates = [
+            format!("{}/.colima/default/docker.sock", home),
+            format!("{}/.orbstack/run/docker.sock", home),
+            "/var/run/docker.sock".to_string(),
+            format!("{}/.docker/run/docker.sock", home),
+        ];
+        if let Some(sock) = candidates.into_iter().find(|p| Path::new(p).exists()) {
+            return Some(sock);
+        }
+    }
+
+    // Windows named pipe detection
+    #[cfg(windows)]
+    {
+        // Docker Desktop for Windows uses named pipes
+        let candidates = [
+            r"//./pipe/docker_engine",
+            r"//./pipe/dockerDesktopLinuxEngine",
+        ];
+        for pipe in &candidates {
+            if Path::new(pipe).exists() {
+                return Some(pipe.to_string());
+            }
+        }
+        // WSL2 Docker socket
+        let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
+        let wsl_sock = format!(r"{}\\.docker\run\docker.sock", userprofile);
+        if Path::new(&wsl_sock).exists() {
+            return Some(wsl_sock);
+        }
+    }
+
+    None
+}
+
+fn connect_docker() -> Result<Docker, String> {
+    // Check DOCKER_HOST env first
+    if std::env::var("DOCKER_HOST").is_ok() {
+        return Docker::connect_with_local_defaults()
+            .map_err(|e| format!("Failed to connect via DOCKER_HOST: {}", e));
+    }
+
+    #[cfg(unix)]
+    {
+        if let Some(sock) = detect_docker_socket() {
+            return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
+                .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
+        }
+        return Err("No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into());
+    }
+
+    #[cfg(windows)]
+    {
+        let candidates = [
+            r"//./pipe/docker_engine",
+            r"//./pipe/dockerDesktopLinuxEngine",
+        ];
+        for pipe in &candidates {
+            if let Ok(d) = Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION) {
+                return Ok(d);
+            }
+        }
+        return Err("No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into());
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        Docker::connect_with_local_defaults().map_err(|e| format!("Failed to connect to Docker: {}", e))
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Vm { command } => handle_vm(command),
+        Commands::Docker { command } => {
+            if let Err(e) = handle_docker(command).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Image { command } => {
+            if let Err(e) = handle_image(command).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Mount { command } => handle_mount(command),
+        Commands::Status => {
+            println!("CargoBay v0.1.0");
+            println!("Platform: {}", cargobay_core::platform_info());
+            let hv = cargobay_core::create_hypervisor();
+            println!("Rosetta x86_64: {}", if hv.rosetta_available() { "available" } else { "not available" });
+            match detect_docker_socket() {
+                Some(sock) => println!("Docker: connected ({})", sock),
+                None => println!("Docker: not found"),
+            }
+        }
+    }
+}
+
+fn handle_vm(cmd: VmCommands) {
+    let hv = cargobay_core::create_hypervisor();
+    match cmd {
+        VmCommands::Create { name, cpus, memory, disk, rosetta } => {
+            use cargobay_core::hypervisor::VmConfig;
+            let config = VmConfig {
+                name: name.clone(),
+                cpus,
+                memory_mb: memory,
+                disk_gb: disk,
+                rosetta,
+                shared_dirs: vec![],
+            };
+            match hv.create_vm(config) {
+                Ok(id) => {
+                    println!("Created VM '{}' (id: {})", name, id);
+                    if rosetta {
+                        println!("  Rosetta x86_64 translation: enabled");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        VmCommands::Start { name } => {
+            match hv.start_vm(&name) {
+                Ok(()) => println!("Started VM '{}'", name),
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+        VmCommands::Stop { name } => {
+            match hv.stop_vm(&name) {
+                Ok(()) => println!("Stopped VM '{}'", name),
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+        VmCommands::Delete { name } => {
+            match hv.delete_vm(&name) {
+                Ok(()) => println!("Deleted VM '{}'", name),
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+        VmCommands::List => {
+            match hv.list_vms() {
+                Ok(vms) => {
+                    if vms.is_empty() {
+                        println!("No VMs found.");
+                        return;
+                    }
+                    println!("{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}", "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA", "MOUNTS");
+                    for vm in vms {
+                        println!(
+                            "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}",
+                            vm.id,
+                            vm.name,
+                            format!("{:?}", vm.state),
+                            vm.cpus,
+                            format!("{}MB", vm.memory_mb),
+                            if vm.rosetta_enabled { "yes" } else { "no" },
+                            vm.shared_dirs.len(),
+                        );
+                    }
+                }
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+        VmCommands::LoginCmd { name, user, host, port } => {
+            let Some(port) = port else {
+                eprintln!("Error: VM login is not available yet. Specify an SSH port via --port.");
+                std::process::exit(1);
+            };
+            println!("ssh {}@{} -p {}", user, host, port);
+            println!("# VM: {}", name);
+        }
+    }
+}
+
+fn handle_mount(cmd: MountCommands) {
+    let hv = cargobay_core::create_hypervisor();
+    match cmd {
+        MountCommands::Add { vm, tag, host_path, guest_path, readonly } => {
+            use cargobay_core::hypervisor::SharedDirectory;
+            let share = SharedDirectory {
+                tag: tag.clone(),
+                host_path: host_path.clone(),
+                guest_path: guest_path.clone(),
+                read_only: readonly,
+            };
+            match hv.mount_virtiofs(&vm, &share) {
+                Ok(()) => {
+                    println!("Mounted '{}' → {} (tag: {}{})", host_path, guest_path, tag, if readonly { ", read-only" } else { "" });
+                }
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+        MountCommands::Remove { vm, tag } => {
+            match hv.unmount_virtiofs(&vm, &tag) {
+                Ok(()) => println!("Unmounted tag '{}'", tag),
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+        MountCommands::List { vm } => {
+            match hv.list_virtiofs_mounts(&vm) {
+                Ok(mounts) => {
+                    if mounts.is_empty() {
+                        println!("No VirtioFS mounts for VM '{}'.", vm);
+                        return;
+                    }
+                    println!("{:<16} {:<30} {:<20} {}", "TAG", "HOST PATH", "GUEST PATH", "MODE");
+                    for m in mounts {
+                        println!("{:<16} {:<30} {:<20} {}", m.tag, m.host_path, m.guest_path, if m.read_only { "ro" } else { "rw" });
+                    }
+                }
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ImageSearchItem {
+    source: &'static str,
+    reference: String,
+    description: String,
+    stars: Option<u64>,
+    pulls: Option<u64>,
+    official: bool,
+}
+
+#[derive(Deserialize)]
+struct DockerHubSearchResponse {
+    results: Vec<DockerHubRepo>,
+}
+
+#[derive(Deserialize)]
+struct DockerHubRepo {
+    name: String,
+    namespace: Option<String>,
+    description: Option<String>,
+    star_count: Option<u64>,
+    pull_count: Option<u64>,
+    is_official: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct RegistryTagsResponse {
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct RegistryTokenResponse {
+    token: Option<String>,
+    access_token: Option<String>,
+}
+
+async fn handle_image(cmd: ImageCommands) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .user_agent("CargoBay/0.1.0 (+https://github.com/coder-hhx/CargoBay)")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    match cmd {
+        ImageCommands::Search { query, source, limit } => {
+            if let Some((registry, repo)) = parse_registry_reference(&query) {
+                let tags = list_registry_tags(&client, &registry, &repo, limit).await?;
+                if tags.is_empty() {
+                    println!("No tags found for {}/{}.", registry, repo);
+                    return Ok(());
+                }
+                println!("Tags for {}/{}:", registry, repo);
+                for tag in tags {
+                    println!("{}/{}:{}", registry, repo, tag);
+                }
+                return Ok(());
+            }
+
+            let src = source.to_ascii_lowercase();
+            let mut items: Vec<ImageSearchItem> = Vec::new();
+            let mut did_any = false;
+
+            if matches!(src.as_str(), "all" | "dockerhub" | "hub" | "docker") {
+                did_any = true;
+                items.extend(search_dockerhub(&client, &query, limit).await?);
+            }
+            if matches!(src.as_str(), "all" | "quay") {
+                did_any = true;
+                items.extend(search_quay(&client, &query, limit).await?);
+            }
+
+            if !did_any {
+                return Err(format!("Unknown source: {}", source));
+            }
+
+            if items.is_empty() {
+                println!("No results.");
+                return Ok(());
+            }
+
+            print_image_search_results(&items);
+            Ok(())
+        }
+        ImageCommands::Tags { reference, limit } => {
+            let Some((registry, repo)) = parse_registry_reference(&reference) else {
+                return Err("Invalid reference. Expected e.g. ghcr.io/org/image".into());
+            };
+
+            let tags = list_registry_tags(&client, &registry, &repo, limit).await?;
+            if tags.is_empty() {
+                println!("No tags found for {}/{}.", registry, repo);
+                return Ok(());
+            }
+            println!("Tags for {}/{}:", registry, repo);
+            for tag in tags {
+                println!("{}/{}:{}", registry, repo, tag);
+            }
+            Ok(())
+        }
+        ImageCommands::Load { path } => {
+            let out = run_docker_cli(&["load", "-i", &path])?;
+            if out.is_empty() {
+                println!("Done.");
+            } else {
+                println!("{}", out);
+            }
+            Ok(())
+        }
+        ImageCommands::Push { reference } => {
+            let out = run_docker_cli(&["push", &reference])?;
+            if out.is_empty() {
+                println!("Done.");
+            } else {
+                println!("{}", out);
+            }
+            Ok(())
+        }
+        ImageCommands::PackContainer { container, tag } => {
+            let out = run_docker_cli(&["commit", &container, &tag])?;
+            if out.is_empty() {
+                println!("Done.");
+            } else {
+                println!("{}", out);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn search_dockerhub(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<ImageSearchItem>, String> {
+    let mut url = reqwest::Url::parse("https://hub.docker.com/v2/search/repositories/")
+        .map_err(|e| e.to_string())?;
+    url.query_pairs_mut()
+        .append_pair("query", query)
+        .append_pair("page_size", &limit.to_string());
+
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Docker Hub search failed: HTTP {}", resp.status()));
+    }
+
+    let data: DockerHubSearchResponse = resp.json().await.map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+
+    for r in data.results.into_iter().take(limit) {
+        let ns = r.namespace.unwrap_or_else(|| "library".to_string());
+        let name = if ns == "library" {
+            r.name.clone()
+        } else {
+            format!("{}/{}", ns, r.name)
+        };
+
+        out.push(ImageSearchItem {
+            source: "dockerhub",
+            reference: name,
+            description: r.description.unwrap_or_default(),
+            stars: r.star_count,
+            pulls: r.pull_count,
+            official: r.is_official.unwrap_or(false),
+        });
+    }
+
+    Ok(out)
+}
+
+async fn search_quay(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<ImageSearchItem>, String> {
+    let mut url = reqwest::Url::parse("https://quay.io/api/v1/find/repositories")
+        .map_err(|e| e.to_string())?;
+    url.query_pairs_mut().append_pair("query", query);
+
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Quay search failed: HTTP {}", resp.status()));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let results = json
+        .get("results")
+        .and_then(|v| v.as_array())
+        .or_else(|| json.get("repositories").and_then(|v| v.as_array()))
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for item in results.into_iter().take(limit) {
+        let full_name = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                let ns = item
+                    .get("namespace")
+                    .or_else(|| item.get("namespace_name"))
+                    .and_then(|v| v.as_str())?;
+                let name = item
+                    .get("repo_name")
+                    .or_else(|| item.get("name"))
+                    .and_then(|v| v.as_str())?;
+                Some(format!("{}/{}", ns, name))
+            })
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        let desc = item
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let stars = item
+            .get("stars")
+            .or_else(|| item.get("star_count"))
+            .and_then(|v| v.as_u64());
+
+        out.push(ImageSearchItem {
+            source: "quay",
+            reference: format!("quay.io/{}", full_name),
+            description: desc,
+            stars,
+            pulls: None,
+            official: false,
+        });
+    }
+
+    Ok(out)
+}
+
+fn print_image_search_results(items: &[ImageSearchItem]) {
+    println!(
+        "{:<10} {:<48} {:>7} {:>12}  {}",
+        "SOURCE", "IMAGE", "STARS", "PULLS", "DESCRIPTION"
+    );
+    for i in items {
+        let stars = i.stars.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
+        let pulls = i.pulls.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
+        let mut image = i.reference.clone();
+        if i.official {
+            image = format!("{} (official)", image);
+        }
+        println!(
+            "{:<10} {:<48} {:>7} {:>12}  {}",
+            i.source,
+            truncate_str(&image, 48),
+            stars,
+            pulls,
+            truncate_str(&i.description, 80)
+        );
+    }
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for (idx, ch) in s.chars().enumerate() {
+        if idx + 1 >= max {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+fn parse_registry_reference(reference: &str) -> Option<(String, String)> {
+    let no_digest = reference.split('@').next().unwrap_or(reference);
+    let no_tag = {
+        let last_slash = no_digest.rfind('/').unwrap_or(0);
+        if let Some(colon_idx) = no_digest.rfind(':') {
+            if colon_idx > last_slash {
+                &no_digest[..colon_idx]
+            } else {
+                no_digest
+            }
+        } else {
+            no_digest
+        }
+    };
+
+    let (first, rest) = no_tag.split_once('/')?;
+    if !(first.contains('.') || first.contains(':') || first == "localhost") {
+        return None;
+    }
+    if rest.is_empty() {
+        return None;
+    }
+    Some((first.to_string(), rest.to_string()))
+}
+
+async fn list_registry_tags(
+    client: &reqwest::Client,
+    registry: &str,
+    repository: &str,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    let url = format!("https://{}/v2/{}/tags/list", registry, repository);
+    let mut resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        let auth = resp
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| "Registry requires auth (missing WWW-Authenticate)".to_string())?;
+
+        let fallback_scope = format!("repository:{}:pull", repository);
+        let token = fetch_bearer_token(client, auth, Some(&fallback_scope)).await?;
+
+        resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Failed to list tags for {}/{}: HTTP {}",
+            registry,
+            repository,
+            resp.status()
+        ));
+    }
+
+    let data: RegistryTagsResponse = resp.json().await.map_err(|e| e.to_string())?;
+    let mut tags = data.tags.unwrap_or_default();
+    tags.sort();
+    tags.truncate(limit);
+    Ok(tags)
+}
+
+async fn fetch_bearer_token(
+    client: &reqwest::Client,
+    auth_header: &str,
+    fallback_scope: Option<&str>,
+) -> Result<String, String> {
+    let params = parse_bearer_auth_params(auth_header)
+        .ok_or_else(|| format!("Unsupported WWW-Authenticate header: {}", auth_header))?;
+
+    let realm = params
+        .get("realm")
+        .ok_or_else(|| "WWW-Authenticate missing realm".to_string())?;
+
+    let service = params.get("service").map(String::as_str);
+    let scope = params.get("scope").map(String::as_str).or(fallback_scope);
+
+    let mut url = reqwest::Url::parse(realm).map_err(|e| e.to_string())?;
+    {
+        let mut qp = url.query_pairs_mut();
+        if let Some(service) = service {
+            qp.append_pair("service", service);
+        }
+        if let Some(scope) = scope {
+            qp.append_pair("scope", scope);
+        }
+        qp.append_pair("client_id", "cargobay");
+    }
+
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Token request failed: HTTP {}", resp.status()));
+    }
+
+    let token: RegistryTokenResponse = resp.json().await.map_err(|e| e.to_string())?;
+    token
+        .token
+        .or(token.access_token)
+        .ok_or_else(|| "Token response missing token".to_string())
+}
+
+fn parse_bearer_auth_params(header_value: &str) -> Option<HashMap<String, String>> {
+    let header_value = header_value.trim();
+    let mut parts = header_value.splitn(2, ' ');
+    let scheme = parts.next()?.trim();
+    if scheme.to_ascii_lowercase() != "bearer" {
+        return None;
+    }
+    let rest = parts.next()?.trim();
+
+    let mut out = HashMap::new();
+    for part in rest.split(',') {
+        let part = part.trim();
+        let mut kv = part.splitn(2, '=');
+        let key = kv.next()?.trim();
+        let val = kv.next()?.trim().trim_matches('"');
+        out.insert(key.to_string(), val.to_string());
+    }
+    Some(out)
+}
+
+async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
+    let docker = connect_docker()?;
+    match cmd {
+        DockerCommands::Ps => {
+            let mut filters = HashMap::new();
+            filters.insert("status", vec!["running", "exited", "paused", "created", "restarting", "dead"]);
+            let opts = ListContainersOptions { all: true, filters, ..Default::default() };
+            let containers = docker.list_containers(Some(opts)).await.map_err(|e| e.to_string())?;
+
+            println!("{:<16} {:<24} {:<24} {:<16} {}", "CONTAINER ID", "NAME", "IMAGE", "STATUS", "PORTS");
+            for c in containers {
+                let id = c.id.as_deref().unwrap_or("").chars().take(12).collect::<String>();
+                let name = c.names.as_ref().and_then(|n| n.first()).map(|n| n.trim_start_matches('/')).unwrap_or("").to_string();
+                let image = c.image.as_deref().unwrap_or("");
+                let status = c.status.as_deref().unwrap_or("");
+                let ports = c.ports.as_ref().map(|ps| {
+                    ps.iter().filter_map(|p| {
+                        let private = p.private_port;
+                        let public = p.public_port;
+                        let typ = p.typ.as_ref().map(|t| format!("{}", t)).unwrap_or_default();
+                        match public {
+                            Some(pub_port) => Some(format!("{}:{}->{}/{}", p.ip.as_deref().unwrap_or("0.0.0.0"), pub_port, private, typ)),
+                            None => Some(format!("{}/{}", private, typ)),
+                        }
+                    }).collect::<Vec<_>>().join(", ")
+                }).unwrap_or_default();
+                println!("{:<16} {:<24} {:<24} {:<16} {}", id, name, image, status, ports);
+            }
+        }
+        DockerCommands::Start { id } => {
+            docker.start_container(&id, None::<StartContainerOptions<String>>).await.map_err(|e| e.to_string())?;
+            println!("Started container {}", id);
+        }
+        DockerCommands::Stop { id } => {
+            docker.stop_container(&id, Some(StopContainerOptions { t: 10 })).await.map_err(|e| e.to_string())?;
+            println!("Stopped container {}", id);
+        }
+        DockerCommands::Rm { id } => {
+            docker.remove_container(&id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await.map_err(|e| e.to_string())?;
+            println!("Removed container {}", id);
+        }
+        DockerCommands::Run { image, name, cpus, memory, pull } => {
+            if pull {
+                docker_pull_image(&docker, &image).await?;
+            }
+
+            let mut host_config = HostConfig::default();
+            if let Some(c) = cpus {
+                host_config.nano_cpus = Some((c as i64) * 1_000_000_000);
+            }
+            if let Some(mb) = memory {
+                let bytes = (mb as i64).saturating_mul(1024).saturating_mul(1024);
+                host_config.memory = Some(bytes);
+            }
+
+            let config = Config::<String> {
+                image: Some(image.clone()),
+                host_config: Some(host_config),
+                ..Default::default()
+            };
+
+            let create_opts = name.as_deref().map(|n| CreateContainerOptions::<String> {
+                name: n.to_string(),
+                platform: None,
+            });
+
+            let result = docker
+                .create_container(create_opts, config)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            docker
+                .start_container(&result.id, None::<StartContainerOptions<String>>)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let display = name.clone().unwrap_or_else(|| result.id.chars().take(12).collect());
+            println!("Created and started container: {}", display);
+            println!("Login command:");
+            println!("  docker exec -it {} /bin/sh", display);
+        }
+        DockerCommands::LoginCmd { container, shell } => {
+            println!("docker exec -it {} {}", container, shell);
+        }
+    }
+    Ok(())
+}
+
+async fn docker_pull_image(docker: &Docker, reference: &str) -> Result<(), String> {
+    let (from_image, tag) = split_image_reference(reference);
+    let opts = CreateImageOptions {
+        from_image,
+        tag,
+        ..Default::default()
+    };
+
+    let mut stream = docker.create_image(Some(opts), None, None);
+    while let Some(_progress) = stream.try_next().await.map_err(|e| e.to_string())? {}
+    Ok(())
+}
+
+fn split_image_reference(reference: &str) -> (String, String) {
+    let no_digest = reference.split('@').next().unwrap_or(reference);
+    let last_slash = no_digest.rfind('/').unwrap_or(0);
+    let last_colon = no_digest.rfind(':');
+
+    if let Some(colon_idx) = last_colon {
+        if colon_idx > last_slash {
+            let image = &no_digest[..colon_idx];
+            let tag = &no_digest[(colon_idx + 1)..];
+            if !image.is_empty() && !tag.is_empty() {
+                return (image.to_string(), tag.to_string());
+            }
+        }
+    }
+
+    (no_digest.to_string(), "latest".to_string())
+}
+
+fn docker_host_for_docker_cli() -> Option<String> {
+    if let Ok(v) = std::env::var("DOCKER_HOST") {
+        return Some(v);
+    }
+    #[cfg(unix)]
+    {
+        detect_docker_socket().map(|sock| format!("unix://{}", sock))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+fn run_docker_cli(args: &[&str]) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("docker");
+    cmd.args(args);
+    if let Some(host) = docker_host_for_docker_cli() {
+        cmd.env("DOCKER_HOST", host);
+    }
+
+    let out = cmd.output().map_err(|e| format!("Failed to run docker: {}", e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "docker {} failed (exit {}): {}",
+            args.join(" "),
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
