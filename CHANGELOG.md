@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - CI: fix Clippy/rustfmt failures (VZ explicit auto-deref, async env lock in tests, Docker port type formatting).
+- GUI: group containers by name prefix (collapsible), and make `tauri dev` resilient to `localhost` DNS issues / double logger initialization.
 
 ## [0.1.0] - 2026-02-28
 

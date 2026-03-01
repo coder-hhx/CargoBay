@@ -21,6 +21,7 @@
 ### 修复
 
 - CI：修复 Clippy/rustfmt 失败（VZ explicit auto-deref、测试里的异步环境锁、Docker 端口类型格式化）。
+- GUI：容器列表支持按命名前缀折叠；并提升 `tauri dev` 对 `localhost` 解析问题 / 重复初始化日志的兼容性。
 
 ## [0.1.0] - 2026-02-28
 

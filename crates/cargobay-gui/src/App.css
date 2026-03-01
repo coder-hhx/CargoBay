@@ -501,6 +501,65 @@
   stroke-width: 2;
 }
 
+/* === Container groups === */
+.container-group-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.container-group-header .card-icon {
+  background: var(--surface2);
+}
+
+.container-group-header .card-icon svg {
+  stroke: var(--purple);
+}
+
+.container-group-header.expanded {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 1px var(--purple-dim);
+}
+
+.group-chevron {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  flex-shrink: 0;
+}
+
+.container-group-header:hover .group-chevron {
+  color: var(--purple);
+  background: var(--purple-dim);
+}
+
+.group-chevron svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.container-group-children {
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 1px dashed var(--border);
+}
+
+.container-group-children .container-card {
+  margin-bottom: 6px;
+}
+
+.container-card.container-child {
+  background: var(--surface);
+}
+
 /* === Empty / Getting Started === */
 .empty-state {
   text-align: center;

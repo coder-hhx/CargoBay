@@ -1089,14 +1089,6 @@ pub fn run() {
             daemon: Mutex::new(None),
         })
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
             let state = app.state::<AppState>();
             let grpc_addr = state.grpc_addr.clone();
             let daemon_up = tauri::async_runtime::block_on(async {

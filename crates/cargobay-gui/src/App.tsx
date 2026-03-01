@@ -50,6 +50,100 @@ type NavPage = "dashboard" | "containers" | "vms" | "images" | "settings"
 type Theme = "dark" | "light"
 type ModalKind = "" | "text" | "package"
 
+interface ContainerGroup {
+  key: string
+  containers: ContainerInfo[]
+  runningCount: number
+  stoppedCount: number
+}
+
+function containerGroupCandidates(name: string): string[] {
+  const trimmed = name.trim()
+  if (!trimmed) return []
+
+  const out = new Set<string>()
+  out.add(trimmed)
+
+  const base = trimmed.replace(/[-_]\d+$/, "")
+  if (base) out.add(base)
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i]
+    if (ch === "-" || ch === "_") {
+      const prefix = trimmed.slice(0, i)
+      if (prefix) out.add(prefix)
+    }
+  }
+
+  return Array.from(out)
+}
+
+function groupContainersByNamePrefix(containers: ContainerInfo[]): ContainerGroup[] {
+  const candidateCounts = new Map<string, number>()
+  const candidatesById = new Map<string, string[]>()
+
+  for (const c of containers) {
+    const name = (c.name || c.id).trim()
+    const uniqueCandidates = Array.from(new Set(containerGroupCandidates(name)))
+    candidatesById.set(c.id, uniqueCandidates)
+    for (const cand of uniqueCandidates) {
+      candidateCounts.set(cand, (candidateCounts.get(cand) || 0) + 1)
+    }
+  }
+
+  const groups = new Map<string, ContainerInfo[]>()
+  for (const c of containers) {
+    const name = (c.name || c.id).trim()
+    const candidates = candidatesById.get(c.id) || containerGroupCandidates(name)
+
+    let bestKey = name
+    let bestCount = 1
+    let bestLen = 0
+
+    for (const cand of candidates) {
+      const count = candidateCounts.get(cand) || 0
+      if (count < 2) continue
+      if (count > bestCount || (count === bestCount && cand.length > bestLen)) {
+        bestKey = cand
+        bestCount = count
+        bestLen = cand.length
+      }
+    }
+
+    const existing = groups.get(bestKey)
+    if (existing) {
+      existing.push(c)
+    } else {
+      groups.set(bestKey, [c])
+    }
+  }
+
+  const out: ContainerGroup[] = []
+  for (const [key, items] of groups) {
+    const runningCount = items.filter((c) => c.state === "running").length
+    const stoppedCount = items.length - runningCount
+    items.sort((a, b) => {
+      const ar = a.state === "running"
+      const br = b.state === "running"
+      if (ar !== br) return ar ? -1 : 1
+      const an = (a.name || a.id).localeCompare(b.name || b.id)
+      if (an !== 0) return an
+      return a.id.localeCompare(b.id)
+    })
+    out.push({ key, containers: items, runningCount, stoppedCount })
+  }
+
+  out.sort((a, b) => {
+    const ar = a.runningCount > 0
+    const br = b.runningCount > 0
+    if (ar !== br) return ar ? -1 : 1
+    if (a.containers.length !== b.containers.length) return b.containers.length - a.containers.length
+    return a.key.localeCompare(b.key)
+  })
+
+  return out
+}
+
 /* SVG icons — Lucide-style stroke icons */
 const I = {
   dashboard: <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>,
@@ -66,6 +160,8 @@ const I = {
   terminal: <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>,
   copy: <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>,
   refresh: <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>,
+  chevronRight: <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>,
+  chevronDown: <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>,
 }
 
 function App() {
@@ -83,6 +179,7 @@ function App() {
   const [packageContainer, setPackageContainer] = useState("")
   const [packageTag, setPackageTag] = useState("")
   const [packageLoading, setPackageLoading] = useState(false)
+  const [expandedContainerGroups, setExpandedContainerGroups] = useState<Record<string, boolean>>({})
 
   // Images state
   const [imgQuery, setImgQuery] = useState("")
@@ -207,7 +304,10 @@ function App() {
   }, [])
 
   const running = containers.filter(c => c.state === "running")
-  const stopped = containers.filter(c => c.state !== "running")
+
+  const toggleContainerGroup = (key: string) => {
+    setExpandedContainerGroups((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
   /* CargoBay 自己的导航结构 — 按功能维度划分 */
   const navItems: { page: NavPage; icon: React.ReactNode; count?: number; soon?: boolean }[] = [
@@ -300,96 +400,106 @@ function App() {
       </div>
     )
 
-    return <>
-      {running.length > 0 && <>
-        <div className="section-title">{t("running")} ({running.length})</div>
-        {running.map(c => (
-          <div className="container-card" key={c.id}>
-            <div className="card-icon">{I.box}</div>
-            <div className="card-body">
-              <div className="card-name">{c.name}</div>
-              <div className="card-meta">{c.image} · {c.ports || c.id}</div>
-            </div>
-            <div className="card-status">
-              <span className="dot running" />
-              <span>{c.status}</span>
-            </div>
-            <div className="card-actions">
-              <button
-                className="action-btn"
-                disabled={acting === c.id}
-                onClick={async () => {
-                  const target = c.name || c.id
-                  const cmd = await invoke<string>("container_login_cmd", { container: target, shell: "/bin/sh" })
-                  openTextModal(t("loginCommand"), cmd, cmd)
-                }}
-                title={t("loginCommand")}
-              >
-                {I.terminal}
-              </button>
+    const renderContainerCard = (c: ContainerInfo, opts?: { child?: boolean }) => {
+      const isRunning = c.state === "running"
+      const name = c.name || c.id
+      const meta = isRunning ? (c.ports || c.id) : c.id
+      const childClass = opts?.child ? " container-child" : ""
+      return (
+        <div className={`container-card${childClass}`} key={c.id}>
+          <div className={`card-icon${isRunning ? "" : " stopped"}`}>{I.box}</div>
+          <div className="card-body">
+            <div className="card-name">{name}</div>
+            <div className="card-meta">{c.image} · {meta}</div>
+          </div>
+          <div className="card-status">
+            <span className={`dot ${isRunning ? "running" : "stopped"}`} />
+            <span>{c.status}</span>
+          </div>
+          <div className="card-actions">
+            <button
+              className="action-btn"
+              disabled={acting === c.id}
+              onClick={async () => {
+                const target = c.name || c.id
+                const cmd = await invoke<string>("container_login_cmd", { container: target, shell: "/bin/sh" })
+                openTextModal(t("loginCommand"), cmd, cmd)
+              }}
+              title={t("loginCommand")}
+            >
+              {I.terminal}
+            </button>
+            {isRunning ? (
               <button className="action-btn" disabled={acting === c.id} onClick={() => containerAction("stop_container", c.id)} title={t("stop")}>{I.stop}</button>
-              <button
-                className="action-btn"
-                disabled={acting === c.id}
-                onClick={() => {
-                  const target = c.name || c.id
-                  const defaultTag = `${(c.image || "image").split(":")[0]}-snapshot:latest`
-                  openPackageModal(target, defaultTag)
-                }}
-                title={t("packageImage")}
-              >
-                {I.layers}
-              </button>
-              <button className="action-btn danger" disabled={acting === c.id} onClick={() => containerAction("remove_container", c.id)} title={t("delete")}>{I.trash}</button>
-            </div>
-          </div>
-        ))}
-      </>}
-
-      {stopped.length > 0 && <>
-        <div className="section-title">{t("stopped")} ({stopped.length})</div>
-        {stopped.map(c => (
-          <div className="container-card" key={c.id}>
-            <div className="card-icon stopped">{I.box}</div>
-            <div className="card-body">
-              <div className="card-name">{c.name}</div>
-              <div className="card-meta">{c.image} · {c.id}</div>
-            </div>
-            <div className="card-status">
-              <span className="dot stopped" />
-              <span>{c.status}</span>
-            </div>
-            <div className="card-actions">
-              <button
-                className="action-btn"
-                disabled={acting === c.id}
-                onClick={async () => {
-                  const target = c.name || c.id
-                  const cmd = await invoke<string>("container_login_cmd", { container: target, shell: "/bin/sh" })
-                  openTextModal(t("loginCommand"), cmd, cmd)
-                }}
-                title={t("loginCommand")}
-              >
-                {I.terminal}
-              </button>
+            ) : (
               <button className="action-btn" disabled={acting === c.id} onClick={() => containerAction("start_container", c.id)} title={t("start")}>{I.play}</button>
-              <button
-                className="action-btn"
-                disabled={acting === c.id}
-                onClick={() => {
-                  const target = c.name || c.id
-                  const defaultTag = `${(c.image || "image").split(":")[0]}-snapshot:latest`
-                  openPackageModal(target, defaultTag)
-                }}
-                title={t("packageImage")}
-              >
-                {I.layers}
-              </button>
-              <button className="action-btn danger" disabled={acting === c.id} onClick={() => containerAction("remove_container", c.id)} title={t("delete")}>{I.trash}</button>
-            </div>
+            )}
+            <button
+              className="action-btn"
+              disabled={acting === c.id}
+              onClick={() => {
+                const target = c.name || c.id
+                const defaultTag = `${(c.image || "image").split(":")[0]}-snapshot:latest`
+                openPackageModal(target, defaultTag)
+              }}
+              title={t("packageImage")}
+            >
+              {I.layers}
+            </button>
+            <button className="action-btn danger" disabled={acting === c.id} onClick={() => containerAction("remove_container", c.id)} title={t("delete")}>{I.trash}</button>
           </div>
-        ))}
-      </>}
+        </div>
+      )
+    }
+
+    const groups = groupContainersByNamePrefix(containers)
+
+    return <>
+      {groups.map((g) => {
+        if (g.containers.length <= 1) {
+          return renderContainerCard(g.containers[0])
+        }
+
+        const expanded = !!expandedContainerGroups[g.key]
+        const hasRunning = g.runningCount > 0
+        return (
+          <div className="container-group" key={g.key}>
+            <div
+              className={`container-card container-group-header${expanded ? " expanded" : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleContainerGroup(g.key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  toggleContainerGroup(g.key)
+                }
+              }}
+              title={expanded ? "Collapse" : "Expand"}
+            >
+              <div className="card-icon">{I.box}</div>
+              <div className="card-body">
+                <div className="card-name">{g.key}</div>
+                <div className="card-meta">
+                  {t("running")}: {g.runningCount} · {t("stopped")}: {g.stoppedCount}
+                </div>
+              </div>
+              <div className="card-status">
+                <span className={`dot ${hasRunning ? "running" : "stopped"}`} />
+                <span>{hasRunning ? t("running") : t("stopped")}</span>
+              </div>
+              <div className="group-chevron" aria-hidden="true">
+                {expanded ? I.chevronDown : I.chevronRight}
+              </div>
+            </div>
+            {expanded && (
+              <div className="container-group-children">
+                {g.containers.map((c) => renderContainerCard(c, { child: true }))}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </>
   }
 
