@@ -331,21 +331,21 @@ fn start_vm_on_queue(
     let block_device: Retained<VZVirtioBlockDeviceConfiguration> = unsafe {
         msg_send![VZVirtioBlockDeviceConfiguration::alloc(), initWithAttachment: &*attachment]
     };
-    let block_device_ref: &VZStorageDeviceConfiguration = &*block_device;
+    let block_device_ref: &VZStorageDeviceConfiguration = &block_device;
     let storage_devices = NSArray::from_slice(&[block_device_ref]);
 
     let network_device: Retained<VZVirtioNetworkDeviceConfiguration> =
         unsafe { msg_send![VZVirtioNetworkDeviceConfiguration::alloc(), init] };
     let nat_attachment: Retained<VZNATNetworkDeviceAttachment> =
         unsafe { msg_send![VZNATNetworkDeviceAttachment::alloc(), init] };
-    let nat_attachment_ref: &VZNetworkDeviceAttachment = &*nat_attachment;
+    let nat_attachment_ref: &VZNetworkDeviceAttachment = &nat_attachment;
     let _: () = unsafe { msg_send![&*network_device, setAttachment: nat_attachment_ref] };
-    let network_device_ref: &VZNetworkDeviceConfiguration = &*network_device;
+    let network_device_ref: &VZNetworkDeviceConfiguration = &network_device;
     let network_devices = NSArray::from_slice(&[network_device_ref]);
 
     let entropy_device: Retained<VZVirtioEntropyDeviceConfiguration> =
         unsafe { msg_send![VZVirtioEntropyDeviceConfiguration::alloc(), init] };
-    let entropy_device_ref: &VZEntropyDeviceConfiguration = &*entropy_device;
+    let entropy_device_ref: &VZEntropyDeviceConfiguration = &entropy_device;
     let entropy_devices = NSArray::from_slice(&[entropy_device_ref]);
 
     let serial_port: Retained<VZVirtioConsoleDeviceSerialPortConfiguration> =
@@ -359,14 +359,14 @@ fn start_vm_on_queue(
             fileHandleForWriting: Some(&*stdout_handle)
         ]
     };
-    let serial_attachment_ref: &VZSerialPortAttachment = &*serial_attachment;
+    let serial_attachment_ref: &VZSerialPortAttachment = &serial_attachment;
     let _: () = unsafe { msg_send![&*serial_port, setAttachment: serial_attachment_ref] };
-    let serial_port_ref: &VZSerialPortConfiguration = &*serial_port;
+    let serial_port_ref: &VZSerialPortConfiguration = &serial_port;
     let serial_ports = NSArray::from_slice(&[serial_port_ref]);
 
     let config: Retained<VZVirtualMachineConfiguration> =
         unsafe { msg_send![VZVirtualMachineConfiguration::class(), new] };
-    let boot_loader_ref: &VZBootLoader = &*boot_loader;
+    let boot_loader_ref: &VZBootLoader = &boot_loader;
     let _: () = unsafe { msg_send![&*config, setBootLoader: boot_loader_ref] };
     let _: () = unsafe { msg_send![&*config, setCPUCount: args.cpus] };
 

@@ -73,9 +73,7 @@ fn connect_docker() -> Result<Docker, String> {
             return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
         }
-        return Err(
-            "No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into(),
-        );
+        Err("No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into())
     }
 
     #[cfg(windows)]
@@ -90,9 +88,7 @@ fn connect_docker() -> Result<Docker, String> {
                 return Ok(d);
             }
         }
-        return Err(
-            "No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into(),
-        );
+        Err("No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into())
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1068,7 +1064,7 @@ fn parse_bearer_auth_params(header_value: &str) -> Option<HashMap<String, String
     let header_value = header_value.trim();
     let mut parts = header_value.splitn(2, ' ');
     let scheme = parts.next()?.trim();
-    if scheme.to_ascii_lowercase() != "bearer" {
+    if !scheme.eq_ignore_ascii_case("bearer") {
         return None;
     }
     let rest = parts.next()?.trim();

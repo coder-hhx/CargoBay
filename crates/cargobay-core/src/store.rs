@@ -16,6 +16,12 @@ pub struct VmStore {
     path: PathBuf,
 }
 
+impl Default for VmStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VmStore {
     pub fn new() -> Self {
         let path = config_dir().join("vms.json");

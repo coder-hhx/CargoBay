@@ -239,9 +239,7 @@ fn connect_docker() -> Result<Docker, String> {
             return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
         }
-        return Err(
-            "No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into(),
-        );
+        Err("No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into())
     }
 
     #[cfg(windows)]
@@ -256,9 +254,7 @@ fn connect_docker() -> Result<Docker, String> {
                 return Ok(d);
             }
         }
-        return Err(
-            "No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into(),
-        );
+        Err("No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into())
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -391,9 +387,8 @@ async fn wait_for_vm_service(
 ) -> Result<VmServiceClient<Channel>, String> {
     let deadline = Instant::now() + timeout;
     loop {
-        match connect_vm_service_timeout(addr, Duration::from_millis(200)).await {
-            Ok(c) => return Ok(c),
-            Err(_) => {}
+        if let Ok(client) = connect_vm_service_timeout(addr, Duration::from_millis(200)).await {
+            return Ok(client);
         }
 
         if Instant::now() >= deadline {
@@ -408,9 +403,8 @@ async fn wait_for_vm_service(
 }
 
 async fn connect_vm_service_autostart(addr: &str) -> Option<VmServiceClient<Channel>> {
-    match connect_vm_service(addr).await {
-        Ok(c) => return Some(c),
-        Err(_) => {}
+    if let Ok(client) = connect_vm_service(addr).await {
+        return Some(client);
     }
 
     if spawn_daemon_detached().is_err() {
@@ -638,8 +632,8 @@ async fn handle_vm(cmd: VmCommands) {
                             return;
                         }
                         println!(
-                            "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}",
-                            "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA", "MOUNTS"
+                            "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} MOUNTS",
+                            "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA"
                         );
                         for vm in vms {
                             println!(
@@ -668,8 +662,8 @@ async fn handle_vm(cmd: VmCommands) {
                             return;
                         }
                         println!(
-                            "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}",
-                            "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA", "MOUNTS"
+                            "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} MOUNTS",
+                            "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA"
                         );
                         for vm in vms {
                             println!(
@@ -844,8 +838,8 @@ async fn handle_mount(cmd: MountCommands) {
                             return;
                         }
                         println!(
-                            "{:<16} {:<30} {:<20} {}",
-                            "TAG", "HOST PATH", "GUEST PATH", "MODE"
+                            "{:<16} {:<30} {:<20} MODE",
+                            "TAG", "HOST PATH", "GUEST PATH"
                         );
                         for m in mounts {
                             println!(
@@ -878,8 +872,8 @@ async fn handle_mount(cmd: MountCommands) {
                             return;
                         }
                         println!(
-                            "{:<16} {:<30} {:<20} {}",
-                            "TAG", "HOST PATH", "GUEST PATH", "MODE"
+                            "{:<16} {:<30} {:<20} MODE",
+                            "TAG", "HOST PATH", "GUEST PATH"
                         );
                         for m in mounts {
                             println!(
@@ -1140,8 +1134,8 @@ async fn search_quay(
 
 fn print_image_search_results(items: &[ImageSearchItem]) {
     println!(
-        "{:<10} {:<48} {:>7} {:>12}  {}",
-        "SOURCE", "IMAGE", "STARS", "PULLS", "DESCRIPTION"
+        "{:<10} {:<48} {:>7} {:>12}  DESCRIPTION",
+        "SOURCE", "IMAGE", "STARS", "PULLS"
     );
     for i in items {
         let stars = i.stars.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
@@ -1287,7 +1281,7 @@ fn parse_bearer_auth_params(header_value: &str) -> Option<HashMap<String, String
     let header_value = header_value.trim();
     let mut parts = header_value.splitn(2, ' ');
     let scheme = parts.next()?.trim();
-    if scheme.to_ascii_lowercase() != "bearer" {
+    if !scheme.eq_ignore_ascii_case("bearer") {
         return None;
     }
     let rest = parts.next()?.trim();
@@ -1330,8 +1324,8 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
 
             println!(
-                "{:<16} {:<24} {:<24} {:<16} {}",
-                "CONTAINER ID", "NAME", "IMAGE", "STATUS", "PORTS"
+                "{:<16} {:<24} {:<24} {:<16} PORTS",
+                "CONTAINER ID", "NAME", "IMAGE", "STATUS"
             );
             for c in containers {
                 let id =
@@ -1354,20 +1348,19 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
                     .as_ref()
                     .map(|ps| {
                         ps.iter()
-                            .filter_map(|p| {
+                            .map(|p| {
                                 let private = p.private_port;
                                 let public = p.public_port;
-                                let typ =
-                                    p.typ.as_ref().map(|t| format!("{}", t)).unwrap_or_default();
+                                let typ = p.typ.map(|t| t.to_string()).unwrap_or_default();
                                 match public {
-                                    Some(pub_port) => Some(format!(
+                                    Some(pub_port) => format!(
                                         "{}:{}->{}/{}",
                                         p.ip.as_deref().unwrap_or("0.0.0.0"),
                                         pub_port,
                                         private,
                                         typ
-                                    )),
-                                    None => Some(format!("{}/{}", private, typ)),
+                                    ),
+                                    None => format!("{}/{}", private, typ),
                                 }
                             })
                             .collect::<Vec<_>>()

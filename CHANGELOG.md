@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GUI: VM page (preview VM lifecycle UI, VirtioFS mount tracking, login command generator).
 - GUI: show container login commands and package a container as an image (docker commit).
 
+### Fixed
+
+- CI: fix Clippy/rustfmt failures (VZ explicit auto-deref, async env lock in tests, Docker port type formatting).
+
 ## [0.1.0] - 2026-02-28
 
 ### Added

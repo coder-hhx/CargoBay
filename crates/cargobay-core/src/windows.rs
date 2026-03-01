@@ -24,6 +24,12 @@ pub struct WindowsHypervisor {
     store: VmStore,
 }
 
+impl Default for WindowsHypervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct VmEntry {
     info: VmInfo,
     /// Plan 9 / VirtioFS share handles.

@@ -58,6 +58,7 @@ impl VmServiceImpl {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn resolve_vm_id(&self, selector: &str) -> Result<String, Status> {
         let vms = self
             .hv

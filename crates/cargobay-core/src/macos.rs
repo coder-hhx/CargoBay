@@ -23,6 +23,12 @@ pub struct MacOSHypervisor {
     store: VmStore,
 }
 
+impl Default for MacOSHypervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct VmEntry {
     info: VmInfo,
     /// VZ configuration parameters stored for lifecycle management.

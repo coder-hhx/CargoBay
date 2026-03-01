@@ -18,6 +18,10 @@
 - GUI：虚拟机页（预览版 VM 生命周期 UI、VirtioFS 挂载记录、登录命令生成）。
 - GUI：显示容器登录命令，并支持将容器打包为镜像（docker commit）。
 
+### 修复
+
+- CI：修复 Clippy/rustfmt 失败（VZ explicit auto-deref、测试里的异步环境锁、Docker 端口类型格式化）。
+
 ## [0.1.0] - 2026-02-28
 
 ### 新增

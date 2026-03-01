@@ -11,6 +11,12 @@ pub struct StubHypervisor {
     store: VmStore,
 }
 
+impl Default for StubHypervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StubHypervisor {
     pub fn new() -> Self {
         let store = VmStore::new();

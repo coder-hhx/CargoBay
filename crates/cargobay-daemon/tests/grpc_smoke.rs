@@ -4,8 +4,9 @@ use cargobay_core::proto::vm_service_server::VmService;
 use cargobay_core::vm::StubHypervisor;
 use cargobay_daemon::service::VmServiceImpl;
 use std::ffi::OsString;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use tonic::Request;
 
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -57,10 +58,7 @@ impl Drop for TempDirGuard {
 
 #[tokio::test]
 async fn grpc_vm_lifecycle_and_mounts() {
-    let _env_guard = ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock");
+    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().await;
 
     let temp = TempDirGuard::new("cargobay-daemon-test");
     let _config_dir = EnvVarGuard::set_path("CARGOBAY_CONFIG_DIR", &temp.path);

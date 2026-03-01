@@ -20,6 +20,12 @@ pub struct LinuxHypervisor {
     store: VmStore,
 }
 
+impl Default for LinuxHypervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct VmEntry {
     info: VmInfo,
     /// PIDs of virtiofsd processes for each mount tag.
