@@ -222,6 +222,8 @@ cargobay docker login-cmd web
 > ```
 >
 > CLI/GUI 在可连接到 daemon 时会自动通过 gRPC 调用（可用 `CARGOBAY_GRPC_ADDR` 配置地址）；不可用时会自动回退到本地模式。
+>
+> macOS VZ PoC：启动 VM 前需要设置 `CARGOBAY_VZ_KERNEL`（可选 `CARGOBAY_VZ_INITRD`）。
 
 ```bash
 # 创建 VM（可自定义 CPU 核数与内存）
@@ -324,6 +326,10 @@ cargobay docker ps
 | `CARGOBAY_DATA_DIR` | 覆盖数据目录 |
 | `CARGOBAY_LOG_DIR` | 覆盖日志目录 |
 | `CARGOBAY_LOG_RETENTION_DAYS` | 错误日志保留天数（默认：7） |
+| `CARGOBAY_VZ_RUNNER_PATH` | 覆盖 `cargobay-vz` 路径（macOS VZ PoC） |
+| `CARGOBAY_VZ_KERNEL` | Linux kernel 路径（macOS VZ PoC） |
+| `CARGOBAY_VZ_INITRD` | Linux initrd 路径（可选，macOS VZ PoC） |
+| `CARGOBAY_VZ_CMDLINE` | Linux kernel 启动参数（默认：`console=hvc0`，macOS VZ PoC） |
 
 ### 数据目录
 

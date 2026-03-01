@@ -222,6 +222,8 @@ cargobay docker login-cmd web
 > ```
 >
 > The CLI/GUI will use the daemon automatically when it's reachable (via `CARGOBAY_GRPC_ADDR`) and fall back to local mode if not.
+>
+> macOS VZ PoC: set `CARGOBAY_VZ_KERNEL` (and optionally `CARGOBAY_VZ_INITRD`) before starting a VM.
 
 ```bash
 # Create a VM
@@ -324,6 +326,10 @@ cargobay docker ps
 | `CARGOBAY_DATA_DIR` | Override data directory |
 | `CARGOBAY_LOG_DIR` | Override log directory |
 | `CARGOBAY_LOG_RETENTION_DAYS` | Keep error logs for N days (default: 7) |
+| `CARGOBAY_VZ_RUNNER_PATH` | Override `cargobay-vz` path (macOS VZ PoC) |
+| `CARGOBAY_VZ_KERNEL` | Linux kernel path (macOS VZ PoC) |
+| `CARGOBAY_VZ_INITRD` | Linux initrd path (optional, macOS VZ PoC) |
+| `CARGOBAY_VZ_CMDLINE` | Linux kernel cmdline (default: `console=hvc0`, macOS VZ PoC) |
 
 ### Data Locations
 

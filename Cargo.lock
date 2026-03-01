@@ -560,6 +560,7 @@ dependencies = [
 name = "cargobay-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "prost",
  "serde",
  "serde_json",
@@ -600,6 +601,18 @@ dependencies = [
  "tauri-plugin-log",
  "tokio",
  "tonic",
+ "tracing",
+]
+
+[[package]]
+name = "cargobay-vz"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "cargobay-core",
+ "dispatch2",
+ "objc2",
+ "objc2-foundation",
  "tracing",
 ]
 
@@ -979,6 +992,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.11.0",
+ "block2",
+ "libc",
  "objc2",
 ]
 

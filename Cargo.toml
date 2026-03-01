@@ -4,5 +4,6 @@ members = [
     "crates/cargobay-cli",
     "crates/cargobay-daemon",
     "crates/cargobay-core",
+    "crates/cargobay-vz",
     "crates/cargobay-gui/src-tauri",
 ]
