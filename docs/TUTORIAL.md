@@ -144,13 +144,13 @@ The container list auto-refreshes every 3 seconds. Connection status is shown in
 
 Preview in v0.1:
 
-- **Create / start / stop / delete / list** (in-memory preview)
+- **Create / start / stop / delete / list** (preview)
 - **CPU / Memory / Disk** parameters on creation
 - **Rosetta toggle** (macOS Apple Silicon only; availability depends on macOS 13+)
 - **VirtioFS mount list** (tracked in UI; real mounting will be implemented later)
 - **Login command**: generates an `ssh user@host -p <port>` string (you provide the port)
 
-> Note: VM state is currently stored **in memory** while the app runs and is not persisted yet.
+> Note: VM metadata is persisted to `vms.json` under the Config directory, but the real VM runtime backend is still under active development.
 
 ### Images (镜像)
 
@@ -214,6 +214,14 @@ cargobay docker login-cmd web
 ```
 
 ### VM Commands
+
+> Optional: run the daemon for VM management:
+>
+> ```bash
+> cargo run -p cargobay-daemon
+> ```
+>
+> The CLI/GUI will use the daemon automatically when it's reachable (via `CARGOBAY_GRPC_ADDR`) and fall back to local mode if not.
 
 ```bash
 # Create a VM
@@ -310,14 +318,24 @@ cargobay docker ps
 |----------|-------------|
 | `DOCKER_HOST` | Override Docker socket path |
 | `RUST_LOG` | Set log level (`info`, `debug`, `trace`) |
+| `CARGOBAY_GRPC_ADDR` | Daemon gRPC address (default: `127.0.0.1:50051`) |
+| `CARGOBAY_DAEMON_PATH` | Override daemon executable path (GUI auto-start) |
+| `CARGOBAY_CONFIG_DIR` | Override config directory (stores `vms.json`) |
+| `CARGOBAY_DATA_DIR` | Override data directory |
+| `CARGOBAY_LOG_DIR` | Override log directory |
+| `CARGOBAY_LOG_RETENTION_DAYS` | Keep error logs for N days (default: 7) |
 
 ### Data Locations
 
-| Platform | Config | Logs |
-|----------|--------|------|
-| macOS | `~/Library/Application Support/com.cargobay.app/` | Same |
-| Linux | `~/.config/cargobay/` | `~/.local/share/cargobay/` |
-| Windows | `%APPDATA%\cargobay\` | Same |
+| Platform | Config | Data | Logs |
+|----------|--------|------|------|
+| macOS | `~/Library/Application Support/com.cargobay.app/` | Same | Same |
+| Linux | `~/.config/cargobay/` | `~/.local/share/cargobay/` | Same |
+| Windows | `%APPDATA%\cargobay\` | Same | Same |
+
+VM metadata is stored at `<config>/vms.json`.
+
+Error logs are written to the Logs directory as `cargobay-error.log.YYYY-MM-DD` and automatically cleaned up (keeps the most recent 7 days by default).
 
 ---
 

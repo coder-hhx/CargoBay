@@ -8,13 +8,16 @@
 // with near-native filesystem performance (faster than 9p/NFS).
 
 use crate::hypervisor::{Hypervisor, HypervisorError, SharedDirectory, VmConfig, VmInfo, VmState};
+use crate::store::{next_id_for_prefix, VmStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tracing::warn;
 
 /// macOS hypervisor backed by Apple Virtualization.framework.
 pub struct MacOSHypervisor {
     vms: Mutex<HashMap<String, VmEntry>>,
     next_id: Mutex<u64>,
+    store: VmStore,
 }
 
 struct VmEntry {
@@ -25,9 +28,37 @@ struct VmEntry {
 
 impl MacOSHypervisor {
     pub fn new() -> Self {
+        let store = VmStore::new();
+        let mut loaded = match store.load_vms() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to load VM store ({}): {}", store.path().display(), e);
+                vec![]
+            }
+        };
+
+        for vm in &mut loaded {
+            if vm.state != VmState::Stopped {
+                vm.state = VmState::Stopped;
+            }
+        }
+
+        let mut map: HashMap<String, VmEntry> = HashMap::new();
+        for vm in loaded.iter().cloned() {
+            map.insert(
+                vm.id.clone(),
+                VmEntry {
+                    info: vm,
+                    _rosetta_mounted: false,
+                },
+            );
+        }
+
+        let next_id = next_id_for_prefix(&loaded, "vz-");
         Self {
-            vms: Mutex::new(HashMap::new()),
-            next_id: Mutex::new(1),
+            vms: Mutex::new(map),
+            next_id: Mutex::new(next_id),
+            store,
         }
     }
 
@@ -45,6 +76,17 @@ impl MacOSHypervisor {
         {
             false
         }
+    }
+
+    fn persist(&self) -> Result<(), HypervisorError> {
+        let vms = self
+            .vms
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.info.clone())
+            .collect::<Vec<_>>();
+        self.store.save_vms(&vms)
     }
 }
 
@@ -66,6 +108,16 @@ impl Hypervisor for MacOSHypervisor {
             }
         }
 
+        {
+            let vms = self.vms.lock().unwrap();
+            if vms.values().any(|e| e.info.name == config.name) {
+                return Err(HypervisorError::CreateFailed(format!(
+                    "VM name already exists: {}",
+                    config.name
+                )));
+            }
+        }
+
         let mut id_counter = self.next_id.lock().unwrap();
         let id = format!("vz-{}", *id_counter);
         *id_counter += 1;
@@ -76,6 +128,7 @@ impl Hypervisor for MacOSHypervisor {
             state: VmState::Stopped,
             cpus: config.cpus,
             memory_mb: config.memory_mb,
+            disk_gb: config.disk_gb,
             rosetta_enabled: config.rosetta,
             shared_dirs: config.shared_dirs,
         };
@@ -86,6 +139,10 @@ impl Hypervisor for MacOSHypervisor {
         };
 
         self.vms.lock().unwrap().insert(id.clone(), entry);
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().remove(&id);
+            return Err(e);
+        }
 
         // TODO: Real implementation using Virtualization.framework FFI:
         // 1. Create VZVirtualMachineConfiguration
@@ -101,9 +158,20 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        entry.info.state = VmState::Running;
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = entry.info.state.clone();
+            entry.info.state = VmState::Running;
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(id) {
+                entry.info.state = previous;
+            }
+            return Err(e);
+        }
 
         // TODO: Real implementation:
         // 1. Create VZVirtualMachine from stored configuration
@@ -119,10 +187,23 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        entry.info.state = VmState::Stopped;
-        entry._rosetta_mounted = false;
+        let (previous, rosetta_prev) = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = entry.info.state.clone();
+            let rosetta_prev = entry._rosetta_mounted;
+            entry.info.state = VmState::Stopped;
+            entry._rosetta_mounted = false;
+            (prev, rosetta_prev)
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(id) {
+                entry.info.state = previous;
+                entry._rosetta_mounted = rosetta_prev;
+            }
+            return Err(e);
+        }
 
         // TODO: virtualMachine.stop()
 
@@ -130,11 +211,16 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn delete_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        self.vms
+        let removed = self
+            .vms
             .lock()
             .unwrap()
             .remove(id)
             .ok_or(HypervisorError::NotFound(id.into()))?;
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().insert(id.to_string(), removed);
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -176,6 +262,14 @@ impl Hypervisor for MacOSHypervisor {
         }
 
         entry.info.shared_dirs.push(share.clone());
+        drop(vms);
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(vm_id) {
+                entry.info.shared_dirs.retain(|d| d.tag != share.tag);
+            }
+            return Err(e);
+        }
 
         // TODO: Real implementation using Virtualization.framework:
         // 1. Create VZSharedDirectory(url: hostPath, readOnly: readOnly)
@@ -188,9 +282,20 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
-        entry.info.shared_dirs.retain(|d| d.tag != tag);
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let prev = entry.info.shared_dirs.clone();
+            entry.info.shared_dirs.retain(|d| d.tag != tag);
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(vm_id) {
+                entry.info.shared_dirs = previous;
+            }
+            return Err(e);
+        }
 
         // TODO: umount <guest_path> inside VM, detach VZ device
 

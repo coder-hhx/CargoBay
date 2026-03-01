@@ -1,4 +1,6 @@
 pub mod hypervisor;
+pub mod logging;
+mod store;
 pub mod vm;
 
 #[cfg(target_os = "macos")]
@@ -44,4 +46,16 @@ pub fn platform_info() -> &'static str {
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     { "Unknown (Stub)" }
+}
+
+pub fn config_dir() -> std::path::PathBuf {
+    store::config_dir()
+}
+
+pub fn data_dir() -> std::path::PathBuf {
+    store::data_dir()
+}
+
+pub fn log_dir() -> std::path::PathBuf {
+    store::log_dir()
 }

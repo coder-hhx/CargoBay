@@ -11,6 +11,11 @@ use reqwest::header::WWW_AUTHENTICATE;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
+use tonic::transport::Channel;
+
+use cargobay_core::proto::vm_service_client::VmServiceClient;
+use cargobay_core::proto as proto;
 
 #[derive(Parser)]
 #[command(name = "cargobay", version = "0.1.0", about = "Free, open-source alternative to OrbStack")]
@@ -255,9 +260,10 @@ fn connect_docker() -> Result<Docker, String> {
 
 #[tokio::main]
 async fn main() {
+    cargobay_core::logging::init();
     let cli = Cli::parse();
     match cli.command {
-        Commands::Vm { command } => handle_vm(command),
+        Commands::Vm { command } => handle_vm(command).await,
         Commands::Docker { command } => {
             if let Err(e) = handle_docker(command).await {
                 eprintln!("Error: {}", e);
@@ -270,7 +276,7 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Mount { command } => handle_mount(command),
+        Commands::Mount { command } => handle_mount(command).await,
         Commands::Status => {
             println!("CargoBay v0.1.0");
             println!("Platform: {}", cargobay_core::platform_info());
@@ -280,76 +286,251 @@ async fn main() {
                 Some(sock) => println!("Docker: connected ({})", sock),
                 None => println!("Docker: not found"),
             }
+
+            let addr = grpc_addr();
+            match connect_vm_service(&addr).await {
+                Ok(_) => println!("Daemon gRPC: connected ({})", addr),
+                Err(_) => println!("Daemon gRPC: not running ({})", addr),
+            }
         }
     }
 }
 
-fn handle_vm(cmd: VmCommands) {
-    let hv = cargobay_core::create_hypervisor();
+fn grpc_addr() -> String {
+    std::env::var("CARGOBAY_GRPC_ADDR").unwrap_or_else(|_| "127.0.0.1:50051".into())
+}
+
+fn grpc_endpoint(addr: &str) -> String {
+    if addr.starts_with("http://") || addr.starts_with("https://") {
+        addr.to_string()
+    } else {
+        format!("http://{}", addr)
+    }
+}
+
+async fn connect_vm_service(addr: &str) -> Result<VmServiceClient<Channel>, String> {
+    let endpoint = grpc_endpoint(addr);
+    let connect_fut = VmServiceClient::connect(endpoint.clone());
+    let client = tokio::time::timeout(Duration::from_secs(1), connect_fut)
+        .await
+        .map_err(|_| format!("Timed out connecting to daemon at {}", endpoint))?
+        .map_err(|e| format!("Failed to connect to daemon at {}: {}", endpoint, e))?;
+    Ok(client)
+}
+
+async fn resolve_vm_id_grpc(client: &mut VmServiceClient<Channel>, selector: &str) -> Result<String, String> {
+    let resp = client
+        .list_v_ms(proto::ListVMsRequest {})
+        .await
+        .map_err(|e| format!("Failed to list VMs: {}", e))?
+        .into_inner();
+
+    if resp.vms.iter().any(|vm| vm.vm_id == selector) {
+        return Ok(selector.to_string());
+    }
+    if let Some(vm) = resp.vms.iter().find(|vm| vm.name == selector) {
+        return Ok(vm.vm_id.clone());
+    }
+    Err(format!("VM not found: {}", selector))
+}
+
+fn resolve_vm_id_local(hv: &dyn cargobay_core::hypervisor::Hypervisor, selector: &str) -> Result<String, cargobay_core::hypervisor::HypervisorError> {
+    let vms = hv.list_vms()?;
+    if vms.iter().any(|vm| vm.id == selector) {
+        return Ok(selector.to_string());
+    }
+    if let Some(vm) = vms.into_iter().find(|vm| vm.name == selector) {
+        return Ok(vm.id);
+    }
+    Err(cargobay_core::hypervisor::HypervisorError::NotFound(selector.into()))
+}
+
+async fn handle_vm(cmd: VmCommands) {
+    let addr = grpc_addr();
+    let mut client = match connect_vm_service(&addr).await {
+        Ok(c) => Some(c),
+        Err(_) => None,
+    };
+
+    let hv = if client.is_none() {
+        Some(cargobay_core::create_hypervisor())
+    } else {
+        None
+    };
+
     match cmd {
         VmCommands::Create { name, cpus, memory, disk, rosetta } => {
-            use cargobay_core::hypervisor::VmConfig;
-            let config = VmConfig {
-                name: name.clone(),
-                cpus,
-                memory_mb: memory,
-                disk_gb: disk,
-                rosetta,
-                shared_dirs: vec![],
-            };
-            match hv.create_vm(config) {
-                Ok(id) => {
-                    println!("Created VM '{}' (id: {})", name, id);
-                    if rosetta {
-                        println!("  Rosetta x86_64 translation: enabled");
+            if let Some(client) = client.as_mut() {
+                let resp = client
+                    .create_vm(proto::CreateVmRequest {
+                        name: name.clone(),
+                        cpus,
+                        memory_mb: memory,
+                        disk_gb: disk,
+                        rosetta,
+                        shared_dirs: vec![],
+                    })
+                    .await;
+                match resp {
+                    Ok(r) => {
+                        let id = r.into_inner().vm_id;
+                        println!("Created VM '{}' (id: {})", name, id);
+                        if rosetta {
+                            println!("  Rosetta x86_64 translation: enabled");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
+            } else {
+                use cargobay_core::hypervisor::VmConfig;
+                let hv = hv.as_ref().unwrap();
+                let config = VmConfig {
+                    name: name.clone(),
+                    cpus,
+                    memory_mb: memory,
+                    disk_gb: disk,
+                    rosetta,
+                    shared_dirs: vec![],
+                };
+                match hv.create_vm(config) {
+                    Ok(id) => {
+                        println!("Created VM '{}' (id: {})", name, id);
+                        if rosetta {
+                            println!("  Rosetta x86_64 translation: enabled");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
         }
         VmCommands::Start { name } => {
-            match hv.start_vm(&name) {
-                Ok(()) => println!("Started VM '{}'", name),
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            if let Some(client) = client.as_mut() {
+                let id = match resolve_vm_id_grpc(client, &name).await {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                if let Err(e) = client.start_vm(proto::StartVmRequest { vm_id: id.clone() }).await {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Started VM '{}'", name);
+            } else {
+                let hv = hv.as_ref().unwrap();
+                let id = match resolve_vm_id_local(hv.as_ref(), &name) {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                match hv.start_vm(&id) {
+                    Ok(()) => println!("Started VM '{}'", name),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
         VmCommands::Stop { name } => {
-            match hv.stop_vm(&name) {
-                Ok(()) => println!("Stopped VM '{}'", name),
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            if let Some(client) = client.as_mut() {
+                let id = match resolve_vm_id_grpc(client, &name).await {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                if let Err(e) = client.stop_vm(proto::StopVmRequest { vm_id: id.clone() }).await {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Stopped VM '{}'", name);
+            } else {
+                let hv = hv.as_ref().unwrap();
+                let id = match resolve_vm_id_local(hv.as_ref(), &name) {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                match hv.stop_vm(&id) {
+                    Ok(()) => println!("Stopped VM '{}'", name),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
         VmCommands::Delete { name } => {
-            match hv.delete_vm(&name) {
-                Ok(()) => println!("Deleted VM '{}'", name),
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            if let Some(client) = client.as_mut() {
+                let id = match resolve_vm_id_grpc(client, &name).await {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                if let Err(e) = client.delete_vm(proto::DeleteVmRequest { vm_id: id.clone() }).await {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Deleted VM '{}'", name);
+            } else {
+                let hv = hv.as_ref().unwrap();
+                let id = match resolve_vm_id_local(hv.as_ref(), &name) {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                match hv.delete_vm(&id) {
+                    Ok(()) => println!("Deleted VM '{}'", name),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
         VmCommands::List => {
-            match hv.list_vms() {
-                Ok(vms) => {
-                    if vms.is_empty() {
-                        println!("No VMs found.");
-                        return;
+            if let Some(client) = client.as_mut() {
+                let resp = client.list_v_ms(proto::ListVMsRequest {}).await;
+                match resp {
+                    Ok(r) => {
+                        let vms = r.into_inner().vms;
+                        if vms.is_empty() {
+                            println!("No VMs found.");
+                            return;
+                        }
+                        println!("{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}", "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA", "MOUNTS");
+                        for vm in vms {
+                            println!(
+                                "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}",
+                                vm.vm_id,
+                                vm.name,
+                                vm.status,
+                                vm.cpus,
+                                format!("{}MB", vm.memory_mb),
+                                if vm.rosetta_enabled { "yes" } else { "no" },
+                                vm.shared_dirs.len(),
+                            );
+                        }
                     }
-                    println!("{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}", "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA", "MOUNTS");
-                    for vm in vms {
-                        println!(
-                            "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}",
-                            vm.id,
-                            vm.name,
-                            format!("{:?}", vm.state),
-                            vm.cpus,
-                            format!("{}MB", vm.memory_mb),
-                            if vm.rosetta_enabled { "yes" } else { "no" },
-                            vm.shared_dirs.len(),
-                        );
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
                     }
                 }
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            } else {
+                let hv = hv.as_ref().unwrap();
+                match hv.list_vms() {
+                    Ok(vms) => {
+                        if vms.is_empty() {
+                            println!("No VMs found.");
+                            return;
+                        }
+                        println!("{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}", "ID", "NAME", "STATE", "CPUS", "MEMORY", "ROSETTA", "MOUNTS");
+                        for vm in vms {
+                            println!(
+                                "{:<12} {:<20} {:<10} {:<6} {:<8} {:<8} {}",
+                                vm.id,
+                                vm.name,
+                                format!("{:?}", vm.state),
+                                vm.cpus,
+                                format!("{}MB", vm.memory_mb),
+                                if vm.rosetta_enabled { "yes" } else { "no" },
+                                vm.shared_dirs.len(),
+                            );
+                        }
+                    }
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
         VmCommands::LoginCmd { name, user, host, port } => {
@@ -363,43 +544,130 @@ fn handle_vm(cmd: VmCommands) {
     }
 }
 
-fn handle_mount(cmd: MountCommands) {
-    let hv = cargobay_core::create_hypervisor();
+async fn handle_mount(cmd: MountCommands) {
+    let addr = grpc_addr();
+    let mut client = match connect_vm_service(&addr).await {
+        Ok(c) => Some(c),
+        Err(_) => None,
+    };
+
+    let hv = if client.is_none() {
+        Some(cargobay_core::create_hypervisor())
+    } else {
+        None
+    };
+
     match cmd {
         MountCommands::Add { vm, tag, host_path, guest_path, readonly } => {
-            use cargobay_core::hypervisor::SharedDirectory;
-            let share = SharedDirectory {
-                tag: tag.clone(),
-                host_path: host_path.clone(),
-                guest_path: guest_path.clone(),
-                read_only: readonly,
-            };
-            match hv.mount_virtiofs(&vm, &share) {
-                Ok(()) => {
-                    println!("Mounted '{}' → {} (tag: {}{})", host_path, guest_path, tag, if readonly { ", read-only" } else { "" });
+            if let Some(client) = client.as_mut() {
+                let vm_id = match resolve_vm_id_grpc(client, &vm).await {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                let req = proto::MountVirtioFsRequest {
+                    vm_id,
+                    share: Some(proto::SharedDirectory {
+                        tag: tag.clone(),
+                        host_path: host_path.clone(),
+                        guest_path: guest_path.clone(),
+                        read_only: readonly,
+                    }),
+                };
+                if let Err(e) = client.mount_virtio_fs(req).await {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
                 }
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                println!("Mounted '{}' → {} (tag: {}{})", host_path, guest_path, tag, if readonly { ", read-only" } else { "" });
+            } else {
+                use cargobay_core::hypervisor::SharedDirectory;
+                let hv = hv.as_ref().unwrap();
+                let vm_id = match resolve_vm_id_local(hv.as_ref(), &vm) {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                let share = SharedDirectory {
+                    tag: tag.clone(),
+                    host_path: host_path.clone(),
+                    guest_path: guest_path.clone(),
+                    read_only: readonly,
+                };
+                match hv.mount_virtiofs(&vm_id, &share) {
+                    Ok(()) => {
+                        println!("Mounted '{}' → {} (tag: {}{})", host_path, guest_path, tag, if readonly { ", read-only" } else { "" });
+                    }
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
         MountCommands::Remove { vm, tag } => {
-            match hv.unmount_virtiofs(&vm, &tag) {
-                Ok(()) => println!("Unmounted tag '{}'", tag),
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            if let Some(client) = client.as_mut() {
+                let vm_id = match resolve_vm_id_grpc(client, &vm).await {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                if let Err(e) = client.unmount_virtio_fs(proto::UnmountVirtioFsRequest { vm_id, tag: tag.clone() }).await {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Unmounted tag '{}'", tag);
+            } else {
+                let hv = hv.as_ref().unwrap();
+                let vm_id = match resolve_vm_id_local(hv.as_ref(), &vm) {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                match hv.unmount_virtiofs(&vm_id, &tag) {
+                    Ok(()) => println!("Unmounted tag '{}'", tag),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
         MountCommands::List { vm } => {
-            match hv.list_virtiofs_mounts(&vm) {
-                Ok(mounts) => {
-                    if mounts.is_empty() {
-                        println!("No VirtioFS mounts for VM '{}'.", vm);
-                        return;
+            if let Some(client) = client.as_mut() {
+                let vm_id = match resolve_vm_id_grpc(client, &vm).await {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                let resp = client.list_virtio_fs_mounts(proto::ListVirtioFsMountsRequest { vm_id }).await;
+                match resp {
+                    Ok(r) => {
+                        let mounts = r.into_inner().mounts;
+                        if mounts.is_empty() {
+                            println!("No VirtioFS mounts for VM '{}'.", vm);
+                            return;
+                        }
+                        println!("{:<16} {:<30} {:<20} {}", "TAG", "HOST PATH", "GUEST PATH", "MODE");
+                        for m in mounts {
+                            println!(
+                                "{:<16} {:<30} {:<20} {}",
+                                m.tag,
+                                m.host_path,
+                                m.guest_path,
+                                if m.read_only { "ro" } else { "rw" }
+                            );
+                        }
                     }
-                    println!("{:<16} {:<30} {:<20} {}", "TAG", "HOST PATH", "GUEST PATH", "MODE");
-                    for m in mounts {
-                        println!("{:<16} {:<30} {:<20} {}", m.tag, m.host_path, m.guest_path, if m.read_only { "ro" } else { "rw" });
-                    }
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            } else {
+                let hv = hv.as_ref().unwrap();
+                let vm_id = match resolve_vm_id_local(hv.as_ref(), &vm) {
+                    Ok(id) => id,
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                };
+                match hv.list_virtiofs_mounts(&vm_id) {
+                    Ok(mounts) => {
+                        if mounts.is_empty() {
+                            println!("No VirtioFS mounts for VM '{}'.", vm);
+                            return;
+                        }
+                        println!("{:<16} {:<30} {:<20} {}", "TAG", "HOST PATH", "GUEST PATH", "MODE");
+                        for m in mounts {
+                            println!("{:<16} {:<30} {:<20} {}", m.tag, m.host_path, m.guest_path, if m.read_only { "ro" } else { "rw" });
+                        }
+                    }
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
             }
         }
     }

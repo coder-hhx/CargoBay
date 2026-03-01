@@ -8,13 +8,16 @@
 // on ARM Linux would use QEMU user-mode emulation instead.
 
 use crate::hypervisor::{Hypervisor, HypervisorError, SharedDirectory, VmConfig, VmInfo, VmState};
+use crate::store::{next_id_for_prefix, VmStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tracing::warn;
 
 /// Linux hypervisor backed by KVM (via rust-vmm).
 pub struct LinuxHypervisor {
     vms: Mutex<HashMap<String, VmEntry>>,
     next_id: Mutex<u64>,
+    store: VmStore,
 }
 
 struct VmEntry {
@@ -25,15 +28,54 @@ struct VmEntry {
 
 impl LinuxHypervisor {
     pub fn new() -> Self {
+        let store = VmStore::new();
+        let mut loaded = match store.load_vms() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to load VM store ({}): {}", store.path().display(), e);
+                vec![]
+            }
+        };
+
+        for vm in &mut loaded {
+            if vm.state != VmState::Stopped {
+                vm.state = VmState::Stopped;
+            }
+        }
+
+        let mut map: HashMap<String, VmEntry> = HashMap::new();
+        for vm in loaded.iter().cloned() {
+            map.insert(
+                vm.id.clone(),
+                VmEntry {
+                    info: vm,
+                    _virtiofsd_pids: HashMap::new(),
+                },
+            );
+        }
+
+        let next_id = next_id_for_prefix(&loaded, "kvm-");
         Self {
-            vms: Mutex::new(HashMap::new()),
-            next_id: Mutex::new(1),
+            vms: Mutex::new(map),
+            next_id: Mutex::new(next_id),
+            store,
         }
     }
 
     /// Check if KVM is available on this system.
     pub fn kvm_available() -> bool {
         std::path::Path::new("/dev/kvm").exists()
+    }
+
+    fn persist(&self) -> Result<(), HypervisorError> {
+        let vms = self
+            .vms
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.info.clone())
+            .collect::<Vec<_>>();
+        self.store.save_vms(&vms)
     }
 }
 
@@ -59,6 +101,16 @@ impl Hypervisor for LinuxHypervisor {
             }
         }
 
+        {
+            let vms = self.vms.lock().unwrap();
+            if vms.values().any(|e| e.info.name == config.name) {
+                return Err(HypervisorError::CreateFailed(format!(
+                    "VM name already exists: {}",
+                    config.name
+                )));
+            }
+        }
+
         let mut id_counter = self.next_id.lock().unwrap();
         let id = format!("kvm-{}", *id_counter);
         *id_counter += 1;
@@ -69,6 +121,7 @@ impl Hypervisor for LinuxHypervisor {
             state: VmState::Stopped,
             cpus: config.cpus,
             memory_mb: config.memory_mb,
+            disk_gb: config.disk_gb,
             rosetta_enabled: false,
             shared_dirs: config.shared_dirs,
         };
@@ -79,6 +132,10 @@ impl Hypervisor for LinuxHypervisor {
         };
 
         self.vms.lock().unwrap().insert(id.clone(), entry);
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().remove(&id);
+            return Err(e);
+        }
 
         // TODO: Real implementation using rust-vmm crates:
         // 1. Open /dev/kvm, create VM fd (KVM_CREATE_VM)
@@ -95,9 +152,20 @@ impl Hypervisor for LinuxHypervisor {
     }
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        entry.info.state = VmState::Running;
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = entry.info.state.clone();
+            entry.info.state = VmState::Running;
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(id) {
+                entry.info.state = previous;
+            }
+            return Err(e);
+        }
 
         // TODO: Real implementation:
         // 1. Run vCPU loop (KVM_RUN) in separate threads
@@ -108,22 +176,41 @@ impl Hypervisor for LinuxHypervisor {
     }
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        entry.info.state = VmState::Stopped;
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = entry.info.state.clone();
+            entry.info.state = VmState::Stopped;
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(id) {
+                entry.info.state = previous;
+            }
+            return Err(e);
+        }
 
         // TODO: Stop virtiofsd processes, clean up vCPU threads
 
-        entry._virtiofsd_pids.clear();
+        let mut vms = self.vms.lock().unwrap();
+        if let Some(entry) = vms.get_mut(id) {
+            entry._virtiofsd_pids.clear();
+        }
         Ok(())
     }
 
     fn delete_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        self.vms
+        let removed = self
+            .vms
             .lock()
             .unwrap()
             .remove(id)
             .ok_or(HypervisorError::NotFound(id.into()))?;
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().insert(id.to_string(), removed);
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -153,17 +240,26 @@ impl Hypervisor for LinuxHypervisor {
             )));
         }
 
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+        {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
 
-        if entry.info.shared_dirs.iter().any(|d| d.tag == share.tag) {
-            return Err(HypervisorError::VirtioFsError(format!(
-                "Mount tag already exists: {}",
-                share.tag
-            )));
+            if entry.info.shared_dirs.iter().any(|d| d.tag == share.tag) {
+                return Err(HypervisorError::VirtioFsError(format!(
+                    "Mount tag already exists: {}",
+                    share.tag
+                )));
+            }
+
+            entry.info.shared_dirs.push(share.clone());
         }
-
-        entry.info.shared_dirs.push(share.clone());
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(vm_id) {
+                entry.info.shared_dirs.retain(|d| d.tag != share.tag);
+            }
+            return Err(e);
+        }
 
         // TODO: Real implementation:
         // 1. Spawn virtiofsd --socket-path=/tmp/<tag>.sock --shared-dir=<host_path>
@@ -176,13 +272,26 @@ impl Hypervisor for LinuxHypervisor {
     }
 
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
-        entry.info.shared_dirs.retain(|d| d.tag != tag);
+        let (previous_dirs, previous_pids) = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let prev_dirs = entry.info.shared_dirs.clone();
+            let prev_pids = entry._virtiofsd_pids.clone();
+            entry.info.shared_dirs.retain(|d| d.tag != tag);
 
-        // TODO: Kill virtiofsd process, umount inside VM
+            // TODO: Kill virtiofsd process, umount inside VM
 
-        entry._virtiofsd_pids.remove(tag);
+            entry._virtiofsd_pids.remove(tag);
+            (prev_dirs, prev_pids)
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(vm_id) {
+                entry.info.shared_dirs = previous_dirs;
+                entry._virtiofsd_pids = previous_pids;
+            }
+            return Err(e);
+        }
         Ok(())
     }
 

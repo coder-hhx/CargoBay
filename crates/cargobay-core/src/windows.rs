@@ -12,13 +12,16 @@
 // Windows' built-in x86 emulation layer.
 
 use crate::hypervisor::{Hypervisor, HypervisorError, SharedDirectory, VmConfig, VmInfo, VmState};
+use crate::store::{next_id_for_prefix, VmStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tracing::warn;
 
 /// Windows hypervisor backed by Hyper-V / Windows Hypervisor Platform.
 pub struct WindowsHypervisor {
     vms: Mutex<HashMap<String, VmEntry>>,
     next_id: Mutex<u64>,
+    store: VmStore,
 }
 
 struct VmEntry {
@@ -29,9 +32,37 @@ struct VmEntry {
 
 impl WindowsHypervisor {
     pub fn new() -> Self {
+        let store = VmStore::new();
+        let mut loaded = match store.load_vms() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to load VM store ({}): {}", store.path().display(), e);
+                vec![]
+            }
+        };
+
+        for vm in &mut loaded {
+            if vm.state != VmState::Stopped {
+                vm.state = VmState::Stopped;
+            }
+        }
+
+        let mut map: HashMap<String, VmEntry> = HashMap::new();
+        for vm in loaded.iter().cloned() {
+            map.insert(
+                vm.id.clone(),
+                VmEntry {
+                    info: vm,
+                    _share_handles: HashMap::new(),
+                },
+            );
+        }
+
+        let next_id = next_id_for_prefix(&loaded, "hv-");
         Self {
-            vms: Mutex::new(HashMap::new()),
-            next_id: Mutex::new(1),
+            vms: Mutex::new(map),
+            next_id: Mutex::new(next_id),
+            store,
         }
     }
 
@@ -84,6 +115,17 @@ impl WindowsHypervisor {
 
         None
     }
+
+    fn persist(&self) -> Result<(), HypervisorError> {
+        let vms = self
+            .vms
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.info.clone())
+            .collect::<Vec<_>>();
+        self.store.save_vms(&vms)
+    }
 }
 
 impl Hypervisor for WindowsHypervisor {
@@ -108,6 +150,16 @@ impl Hypervisor for WindowsHypervisor {
             }
         }
 
+        {
+            let vms = self.vms.lock().unwrap();
+            if vms.values().any(|e| e.info.name == config.name) {
+                return Err(HypervisorError::CreateFailed(format!(
+                    "VM name already exists: {}",
+                    config.name
+                )));
+            }
+        }
+
         let mut id_counter = self.next_id.lock().unwrap();
         let id = format!("hv-{}", *id_counter);
         *id_counter += 1;
@@ -118,6 +170,7 @@ impl Hypervisor for WindowsHypervisor {
             state: VmState::Stopped,
             cpus: config.cpus,
             memory_mb: config.memory_mb,
+            disk_gb: config.disk_gb,
             rosetta_enabled: false,
             shared_dirs: config.shared_dirs,
         };
@@ -128,6 +181,10 @@ impl Hypervisor for WindowsHypervisor {
         };
 
         self.vms.lock().unwrap().insert(id.clone(), entry);
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().remove(&id);
+            return Err(e);
+        }
 
         // TODO: Real implementation using Windows Hypervisor Platform:
         // 1. WHvCreatePartition()
@@ -144,9 +201,20 @@ impl Hypervisor for WindowsHypervisor {
     }
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        entry.info.state = VmState::Running;
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = entry.info.state.clone();
+            entry.info.state = VmState::Running;
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(id) {
+                entry.info.state = previous;
+            }
+            return Err(e);
+        }
 
         // TODO: Real implementation:
         // 1. WHvRunVirtualProcessor() in separate threads per vCPU
@@ -158,10 +226,23 @@ impl Hypervisor for WindowsHypervisor {
     }
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        entry.info.state = VmState::Stopped;
-        entry._share_handles.clear();
+        let (previous, previous_handles) = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = entry.info.state.clone();
+            let handles = entry._share_handles.clone();
+            entry.info.state = VmState::Stopped;
+            entry._share_handles.clear();
+            (prev, handles)
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(id) {
+                entry.info.state = previous;
+                entry._share_handles = previous_handles;
+            }
+            return Err(e);
+        }
 
         // TODO: WHvCancelRunVirtualProcessor(), clean up
 
@@ -169,11 +250,16 @@ impl Hypervisor for WindowsHypervisor {
     }
 
     fn delete_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        self.vms
+        let removed = self
+            .vms
             .lock()
             .unwrap()
             .remove(id)
             .ok_or(HypervisorError::NotFound(id.into()))?;
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().insert(id.to_string(), removed);
+            return Err(e);
+        }
 
         // TODO: WHvDeletePartition()
 
@@ -206,17 +292,26 @@ impl Hypervisor for WindowsHypervisor {
             )));
         }
 
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+        {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
 
-        if entry.info.shared_dirs.iter().any(|d| d.tag == share.tag) {
-            return Err(HypervisorError::VirtioFsError(format!(
-                "Mount tag already exists: {}",
-                share.tag
-            )));
+            if entry.info.shared_dirs.iter().any(|d| d.tag == share.tag) {
+                return Err(HypervisorError::VirtioFsError(format!(
+                    "Mount tag already exists: {}",
+                    share.tag
+                )));
+            }
+
+            entry.info.shared_dirs.push(share.clone());
         }
-
-        entry.info.shared_dirs.push(share.clone());
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(vm_id) {
+                entry.info.shared_dirs.retain(|d| d.tag != share.tag);
+            }
+            return Err(e);
+        }
 
         // TODO: On Windows, use Plan 9 protocol (9P) or SMB for file sharing.
         // Native VirtioFS is not supported on Windows host yet.
@@ -226,10 +321,23 @@ impl Hypervisor for WindowsHypervisor {
     }
 
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
-        entry.info.shared_dirs.retain(|d| d.tag != tag);
-        entry._share_handles.remove(tag);
+        let (previous_dirs, previous_handles) = {
+            let mut vms = self.vms.lock().unwrap();
+            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let prev_dirs = entry.info.shared_dirs.clone();
+            let prev_handles = entry._share_handles.clone();
+            entry.info.shared_dirs.retain(|d| d.tag != tag);
+            entry._share_handles.remove(tag);
+            (prev_dirs, prev_handles)
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(entry) = vms.get_mut(vm_id) {
+                entry.info.shared_dirs = previous_dirs;
+                entry._share_handles = previous_handles;
+            }
+            return Err(e);
+        }
         Ok(())
     }
 

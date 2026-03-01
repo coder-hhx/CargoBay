@@ -213,3 +213,20 @@ if missing_in_zh or missing_in_en:
 sys.exit(0)
 '
 fi
+
+# Build check: ensure the Rust workspace compiles before every commit that touches code.
+should_build=0
+if printf '%s\n' "$staged_files" | grep -Eq '\.rs$|\.proto$|(^|/)Cargo\.toml$|(^|/)Cargo\.lock$'; then
+  should_build=1
+fi
+
+if [[ "$should_build" -eq 1 ]]; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "ERROR: cargo is required for pre-commit build checks (missing)."
+    echo "Install Rust (cargo/rustc) and try again."
+    exit 1
+  fi
+
+  echo "Running build check: cargo check --workspace --locked"
+  cargo check --workspace --locked
+fi

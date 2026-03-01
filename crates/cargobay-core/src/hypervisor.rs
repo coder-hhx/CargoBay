@@ -1,4 +1,5 @@
 use thiserror::Error;
+use serde::{Deserialize, Serialize};
 
 #[derive(Error, Debug)]
 pub enum HypervisorError {
@@ -12,6 +13,8 @@ pub enum HypervisorError {
     RosettaUnavailable(String),
     #[error("VirtioFS error: {0}")]
     VirtioFsError(String),
+    #[error("storage error: {0}")]
+    Storage(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -43,7 +46,7 @@ pub trait Hypervisor: Send + Sync {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VmConfig {
     pub name: String,
     pub cpus: u32,
@@ -68,7 +71,7 @@ impl Default for VmConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedDirectory {
     /// Tag used to identify the mount inside the VM.
     pub tag: String,
@@ -80,20 +83,26 @@ pub struct SharedDirectory {
     pub read_only: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VmInfo {
     pub id: String,
     pub name: String,
     pub state: VmState,
     pub cpus: u32,
     pub memory_mb: u64,
+    #[serde(default = "default_disk_gb")]
+    pub disk_gb: u64,
     /// Whether Rosetta x86_64 translation is enabled.
     pub rosetta_enabled: bool,
     /// Active VirtioFS mounts.
     pub shared_dirs: Vec<SharedDirectory>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+fn default_disk_gb() -> u64 {
+    20
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VmState {
     Running,
     Stopped,

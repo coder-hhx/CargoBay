@@ -144,13 +144,13 @@ cargo build --release --bin cargobay
 
 v0.1 预览版支持：
 
-- **创建 / 启动 / 停止 / 删除 / 列表**（内存预览版）
+- **创建 / 启动 / 停止 / 删除 / 列表**（预览版）
 - 创建时可设置 **CPU / 内存 / 磁盘**
 - **Rosetta 开关**（仅 macOS Apple Silicon；是否可用取决于 macOS 13+）
 - **VirtioFS 挂载列表**（UI 中会记录；真实挂载后续接入）
 - **登录命令**：生成 `ssh user@host -p <port>`（端口需你手动提供）
 
-> 注意：VM 状态目前仅在应用运行期间保存在内存中，暂未持久化。
+> 注意：VM 元数据会持久化到“配置”目录下的 `vms.json`，但真正的 VM 运行时后端仍在持续开发中。
 
 ### Images（镜像）
 
@@ -214,6 +214,14 @@ cargobay docker login-cmd web
 ```
 
 ### VM 命令
+
+> 可选：先启动 daemon 来管理 VM：
+>
+> ```bash
+> cargo run -p cargobay-daemon
+> ```
+>
+> CLI/GUI 在可连接到 daemon 时会自动通过 gRPC 调用（可用 `CARGOBAY_GRPC_ADDR` 配置地址）；不可用时会自动回退到本地模式。
 
 ```bash
 # 创建 VM（可自定义 CPU 核数与内存）
@@ -310,14 +318,24 @@ cargobay docker ps
 |----------|-------------|
 | `DOCKER_HOST` | 覆盖 Docker socket 路径 |
 | `RUST_LOG` | 日志级别（`info` / `debug` / `trace`） |
+| `CARGOBAY_GRPC_ADDR` | Daemon gRPC 地址（默认：`127.0.0.1:50051`） |
+| `CARGOBAY_DAEMON_PATH` | 覆盖 daemon 可执行文件路径（GUI 自动拉起） |
+| `CARGOBAY_CONFIG_DIR` | 覆盖配置目录（保存 `vms.json`） |
+| `CARGOBAY_DATA_DIR` | 覆盖数据目录 |
+| `CARGOBAY_LOG_DIR` | 覆盖日志目录 |
+| `CARGOBAY_LOG_RETENTION_DAYS` | 错误日志保留天数（默认：7） |
 
 ### 数据目录
 
-| 平台 | 配置 | 日志 |
-|----------|--------|------|
-| macOS | `~/Library/Application Support/com.cargobay.app/` | 同上 |
-| Linux | `~/.config/cargobay/` | `~/.local/share/cargobay/` |
-| Windows | `%APPDATA%\cargobay\` | 同上 |
+| 平台 | 配置 | 数据 | 日志 |
+|----------|--------|------|------|
+| macOS | `~/Library/Application Support/com.cargobay.app/` | 同上 | 同上 |
+| Linux | `~/.config/cargobay/` | `~/.local/share/cargobay/` | 同上 |
+| Windows | `%APPDATA%\cargobay\` | 同上 | 同上 |
+
+VM 元数据文件位于 `<config>/vms.json`。
+
+错误日志会写入“日志”目录，文件名为 `cargobay-error.log.YYYY-MM-DD`，并会自动清理（默认仅保留近 7 天）。
 
 ---
 

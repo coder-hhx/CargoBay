@@ -12,10 +12,34 @@ use reqwest::header::WWW_AUTHENTICATE;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use tauri::State;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::time::Duration;
+use tauri::{Manager, State};
+use tonic::transport::Channel;
+use tracing::{error, info, warn};
+
+use cargobay_core::proto::vm_service_client::VmServiceClient;
+use cargobay_core::proto as proto;
 
 pub struct AppState {
     hv: Box<dyn cargobay_core::hypervisor::Hypervisor>,
+    grpc_addr: String,
+    daemon: Mutex<Option<Child>>,
+}
+
+impl Drop for AppState {
+    fn drop(&mut self) {
+        let Ok(mut guard) = self.daemon.lock() else {
+            return;
+        };
+        let Some(mut child) = guard.take() else {
+            return;
+        };
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn detect_docker_socket() -> Option<String> {
@@ -88,6 +112,119 @@ fn docker_host_for_cli() -> Option<String> {
     #[cfg(not(any(unix, windows)))]
     {
         None
+    }
+}
+
+fn grpc_addr() -> String {
+    std::env::var("CARGOBAY_GRPC_ADDR").unwrap_or_else(|_| "127.0.0.1:50051".into())
+}
+
+fn grpc_endpoint(addr: &str) -> String {
+    if addr.starts_with("http://") || addr.starts_with("https://") {
+        addr.to_string()
+    } else {
+        format!("http://{}", addr)
+    }
+}
+
+async fn connect_vm_service(addr: &str) -> Result<VmServiceClient<Channel>, String> {
+    let endpoint = grpc_endpoint(addr);
+    let connect_fut = VmServiceClient::connect(endpoint.clone());
+    tokio::time::timeout(Duration::from_secs(1), connect_fut)
+        .await
+        .map_err(|_| format!("Timed out connecting to daemon at {}", endpoint))?
+        .map_err(|e| format!("Failed to connect to daemon at {}: {}", endpoint, e))
+}
+
+fn daemon_bin_name() -> &'static str {
+    if cfg!(windows) {
+        "cargobay-daemon.exe"
+    } else {
+        "cargobay-daemon"
+    }
+}
+
+fn spawn_daemon(grpc_addr: &str) -> Result<Child, String> {
+    let mut tried: Vec<String> = Vec::new();
+
+    if let Ok(path) = std::env::var("CARGOBAY_DAEMON_PATH") {
+        let mut cmd = Command::new(&path);
+        cmd.env("CARGOBAY_GRPC_ADDR", grpc_addr);
+        cmd.stdin(Stdio::null());
+        if cfg!(debug_assertions) {
+            cmd.stdout(Stdio::inherit());
+            cmd.stderr(Stdio::inherit());
+        } else {
+            cmd.stdout(Stdio::null());
+            cmd.stderr(Stdio::null());
+        }
+        return cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn daemon from CARGOBAY_DAEMON_PATH ({}): {}",
+                path, e
+            )
+        });
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(daemon_bin_name());
+            if candidate.is_file() {
+                let mut cmd = Command::new(&candidate);
+                cmd.env("CARGOBAY_GRPC_ADDR", grpc_addr);
+                cmd.stdin(Stdio::null());
+                if cfg!(debug_assertions) {
+                    cmd.stdout(Stdio::inherit());
+                    cmd.stderr(Stdio::inherit());
+                } else {
+                    cmd.stdout(Stdio::null());
+                    cmd.stderr(Stdio::null());
+                }
+                return cmd.spawn().map_err(|e| {
+                    format!(
+                        "Failed to spawn daemon next to GUI binary ({}): {}",
+                        candidate.display(),
+                        e
+                    )
+                });
+            }
+            tried.push(candidate.display().to_string());
+        }
+    }
+
+    tried.push("cargobay-daemon (PATH)".into());
+    let mut cmd = Command::new("cargobay-daemon");
+    cmd.env("CARGOBAY_GRPC_ADDR", grpc_addr);
+    cmd.stdin(Stdio::null());
+    if cfg!(debug_assertions) {
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+    } else {
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+    }
+
+    cmd.spawn().map_err(|e| {
+        format!(
+            "Failed to spawn daemon (tried: {}): {}",
+            tried.join(", "),
+            e
+        )
+    })
+}
+
+async fn wait_for_daemon(grpc_addr: &str, timeout: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if connect_vm_service(grpc_addr).await.is_ok() {
+            return true;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -395,6 +532,17 @@ impl From<cargobay_core::hypervisor::SharedDirectory> for SharedDirectoryDto {
     }
 }
 
+impl From<proto::SharedDirectory> for SharedDirectoryDto {
+    fn from(value: proto::SharedDirectory) -> Self {
+        Self {
+            tag: value.tag,
+            host_path: value.host_path,
+            guest_path: value.guest_path,
+            read_only: value.read_only,
+        }
+    }
+}
+
 fn vm_state_to_string(state: cargobay_core::hypervisor::VmState) -> String {
     match state {
         cargobay_core::hypervisor::VmState::Running => "running".into(),
@@ -404,7 +552,34 @@ fn vm_state_to_string(state: cargobay_core::hypervisor::VmState) -> String {
 }
 
 #[tauri::command]
-fn vm_list(state: State<'_, AppState>) -> Result<Vec<VmInfoDto>, String> {
+async fn vm_list(state: State<'_, AppState>) -> Result<Vec<VmInfoDto>, String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        let resp = client
+            .list_v_ms(proto::ListVMsRequest {})
+            .await
+            .map_err(|e| e.to_string())?
+            .into_inner();
+
+        return Ok(resp
+            .vms
+            .into_iter()
+            .map(|vm| VmInfoDto {
+                id: vm.vm_id,
+                name: vm.name,
+                state: vm.status,
+                cpus: vm.cpus,
+                memory_mb: vm.memory_mb,
+                disk_gb: vm.disk_gb,
+                rosetta_enabled: vm.rosetta_enabled,
+                mounts: vm
+                    .shared_dirs
+                    .into_iter()
+                    .map(SharedDirectoryDto::from)
+                    .collect(),
+            })
+            .collect());
+    }
+
     let vms = state.hv.list_vms().map_err(|e| e.to_string())?;
     Ok(vms
         .into_iter()
@@ -414,7 +589,7 @@ fn vm_list(state: State<'_, AppState>) -> Result<Vec<VmInfoDto>, String> {
             state: vm_state_to_string(vm.state),
             cpus: vm.cpus,
             memory_mb: vm.memory_mb,
-            disk_gb: 0,
+            disk_gb: vm.disk_gb,
             rosetta_enabled: vm.rosetta_enabled,
             mounts: vm
                 .shared_dirs
@@ -426,7 +601,7 @@ fn vm_list(state: State<'_, AppState>) -> Result<Vec<VmInfoDto>, String> {
 }
 
 #[tauri::command]
-fn vm_create(
+async fn vm_create(
     state: State<'_, AppState>,
     name: String,
     cpus: u32,
@@ -434,6 +609,22 @@ fn vm_create(
     disk_gb: u64,
     rosetta: bool,
 ) -> Result<String, String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        let resp = client
+            .create_vm(proto::CreateVmRequest {
+                name,
+                cpus,
+                memory_mb,
+                disk_gb,
+                rosetta,
+                shared_dirs: vec![],
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .into_inner();
+        return Ok(resp.vm_id);
+    }
+
     use cargobay_core::hypervisor::VmConfig;
     let config = VmConfig {
         name,
@@ -447,17 +638,41 @@ fn vm_create(
 }
 
 #[tauri::command]
-fn vm_start(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn vm_start(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        client
+            .start_vm(proto::StartVmRequest { vm_id: id })
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     state.hv.start_vm(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn vm_stop(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn vm_stop(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        client
+            .stop_vm(proto::StopVmRequest { vm_id: id })
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     state.hv.stop_vm(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn vm_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn vm_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        client
+            .delete_vm(proto::DeleteVmRequest { vm_id: id })
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     state.hv.delete_vm(&id).map_err(|e| e.to_string())
 }
 
@@ -470,7 +685,7 @@ fn vm_login_cmd(name: String, user: String, host: String, port: Option<u16>) -> 
 }
 
 #[tauri::command]
-fn vm_mount_add(
+async fn vm_mount_add(
     state: State<'_, AppState>,
     vm: String,
     tag: String,
@@ -478,6 +693,22 @@ fn vm_mount_add(
     guest_path: String,
     readonly: bool,
 ) -> Result<(), String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        client
+            .mount_virtio_fs(proto::MountVirtioFsRequest {
+                vm_id: vm,
+                share: Some(proto::SharedDirectory {
+                    tag,
+                    host_path,
+                    guest_path,
+                    read_only: readonly,
+                }),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     use cargobay_core::hypervisor::SharedDirectory;
     let share = SharedDirectory {
         tag,
@@ -489,12 +720,33 @@ fn vm_mount_add(
 }
 
 #[tauri::command]
-fn vm_mount_remove(state: State<'_, AppState>, vm: String, tag: String) -> Result<(), String> {
+async fn vm_mount_remove(state: State<'_, AppState>, vm: String, tag: String) -> Result<(), String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        client
+            .unmount_virtio_fs(proto::UnmountVirtioFsRequest { vm_id: vm, tag })
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     state.hv.unmount_virtiofs(&vm, &tag).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn vm_mount_list(state: State<'_, AppState>, vm: String) -> Result<Vec<SharedDirectoryDto>, String> {
+async fn vm_mount_list(state: State<'_, AppState>, vm: String) -> Result<Vec<SharedDirectoryDto>, String> {
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        let resp = client
+            .list_virtio_fs_mounts(proto::ListVirtioFsMountsRequest { vm_id: vm })
+            .await
+            .map_err(|e| e.to_string())?
+            .into_inner();
+        return Ok(resp
+            .mounts
+            .into_iter()
+            .map(SharedDirectoryDto::from)
+            .collect());
+    }
+
     let mounts = state.hv.list_virtiofs_mounts(&vm).map_err(|e| e.to_string())?;
     Ok(mounts.into_iter().map(SharedDirectoryDto::from).collect())
 }
@@ -762,9 +1014,12 @@ fn parse_bearer_auth_params(header_value: &str) -> Option<HashMap<String, String
 }
 
 pub fn run() {
+    cargobay_core::logging::init();
     tauri::Builder::default()
         .manage(AppState {
             hv: cargobay_core::create_hypervisor(),
+            grpc_addr: grpc_addr(),
+            daemon: Mutex::new(None),
         })
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -773,6 +1028,41 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            let state = app.state::<AppState>();
+            let grpc_addr = state.grpc_addr.clone();
+            let daemon_up = tauri::async_runtime::block_on(async {
+                connect_vm_service(&grpc_addr).await.is_ok()
+            });
+
+            if daemon_up {
+                info!("CargoBay daemon already running at {}", grpc_addr);
+                return Ok(());
+            }
+
+            info!("CargoBay daemon not detected at {}, starting it", grpc_addr);
+            match spawn_daemon(&grpc_addr) {
+                Ok(child) => {
+                    if let Ok(mut guard) = state.daemon.lock() {
+                        *guard = Some(child);
+                    }
+
+                    let ready = tauri::async_runtime::block_on(async {
+                        wait_for_daemon(&grpc_addr, Duration::from_secs(5)).await
+                    });
+                    if ready {
+                        info!("CargoBay daemon is ready at {}", grpc_addr);
+                    } else {
+                        warn!(
+                            "CargoBay daemon did not become ready in time ({}), falling back to local hypervisor",
+                            grpc_addr
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to start CargoBay daemon: {}", e);
+                }
             }
             Ok(())
         })

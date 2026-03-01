@@ -1,24 +1,70 @@
 use crate::hypervisor::{Hypervisor, HypervisorError, SharedDirectory, VmConfig, VmInfo, VmState};
+use crate::store::{next_id_for_prefix, VmStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tracing::warn;
 
 /// Stub hypervisor for development/testing on unsupported platforms.
 pub struct StubHypervisor {
     vms: Mutex<HashMap<String, VmInfo>>,
     next_id: Mutex<u64>,
+    store: VmStore,
 }
 
 impl StubHypervisor {
     pub fn new() -> Self {
-        Self {
-            vms: Mutex::new(HashMap::new()),
-            next_id: Mutex::new(1),
+        let store = VmStore::new();
+        let mut loaded = match store.load_vms() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to load VM store ({}): {}", store.path().display(), e);
+                vec![]
+            }
+        };
+
+        for vm in &mut loaded {
+            if vm.state != VmState::Stopped {
+                vm.state = VmState::Stopped;
+            }
         }
+
+        let mut map: HashMap<String, VmInfo> = HashMap::new();
+        for vm in loaded.iter().cloned() {
+            map.insert(vm.id.clone(), vm);
+        }
+
+        let next_id = next_id_for_prefix(&loaded, "stub-");
+        Self {
+            vms: Mutex::new(map),
+            next_id: Mutex::new(next_id),
+            store,
+        }
+    }
+
+    fn persist(&self) -> Result<(), HypervisorError> {
+        let vms = self
+            .vms
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        self.store.save_vms(&vms)
     }
 }
 
 impl Hypervisor for StubHypervisor {
     fn create_vm(&self, config: VmConfig) -> Result<String, HypervisorError> {
+        {
+            let vms = self.vms.lock().unwrap();
+            if vms.values().any(|vm| vm.name == config.name) {
+                return Err(HypervisorError::CreateFailed(format!(
+                    "VM name already exists: {}",
+                    config.name
+                )));
+            }
+        }
+
         let mut id_counter = self.next_id.lock().unwrap();
         let id = format!("stub-{}", *id_counter);
         *id_counter += 1;
@@ -29,33 +75,65 @@ impl Hypervisor for StubHypervisor {
             state: VmState::Stopped,
             cpus: config.cpus,
             memory_mb: config.memory_mb,
+            disk_gb: config.disk_gb,
             rosetta_enabled: config.rosetta,
             shared_dirs: config.shared_dirs,
         };
         self.vms.lock().unwrap().insert(id.clone(), info);
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().remove(&id);
+            return Err(e);
+        }
         Ok(id)
     }
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let vm = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        vm.state = VmState::Running;
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let vm = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = vm.state.clone();
+            vm.state = VmState::Running;
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(vm) = vms.get_mut(id) {
+                vm.state = previous;
+            }
+            return Err(e);
+        }
         Ok(())
     }
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let vm = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
-        vm.state = VmState::Stopped;
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let vm = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let prev = vm.state.clone();
+            vm.state = VmState::Stopped;
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(vm) = vms.get_mut(id) {
+                vm.state = previous;
+            }
+            return Err(e);
+        }
         Ok(())
     }
 
     fn delete_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        self.vms
+        let removed = self
+            .vms
             .lock()
             .unwrap()
             .remove(id)
             .ok_or(HypervisorError::NotFound(id.into()))?;
+        if let Err(e) = self.persist() {
+            self.vms.lock().unwrap().insert(id.to_string(), removed);
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -64,16 +142,42 @@ impl Hypervisor for StubHypervisor {
     }
 
     fn mount_virtiofs(&self, vm_id: &str, share: &SharedDirectory) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let vm = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
-        vm.shared_dirs.push(share.clone());
+        {
+            let mut vms = self.vms.lock().unwrap();
+            let vm = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            if vm.shared_dirs.iter().any(|d| d.tag == share.tag) {
+                return Err(HypervisorError::VirtioFsError(format!(
+                    "Mount tag already exists: {}",
+                    share.tag
+                )));
+            }
+            vm.shared_dirs.push(share.clone());
+        }
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(vm) = vms.get_mut(vm_id) {
+                vm.shared_dirs.retain(|d| d.tag != share.tag);
+            }
+            return Err(e);
+        }
         Ok(())
     }
 
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
-        let mut vms = self.vms.lock().unwrap();
-        let vm = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
-        vm.shared_dirs.retain(|d| d.tag != tag);
+        let previous = {
+            let mut vms = self.vms.lock().unwrap();
+            let vm = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let prev = vm.shared_dirs.clone();
+            vm.shared_dirs.retain(|d| d.tag != tag);
+            prev
+        };
+        if let Err(e) = self.persist() {
+            let mut vms = self.vms.lock().unwrap();
+            if let Some(vm) = vms.get_mut(vm_id) {
+                vm.shared_dirs = previous;
+            }
+            return Err(e);
+        }
         Ok(())
     }
 
