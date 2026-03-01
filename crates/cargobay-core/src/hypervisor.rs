@@ -1,5 +1,5 @@
-use thiserror::Error;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum HypervisorError {
@@ -28,16 +28,26 @@ pub trait Hypervisor: Send + Sync {
     fn list_vms(&self) -> Result<Vec<VmInfo>, HypervisorError>;
 
     /// Check if Rosetta x86_64 translation is available on this platform.
-    fn rosetta_available(&self) -> bool { false }
+    fn rosetta_available(&self) -> bool {
+        false
+    }
 
     /// Mount a host directory into the VM via VirtioFS.
-    fn mount_virtiofs(&self, _vm_id: &str, _share: &SharedDirectory) -> Result<(), HypervisorError> {
-        Err(HypervisorError::VirtioFsError("VirtioFS not supported on this platform".into()))
+    fn mount_virtiofs(
+        &self,
+        _vm_id: &str,
+        _share: &SharedDirectory,
+    ) -> Result<(), HypervisorError> {
+        Err(HypervisorError::VirtioFsError(
+            "VirtioFS not supported on this platform".into(),
+        ))
     }
 
     /// Unmount a VirtioFS share from the VM.
     fn unmount_virtiofs(&self, _vm_id: &str, _tag: &str) -> Result<(), HypervisorError> {
-        Err(HypervisorError::VirtioFsError("VirtioFS not supported on this platform".into()))
+        Err(HypervisorError::VirtioFsError(
+            "VirtioFS not supported on this platform".into(),
+        ))
     }
 
     /// List active VirtioFS mounts for a VM.

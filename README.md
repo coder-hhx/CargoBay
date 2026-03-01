@@ -5,7 +5,7 @@
 <h1 align="center">CargoBay</h1>
 
 <p align="center">
-  <strong>Free, open-source alternative to OrbStack.</strong><br>
+  <strong>Free, open-source desktop for containers and Linux VMs.</strong><br>
   Lightweight Linux VMs, Docker containers, and Kubernetes — all in one app.
 </p>
 

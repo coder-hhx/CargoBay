@@ -83,8 +83,13 @@ impl Args {
                     );
                 }
                 "--cpus" => {
-                    let raw = it.next().ok_or_else(|| "--cpus requires a value".to_string())?;
-                    cpus = Some(raw.parse::<usize>().map_err(|_| "Invalid --cpus".to_string())?);
+                    let raw = it
+                        .next()
+                        .ok_or_else(|| "--cpus requires a value".to_string())?;
+                    cpus = Some(
+                        raw.parse::<usize>()
+                            .map_err(|_| "Invalid --cpus".to_string())?,
+                    );
                 }
                 "--memory-mb" => {
                     let raw = it
@@ -151,13 +156,13 @@ fn run(args: Args) -> Result<(), String> {
         });
     });
 
-    rx
-        .recv_timeout(Duration::from_secs(30))
+    rx.recv_timeout(Duration::from_secs(30))
         .map_err(|_| "Timed out waiting for VZ start completion".to_string())??;
 
     if let Some(path) = ready_file {
         let _ = std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
-        std::fs::write(&path, b"ready\n").map_err(|e| format!("Failed to write ready file: {}", e))?;
+        std::fs::write(&path, b"ready\n")
+            .map_err(|e| format!("Failed to write ready file: {}", e))?;
     }
 
     tracing::info!("VZ VM started (pid {})", std::process::id());
@@ -178,9 +183,9 @@ fn start_vm_on_queue(
     use objc2_foundation::{NSArray, NSError, NSFileHandle, NSString, NSURL};
     use std::ptr;
 
-    use objc2::{AnyThread, ClassType};
     use objc2::extern_class;
     use objc2::runtime::NSObject;
+    use objc2::{AnyThread, ClassType};
 
     extern_class!(
         #[unsafe(super(NSObject))]
@@ -317,12 +322,15 @@ fn start_vm_on_queue(
         if disk_error.is_null() {
             "Failed to create disk attachment".to_string()
         } else {
-            format!("Failed to create disk attachment: {}", unsafe { &*disk_error })
+            format!("Failed to create disk attachment: {}", unsafe {
+                &*disk_error
+            })
         }
     })?;
 
-    let block_device: Retained<VZVirtioBlockDeviceConfiguration> =
-        unsafe { msg_send![VZVirtioBlockDeviceConfiguration::alloc(), initWithAttachment: &*attachment] };
+    let block_device: Retained<VZVirtioBlockDeviceConfiguration> = unsafe {
+        msg_send![VZVirtioBlockDeviceConfiguration::alloc(), initWithAttachment: &*attachment]
+    };
     let block_device_ref: &VZStorageDeviceConfiguration = &*block_device;
     let storage_devices = NSArray::from_slice(&[block_device_ref]);
 
@@ -362,10 +370,7 @@ fn start_vm_on_queue(
     let _: () = unsafe { msg_send![&*config, setBootLoader: boot_loader_ref] };
     let _: () = unsafe { msg_send![&*config, setCPUCount: args.cpus] };
 
-    let memory_bytes = args
-        .memory_mb
-        .saturating_mul(1024)
-        .saturating_mul(1024);
+    let memory_bytes = args.memory_mb.saturating_mul(1024).saturating_mul(1024);
     let _: () = unsafe { msg_send![&*config, setMemorySize: memory_bytes] };
     let _: () = unsafe { msg_send![&*config, setStorageDevices: &*storage_devices] };
     let _: () = unsafe { msg_send![&*config, setNetworkDevices: &*network_devices] };
@@ -378,10 +383,9 @@ fn start_vm_on_queue(
         return Err(if validate_error.is_null() {
             "VZ configuration validation failed".to_string()
         } else {
-            format!(
-                "VZ configuration validation failed: {}",
-                unsafe { &*validate_error }
-            )
+            format!("VZ configuration validation failed: {}", unsafe {
+                &*validate_error
+            })
         });
     }
 

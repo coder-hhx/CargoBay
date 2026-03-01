@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  cargobay_gui_lib::run();
+    cargobay_gui_lib::run();
 }

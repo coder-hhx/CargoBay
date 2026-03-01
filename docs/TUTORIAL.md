@@ -2,7 +2,7 @@
 
 > **English** · [中文](TUTORIAL.zh.md)
 >
-> CargoBay is a free, open-source alternative to OrbStack. Lightweight Docker container management through a native desktop GUI (Tauri + React) and a Rust-powered CLI.
+> CargoBay is a free, open-source desktop app for Docker containers and lightweight Linux VMs, with a native GUI (Tauri + React) and a Rust-powered CLI.
 
 ---
 

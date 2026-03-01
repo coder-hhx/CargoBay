@@ -5,7 +5,7 @@
 <h1 align="center">CargoBay</h1>
 
 <p align="center">
-  <strong>OrbStack 的免费开源替代方案。</strong><br>
+  <strong>免费开源的容器与 Linux 虚拟机桌面工具。</strong><br>
   轻量级 Linux 虚拟机、Docker 容器、Kubernetes —— 集成在一个应用里。
 </p>
 

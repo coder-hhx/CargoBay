@@ -145,7 +145,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
 
-    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("vms.json");
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("vms.json");
     let unique = format!(
         "{}.{}.{}",
         std::process::id(),

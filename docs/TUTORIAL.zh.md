@@ -2,7 +2,7 @@
 
 > [English](TUTORIAL.md) · **中文**
 >
-> CargoBay 是 OrbStack 的免费开源替代方案。通过 Tauri + React 原生桌面 GUI 与 Rust 命令行工具，提供轻量级容器与虚拟机管理。
+> CargoBay 是一款免费开源的 Docker 容器与轻量 Linux 虚拟机桌面工具，提供 Tauri + React 原生桌面 GUI 与 Rust 命令行。
 
 ---
 

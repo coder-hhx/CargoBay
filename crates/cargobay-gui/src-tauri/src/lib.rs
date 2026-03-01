@@ -1,12 +1,11 @@
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-
-use bollard::Docker;
 use bollard::container::{
     Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
     StartContainerOptions, StopContainerOptions,
 };
 use bollard::image::CreateImageOptions;
 use bollard::service::HostConfig;
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+use bollard::Docker;
 use futures_util::stream::TryStreamExt;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::{Deserialize, Serialize};
@@ -19,8 +18,8 @@ use tauri::{Manager, State};
 use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
+use cargobay_core::proto;
 use cargobay_core::proto::vm_service_client::VmServiceClient;
-use cargobay_core::proto as proto;
 
 pub struct AppState {
     hv: Box<dyn cargobay_core::hypervisor::Hypervisor>,
@@ -74,7 +73,9 @@ fn connect_docker() -> Result<Docker, String> {
             return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
         }
-        return Err("No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into());
+        return Err(
+            "No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into(),
+        );
     }
 
     #[cfg(windows)]
@@ -84,16 +85,20 @@ fn connect_docker() -> Result<Docker, String> {
             r"//./pipe/dockerDesktopLinuxEngine",
         ];
         for pipe in &candidates {
-            if let Ok(d) = Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION) {
+            if let Ok(d) = Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION)
+            {
                 return Ok(d);
             }
         }
-        return Err("No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into());
+        return Err(
+            "No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into(),
+        );
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        Docker::connect_with_local_defaults().map_err(|e| format!("Failed to connect to Docker: {}", e))
+        Docker::connect_with_local_defaults()
+            .map_err(|e| format!("Failed to connect to Docker: {}", e))
     }
 }
 
@@ -247,45 +252,80 @@ async fn list_containers() -> Result<Vec<ContainerInfo>, String> {
         ..Default::default()
     };
 
-    let containers = docker.list_containers(Some(opts)).await.map_err(|e| e.to_string())?;
+    let containers = docker
+        .list_containers(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
 
-    Ok(containers.into_iter().map(|c| {
-        let ports = c.ports.unwrap_or_default().iter().filter_map(|p| {
-            p.public_port.map(|pub_p| format!("{}:{}", pub_p, p.private_port))
-        }).collect::<Vec<_>>().join(", ");
+    Ok(containers
+        .into_iter()
+        .map(|c| {
+            let ports = c
+                .ports
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|p| {
+                    p.public_port
+                        .map(|pub_p| format!("{}:{}", pub_p, p.private_port))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
 
-        let full_id = c.id.unwrap_or_default();
-        let id = full_id.chars().take(12).collect::<String>();
+            let full_id = c.id.unwrap_or_default();
+            let id = full_id.chars().take(12).collect::<String>();
 
-        ContainerInfo {
-            id,
-            name: c.names.unwrap_or_default().first()
-                .unwrap_or(&String::new()).trim_start_matches('/').to_string(),
-            image: c.image.unwrap_or_default(),
-            state: c.state.unwrap_or_default(),
-            status: c.status.unwrap_or_default(),
-            ports,
-        }
-    }).collect())
+            ContainerInfo {
+                id,
+                name: c
+                    .names
+                    .unwrap_or_default()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .trim_start_matches('/')
+                    .to_string(),
+                image: c.image.unwrap_or_default(),
+                state: c.state.unwrap_or_default(),
+                status: c.status.unwrap_or_default(),
+                ports,
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
 async fn stop_container(id: String) -> Result<(), String> {
     let docker = connect_docker()?;
-    docker.stop_container(&id, Some(StopContainerOptions { t: 10 })).await.map_err(|e| e.to_string())
+    docker
+        .stop_container(&id, Some(StopContainerOptions { t: 10 }))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn start_container(id: String) -> Result<(), String> {
     let docker = connect_docker()?;
-    docker.start_container(&id, None::<StartContainerOptions<String>>).await.map_err(|e| e.to_string())
+    docker
+        .start_container(&id, None::<StartContainerOptions<String>>)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn remove_container(id: String) -> Result<(), String> {
     let docker = connect_docker()?;
-    let _ = docker.stop_container(&id, Some(StopContainerOptions { t: 10 })).await;
-    docker.remove_container(&id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await.map_err(|e| e.to_string())
+    let _ = docker
+        .stop_container(&id, Some(StopContainerOptions { t: 10 }))
+        .await;
+    docker
+        .remove_container(
+            &id,
+            Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -401,7 +441,11 @@ fn http_client() -> Result<reqwest::Client, String> {
 }
 
 #[tauri::command]
-async fn image_search(query: String, source: String, limit: usize) -> Result<Vec<ImageSearchResult>, String> {
+async fn image_search(
+    query: String,
+    source: String,
+    limit: usize,
+) -> Result<Vec<ImageSearchResult>, String> {
     let client = http_client()?;
     let src = source.to_ascii_lowercase();
     let mut items: Vec<ImageSearchResult> = Vec::new();
@@ -441,7 +485,9 @@ async fn image_load(path: String) -> Result<String, String> {
         if let Some(host) = docker_host {
             cmd.env("DOCKER_HOST", host);
         }
-        let out = cmd.output().map_err(|e| format!("Failed to run docker: {}", e))?;
+        let out = cmd
+            .output()
+            .map_err(|e| format!("Failed to run docker: {}", e))?;
         if !out.status.success() {
             return Err(format!(
                 "docker load failed (exit {}): {}",
@@ -464,7 +510,9 @@ async fn image_push(reference: String) -> Result<String, String> {
         if let Some(host) = docker_host {
             cmd.env("DOCKER_HOST", host);
         }
-        let out = cmd.output().map_err(|e| format!("Failed to run docker: {}", e))?;
+        let out = cmd
+            .output()
+            .map_err(|e| format!("Failed to run docker: {}", e))?;
         if !out.status.success() {
             return Err(format!(
                 "docker push failed (exit {}): {}",
@@ -487,7 +535,9 @@ async fn image_pack_container(container: String, tag: String) -> Result<String, 
         if let Some(host) = docker_host {
             cmd.env("DOCKER_HOST", host);
         }
-        let out = cmd.output().map_err(|e| format!("Failed to run docker: {}", e))?;
+        let out = cmd
+            .output()
+            .map_err(|e| format!("Failed to run docker: {}", e))?;
         if !out.status.success() {
             return Err(format!(
                 "docker commit failed (exit {}): {}",
@@ -677,7 +727,12 @@ async fn vm_delete(state: State<'_, AppState>, id: String) -> Result<(), String>
 }
 
 #[tauri::command]
-fn vm_login_cmd(name: String, user: String, host: String, port: Option<u16>) -> Result<String, String> {
+fn vm_login_cmd(
+    name: String,
+    user: String,
+    host: String,
+    port: Option<u16>,
+) -> Result<String, String> {
     let Some(port) = port else {
         return Err("VM login is not available yet. Specify an SSH port.".into());
     };
@@ -716,11 +771,18 @@ async fn vm_mount_add(
         guest_path,
         read_only: readonly,
     };
-    state.hv.mount_virtiofs(&vm, &share).map_err(|e| e.to_string())
+    state
+        .hv
+        .mount_virtiofs(&vm, &share)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn vm_mount_remove(state: State<'_, AppState>, vm: String, tag: String) -> Result<(), String> {
+async fn vm_mount_remove(
+    state: State<'_, AppState>,
+    vm: String,
+    tag: String,
+) -> Result<(), String> {
     if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
         client
             .unmount_virtio_fs(proto::UnmountVirtioFsRequest { vm_id: vm, tag })
@@ -729,11 +791,17 @@ async fn vm_mount_remove(state: State<'_, AppState>, vm: String, tag: String) ->
         return Ok(());
     }
 
-    state.hv.unmount_virtiofs(&vm, &tag).map_err(|e| e.to_string())
+    state
+        .hv
+        .unmount_virtiofs(&vm, &tag)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn vm_mount_list(state: State<'_, AppState>, vm: String) -> Result<Vec<SharedDirectoryDto>, String> {
+async fn vm_mount_list(
+    state: State<'_, AppState>,
+    vm: String,
+) -> Result<Vec<SharedDirectoryDto>, String> {
     if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
         let resp = client
             .list_virtio_fs_mounts(proto::ListVirtioFsMountsRequest { vm_id: vm })
@@ -747,7 +815,10 @@ async fn vm_mount_list(state: State<'_, AppState>, vm: String) -> Result<Vec<Sha
             .collect());
     }
 
-    let mounts = state.hv.list_virtiofs_mounts(&vm).map_err(|e| e.to_string())?;
+    let mounts = state
+        .hv
+        .list_virtiofs_mounts(&vm)
+        .map_err(|e| e.to_string())?;
     Ok(mounts.into_iter().map(SharedDirectoryDto::from).collect())
 }
 

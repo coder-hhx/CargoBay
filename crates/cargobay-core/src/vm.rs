@@ -17,7 +17,11 @@ impl StubHypervisor {
         let mut loaded = match store.load_vms() {
             Ok(v) => v,
             Err(e) => {
-                warn!("Failed to load VM store ({}): {}", store.path().display(), e);
+                warn!(
+                    "Failed to load VM store ({}): {}",
+                    store.path().display(),
+                    e
+                );
                 vec![]
             }
         };
@@ -90,7 +94,9 @@ impl Hypervisor for StubHypervisor {
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let previous = {
             let mut vms = self.vms.lock().unwrap();
-            let vm = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let vm = vms
+                .get_mut(id)
+                .ok_or(HypervisorError::NotFound(id.into()))?;
             let prev = vm.state.clone();
             vm.state = VmState::Running;
             prev
@@ -108,7 +114,9 @@ impl Hypervisor for StubHypervisor {
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let previous = {
             let mut vms = self.vms.lock().unwrap();
-            let vm = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let vm = vms
+                .get_mut(id)
+                .ok_or(HypervisorError::NotFound(id.into()))?;
             let prev = vm.state.clone();
             vm.state = VmState::Stopped;
             prev
@@ -144,7 +152,9 @@ impl Hypervisor for StubHypervisor {
     fn mount_virtiofs(&self, vm_id: &str, share: &SharedDirectory) -> Result<(), HypervisorError> {
         {
             let mut vms = self.vms.lock().unwrap();
-            let vm = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let vm = vms
+                .get_mut(vm_id)
+                .ok_or(HypervisorError::NotFound(vm_id.into()))?;
             if vm.shared_dirs.iter().any(|d| d.tag == share.tag) {
                 return Err(HypervisorError::VirtioFsError(format!(
                     "Mount tag already exists: {}",
@@ -166,7 +176,9 @@ impl Hypervisor for StubHypervisor {
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
         let previous = {
             let mut vms = self.vms.lock().unwrap();
-            let vm = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let vm = vms
+                .get_mut(vm_id)
+                .ok_or(HypervisorError::NotFound(vm_id.into()))?;
             let prev = vm.shared_dirs.clone();
             vm.shared_dirs.retain(|d| d.tag != tag);
             prev
@@ -183,7 +195,9 @@ impl Hypervisor for StubHypervisor {
 
     fn list_virtiofs_mounts(&self, vm_id: &str) -> Result<Vec<SharedDirectory>, HypervisorError> {
         let vms = self.vms.lock().unwrap();
-        let vm = vms.get(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+        let vm = vms
+            .get(vm_id)
+            .ok_or(HypervisorError::NotFound(vm_id.into()))?;
         Ok(vm.shared_dirs.clone())
     }
 }

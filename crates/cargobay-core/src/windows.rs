@@ -36,7 +36,11 @@ impl WindowsHypervisor {
         let mut loaded = match store.load_vms() {
             Ok(v) => v,
             Err(e) => {
-                warn!("Failed to load VM store ({}): {}", store.path().display(), e);
+                warn!(
+                    "Failed to load VM store ({}): {}",
+                    store.path().display(),
+                    e
+                );
                 vec![]
             }
         };
@@ -144,9 +148,10 @@ impl Hypervisor for WindowsHypervisor {
 
         for dir in &config.shared_dirs {
             if !std::path::Path::new(&dir.host_path).exists() {
-                return Err(HypervisorError::VirtioFsError(
-                    format!("Host path does not exist: {}", dir.host_path),
-                ));
+                return Err(HypervisorError::VirtioFsError(format!(
+                    "Host path does not exist: {}",
+                    dir.host_path
+                )));
             }
         }
 
@@ -203,7 +208,9 @@ impl Hypervisor for WindowsHypervisor {
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let previous = {
             let mut vms = self.vms.lock().unwrap();
-            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let entry = vms
+                .get_mut(id)
+                .ok_or(HypervisorError::NotFound(id.into()))?;
             let prev = entry.info.state.clone();
             entry.info.state = VmState::Running;
             prev
@@ -228,7 +235,9 @@ impl Hypervisor for WindowsHypervisor {
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let (previous, previous_handles) = {
             let mut vms = self.vms.lock().unwrap();
-            let entry = vms.get_mut(id).ok_or(HypervisorError::NotFound(id.into()))?;
+            let entry = vms
+                .get_mut(id)
+                .ok_or(HypervisorError::NotFound(id.into()))?;
             let prev = entry.info.state.clone();
             let handles = entry._share_handles.clone();
             entry.info.state = VmState::Stopped;
@@ -280,11 +289,7 @@ impl Hypervisor for WindowsHypervisor {
         false // Rosetta is macOS-only
     }
 
-    fn mount_virtiofs(
-        &self,
-        vm_id: &str,
-        share: &SharedDirectory,
-    ) -> Result<(), HypervisorError> {
+    fn mount_virtiofs(&self, vm_id: &str, share: &SharedDirectory) -> Result<(), HypervisorError> {
         if !std::path::Path::new(&share.host_path).exists() {
             return Err(HypervisorError::VirtioFsError(format!(
                 "Host path does not exist: {}",
@@ -294,7 +299,9 @@ impl Hypervisor for WindowsHypervisor {
 
         {
             let mut vms = self.vms.lock().unwrap();
-            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let entry = vms
+                .get_mut(vm_id)
+                .ok_or(HypervisorError::NotFound(vm_id.into()))?;
 
             if entry.info.shared_dirs.iter().any(|d| d.tag == share.tag) {
                 return Err(HypervisorError::VirtioFsError(format!(
@@ -323,7 +330,9 @@ impl Hypervisor for WindowsHypervisor {
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
         let (previous_dirs, previous_handles) = {
             let mut vms = self.vms.lock().unwrap();
-            let entry = vms.get_mut(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+            let entry = vms
+                .get_mut(vm_id)
+                .ok_or(HypervisorError::NotFound(vm_id.into()))?;
             let prev_dirs = entry.info.shared_dirs.clone();
             let prev_handles = entry._share_handles.clone();
             entry.info.shared_dirs.retain(|d| d.tag != tag);
@@ -341,12 +350,11 @@ impl Hypervisor for WindowsHypervisor {
         Ok(())
     }
 
-    fn list_virtiofs_mounts(
-        &self,
-        vm_id: &str,
-    ) -> Result<Vec<SharedDirectory>, HypervisorError> {
+    fn list_virtiofs_mounts(&self, vm_id: &str) -> Result<Vec<SharedDirectory>, HypervisorError> {
         let vms = self.vms.lock().unwrap();
-        let entry = vms.get(vm_id).ok_or(HypervisorError::NotFound(vm_id.into()))?;
+        let entry = vms
+            .get(vm_id)
+            .ok_or(HypervisorError::NotFound(vm_id.into()))?;
         Ok(entry.info.shared_dirs.clone())
     }
 }

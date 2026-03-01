@@ -25,10 +25,8 @@ pub fn init() {
 
         let error_appender = tracing_appender::rolling::daily(&log_dir, "cargobay-error.log");
 
-        let env_filter =
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                tracing_subscriber::EnvFilter::new("info")
-            });
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
         let stdout_layer = tracing_subscriber::fmt::layer()
             .with_writer(std::io::stderr)
@@ -39,7 +37,9 @@ pub fn init() {
             .with_writer(error_appender)
             .with_filter(LevelFilter::WARN);
 
-        let subscriber = tracing_subscriber::registry().with(stdout_layer).with(file_layer);
+        let subscriber = tracing_subscriber::registry()
+            .with(stdout_layer)
+            .with(file_layer);
 
         if let Err(e) = subscriber.try_init() {
             eprintln!("CargoBay logging: failed to init tracing subscriber: {}", e);
