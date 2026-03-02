@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # -----------------------------------------------------------
+  # Build release binaries
+  # -----------------------------------------------------------
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            cli-artifact: cargobay-macos-aarch64
+            daemon-artifact: cargobay-daemon-macos-aarch64
+          - name: macOS-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            cli-artifact: cargobay-macos-x86_64
+            daemon-artifact: cargobay-daemon-macos-x86_64
+          - name: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cli-artifact: cargobay-linux-x86_64
+            daemon-artifact: cargobay-daemon-linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Linux: system libraries required by Tauri / WebKitGTK
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # -- Build CLI --
+      - name: Build CLI (release)
+        run: cargo build --release --target ${{ matrix.target }} -p cargobay-cli
+
+      # -- Build daemon --
+      - name: Build daemon (release)
+        run: cargo build --release --target ${{ matrix.target }} -p cargobay-daemon
+
+      # -- Build cargobay-vz on macOS --
+      - name: Build cargobay-vz (release, macOS only)
+        if: runner.os == 'macOS'
+        run: cargo build --release --target ${{ matrix.target }} -p cargobay-vz
+
+      # -- Upload CLI binary --
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cli-artifact }}
+          path: target/${{ matrix.target }}/release/cargobay
+          if-no-files-found: error
+
+      # -- Upload daemon binary --
+      - name: Upload daemon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.daemon-artifact }}
+          path: target/${{ matrix.target }}/release/cargobay-daemon
+          if-no-files-found: error
+
+  # -----------------------------------------------------------
+  # Build Tauri desktop app (GUI)
+  # -----------------------------------------------------------
+  build-gui:
+    name: Tauri App (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: cargobay-gui-macos-aarch64
+          - name: macOS-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            artifact: cargobay-gui-macos-x86_64
+          - name: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: cargobay-gui-linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/cargobay-gui/package-lock.json
+
+      # Linux: system libraries required by Tauri / WebKitGTK
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: gui-release-${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        working-directory: crates/cargobay-gui
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/cargobay-gui
+          args: --target ${{ matrix.target }}
+
+      # Tauri bundles end up in target/<target>/release/bundle/
+      - name: Upload Tauri bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/macos/*.app
+            target/${{ matrix.target }}/release/bundle/deb/*.deb
+            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+
+  # -----------------------------------------------------------
+  # Create GitHub Release & attach assets
+  # -----------------------------------------------------------
+  release:
+    name: Publish Release
+    needs: [build, build-gui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display downloaded artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

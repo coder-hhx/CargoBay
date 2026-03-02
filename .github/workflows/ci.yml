@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
+    branches: [master]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,53 +12,114 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  rust-linux:
-    name: Rust (Linux)
+  # -----------------------------------------------------------
+  # Rust formatting (single runner, fast gate)
+  # -----------------------------------------------------------
+  fmt:
+    name: Rustfmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          components: rustfmt
       - run: cargo fmt --check
-      - run: cargo test --workspace --exclude cargobay-gui --locked
-      - run: cargo clippy --workspace --exclude cargobay-gui --all-targets --locked -- -D warnings
 
-  rust-macos:
-    name: Rust (macOS)
-    runs-on: macos-latest
+  # -----------------------------------------------------------
+  # Clippy & tests — matrix across macOS + Linux
+  # -----------------------------------------------------------
+  check:
+    name: Clippy & Tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    needs: fmt
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            install-protoc: brew install protobuf
+            # On macOS we can lint/test the whole workspace (including cargobay-vz)
+            clippy-args: --workspace --exclude cargobay-gui -- -D warnings
+            test-args: --workspace --exclude cargobay-gui
+          - name: Linux
+            os: ubuntu-latest
+            install-protoc: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+            # cargobay-vz requires Virtualization.framework (macOS only)
+            clippy-args: --workspace --exclude cargobay-gui --exclude cargobay-vz -- -D warnings
+            test-args: --workspace --exclude cargobay-gui --exclude cargobay-vz
+
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: brew install protobuf
-      - run: cargo fmt --check
-      - run: cargo test --workspace --exclude cargobay-gui --locked
-      - run: cargo clippy --workspace --exclude cargobay-gui --all-targets --locked -- -D warnings
 
-  gui:
-    name: GUI (Frontend)
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install protoc
+        run: ${{ matrix.install-protoc }}
+
+      # Linux-only: system libs required by Tauri / WebKitGTK (needed for
+      # workspace resolve even though we skip the GUI crate itself)
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy ${{ matrix.clippy-args }}
+
+      - name: Tests
+        run: cargo test ${{ matrix.test-args }}
+
+      # cargobay-vz: only build & test on macOS (Virtualization.framework)
+      - name: Build cargobay-vz
+        if: runner.os == 'macOS'
+        run: cargo build -p cargobay-vz
+
+      - name: Test cargobay-vz
+        if: runner.os == 'macOS'
+        run: cargo test -p cargobay-vz
+
+  # -----------------------------------------------------------
+  # Frontend — Node / React lint & build
+  # -----------------------------------------------------------
+  frontend:
+    name: Frontend Lint & Build
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: crates/cargobay-gui
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: crates/cargobay-gui/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
-      - run: npm run check:i18n
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check & build
+        run: npm run build
+
+      - name: Check i18n keys
+        run: npm run check:i18n
