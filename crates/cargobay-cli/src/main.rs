@@ -56,6 +56,11 @@ enum Commands {
         #[command(subcommand)]
         command: VolumeCommands,
     },
+    /// K3s (lightweight Kubernetes) management
+    K3s {
+        #[command(subcommand)]
+        command: K3sCommands,
+    },
     /// Show system status and platform info
     Status,
 }
@@ -308,6 +313,20 @@ enum VolumeCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum K3sCommands {
+    /// Show K3s cluster status
+    Status,
+    /// Download the K3s binary
+    Install,
+    /// Start the K3s cluster
+    Start,
+    /// Stop the K3s cluster
+    Stop,
+    /// Remove K3s binary and data
+    Uninstall,
+}
+
 fn detect_docker_socket() -> Option<String> {
     // Unix socket detection (macOS / Linux)
     #[cfg(unix)]
@@ -407,6 +426,12 @@ async fn main() {
         Commands::Mount { command } => handle_mount(command).await,
         Commands::Volume { command } => {
             if let Err(e) = handle_volume(command).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::K3s { command } => {
+            if let Err(e) = handle_k3s(command).await {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -2136,6 +2161,58 @@ async fn handle_volume(cmd: VolumeCommands) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
             println!("Removed volume '{}'", name);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_k3s(cmd: K3sCommands) -> Result<(), String> {
+    match cmd {
+        K3sCommands::Status => {
+            let status = cargobay_core::k3s::K3sManager::cluster_status()
+                .map_err(|e| e.to_string())?;
+            println!("K3s Status");
+            println!(
+                "  Installed: {}",
+                if status.installed { "yes" } else { "no" }
+            );
+            println!(
+                "  Running:   {}",
+                if status.running { "yes" } else { "no" }
+            );
+            if !status.version.is_empty() {
+                println!("  Version:   {}", status.version);
+            }
+            if status.running {
+                println!("  Nodes:     {}", status.node_count);
+            }
+            println!(
+                "  Kubeconfig: {}",
+                cargobay_core::k3s::K3sManager::kubeconfig_path().display()
+            );
+        }
+        K3sCommands::Install => {
+            println!("Downloading K3s...");
+            cargobay_core::k3s::K3sManager::install(None)
+                .await
+                .map_err(|e| e.to_string())?;
+            println!("K3s installed successfully.");
+        }
+        K3sCommands::Start => {
+            let config = cargobay_core::k3s::K3sConfig::default();
+            cargobay_core::k3s::K3sManager::start_cluster(&config)
+                .map_err(|e| e.to_string())?;
+            println!("K3s cluster started.");
+        }
+        K3sCommands::Stop => {
+            cargobay_core::k3s::K3sManager::stop_cluster()
+                .map_err(|e| e.to_string())?;
+            println!("K3s cluster stopped.");
+        }
+        K3sCommands::Uninstall => {
+            cargobay_core::k3s::K3sManager::uninstall()
+                .map_err(|e| e.to_string())?;
+            println!("K3s uninstalled.");
         }
     }
     Ok(())
