@@ -44,6 +44,7 @@ struct Args {
     memory_mb: u64,
     cmdline: String,
     ready_file: Option<std::path::PathBuf>,
+    console_log: Option<std::path::PathBuf>,
     rosetta: bool,
     /// Shared directories in "tag:host_path[:ro]" format.
     shared_dirs: Vec<String>,
@@ -54,7 +55,7 @@ impl Args {
     fn usage() -> &'static str {
         "Usage:\n  cargobay-vz --kernel <path> --disk <path> --cpus <n> --memory-mb <n> \
          [--initrd <path>] [--cmdline <str>] [--ready-file <path>] \
-         [--rosetta] [--share tag:host_path[:ro]]\n"
+         [--console-log <path>] [--rosetta] [--share tag:host_path[:ro]]\n"
     }
 
     fn parse() -> Result<Self, String> {
@@ -65,6 +66,7 @@ impl Args {
         let mut memory_mb: Option<u64> = None;
         let mut cmdline: Option<String> = None;
         let mut ready_file: Option<std::path::PathBuf> = None;
+        let mut console_log: Option<std::path::PathBuf> = None;
         let mut rosetta = false;
         let mut shared_dirs: Vec<String> = Vec::new();
 
@@ -126,6 +128,13 @@ impl Args {
                             .into(),
                     );
                 }
+                "--console-log" => {
+                    console_log = Some(
+                        it.next()
+                            .ok_or_else(|| "--console-log requires a value".to_string())?
+                            .into(),
+                    );
+                }
                 "--rosetta" => {
                     rosetta = true;
                 }
@@ -153,6 +162,7 @@ impl Args {
             memory_mb,
             cmdline,
             ready_file,
+            console_log,
             rosetta,
             shared_dirs,
         })
@@ -186,6 +196,9 @@ fn parse_shared_dir(spec: &str) -> Result<ffi::SharedDirFFI, String> {
 
 #[cfg(target_os = "macos")]
 fn run(args: Args) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
     let kernel_path = args
         .kernel
         .to_str()
@@ -205,6 +218,15 @@ fn run(args: Args) -> Result<(), String> {
                 .map(|s| s.to_string())
         })
         .transpose()?;
+    let console_log_path = args
+        .console_log
+        .as_ref()
+        .map(|p| {
+            p.to_str()
+                .ok_or_else(|| "Console log path is not valid UTF-8".to_string())
+                .map(|s| s.to_string())
+        })
+        .transpose()?;
 
     // Parse shared directory specs.
     let shared_dirs: Vec<ffi::SharedDirFFI> = args
@@ -218,7 +240,7 @@ fn run(args: Args) -> Result<(), String> {
         initrd_path,
         cmdline: args.cmdline.clone(),
         disk_path,
-        console_log_path: None,
+        console_log_path,
         cpus: args.cpus,
         memory_mb: args.memory_mb,
         rosetta: args.rosetta,
@@ -240,9 +262,59 @@ fn run(args: Args) -> Result<(), String> {
         handle.state()
     );
 
-    // Park the main thread; the VM runs on its dispatch queue.
-    // The process will be killed by MacOSHypervisor::stop_vm().
+    // Set up SIGTERM handler for graceful ACPI shutdown.
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    {
+        let flag = shutdown_requested.clone();
+        // SAFETY: We only set an atomic bool inside the signal handler, which is
+        // async-signal-safe in practice.
+        unsafe {
+            libc::signal(
+                libc::SIGTERM,
+                sigterm_handler as *const () as libc::sighandler_t,
+            );
+        }
+        // Store the flag in a global so the C signal handler can access it.
+        SHUTDOWN_FLAG.store(
+            flag.as_ref() as *const AtomicBool as *mut AtomicBool,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+
+    // Wait for SIGTERM or VM to stop on its own.
     loop {
-        std::thread::park();
+        if shutdown_requested.load(Ordering::SeqCst) {
+            tracing::info!("SIGTERM received, initiating graceful ACPI shutdown...");
+            match handle.stop(15.0) {
+                Ok(()) => tracing::info!("VM stopped gracefully"),
+                Err(e) => tracing::warn!("VM stop error: {}", e),
+            }
+            break;
+        }
+
+        // Check if the VM has stopped on its own (e.g., guest shutdown).
+        let state = handle.state();
+        if state == ffi::VzState::Stopped || state == ffi::VzState::Error {
+            tracing::info!("VM entered state {:?}, exiting.", state);
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+static SHUTDOWN_FLAG: std::sync::atomic::AtomicPtr<std::sync::atomic::AtomicBool> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(target_os = "macos")]
+extern "C" fn sigterm_handler(_sig: libc::c_int) {
+    let ptr = SHUTDOWN_FLAG.load(std::sync::atomic::Ordering::SeqCst);
+    if !ptr.is_null() {
+        unsafe {
+            (*ptr).store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 }

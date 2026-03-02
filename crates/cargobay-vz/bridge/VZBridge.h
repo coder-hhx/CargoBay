@@ -88,6 +88,15 @@ int32_t vz_destroy_vm(VZVMHandle handle, VZErrorString *out_error);
 ///   5 = pausing, 6 = resuming, 7 = stopping, -1 = unknown/invalid handle.
 int32_t vz_vm_state(VZVMHandle handle);
 
+/// Read console output from the VM's serial port log.
+/// Reads up to `buffer_len` bytes starting at `offset` into `buffer`.
+/// On success, writes the number of bytes actually read to `*out_bytes_read`
+/// and returns 0. Returns non-zero on error.
+int32_t vz_read_console(VZVMHandle handle, uint64_t offset,
+                         uint8_t *buffer, uint64_t buffer_len,
+                         uint64_t *out_bytes_read,
+                         VZErrorString *out_error);
+
 /// Check whether Rosetta translation is available on this system.
 /// Returns true on Apple Silicon with Rosetta support.
 bool vz_rosetta_available(void);

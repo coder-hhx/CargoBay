@@ -16,10 +16,10 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
+use tauri::async_runtime::JoinHandle;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State, WindowEvent};
-use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
@@ -1491,8 +1491,8 @@ async fn image_list() -> Result<Vec<LocalImageInfo>, String> {
         .into_iter()
         .map(|img| {
             let full_id = img.id.clone();
-            let short_id = if full_id.starts_with("sha256:") {
-                full_id[7..].chars().take(12).collect::<String>()
+            let short_id = if let Some(stripped) = full_id.strip_prefix("sha256:") {
+                stripped.chars().take(12).collect::<String>()
             } else {
                 full_id.chars().take(12).collect::<String>()
             };
@@ -1541,8 +1541,8 @@ async fn image_inspect(id: String) -> Result<ImageInspectInfo, String> {
     let detail = docker.inspect_image(&id).await.map_err(|e| e.to_string())?;
 
     let full_id = detail.id.clone().unwrap_or_default();
-    let short_id = if full_id.starts_with("sha256:") {
-        full_id[7..].chars().take(12).collect::<String>()
+    let short_id = if let Some(stripped) = full_id.strip_prefix("sha256:") {
+        stripped.chars().take(12).collect::<String>()
     } else {
         full_id.chars().take(12).collect::<String>()
     };

@@ -65,6 +65,15 @@ extern "C" {
     pub fn vz_destroy_vm(handle: VZVMHandle, out_error: *mut *mut c_char) -> i32;
 
     pub fn vz_vm_state(handle: VZVMHandle) -> i32;
+
+    pub fn vz_read_console(
+        handle: VZVMHandle,
+        offset: u64,
+        buffer: *mut u8,
+        buffer_len: u64,
+        out_bytes_read: *mut u64,
+        out_error: *mut *mut c_char,
+    ) -> i32;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +161,28 @@ impl VmHandle {
             return Err(take_error(err).unwrap_or_else(|| "unknown stop error".into()));
         }
         Ok(())
+    }
+
+    /// Read console output starting at `offset`. Returns bytes read.
+    /// The console output comes from the serial port log file configured
+    /// when the VM was created.
+    pub fn read_console(&self, offset: u64, buf: &mut [u8]) -> Result<usize, String> {
+        let mut bytes_read: u64 = 0;
+        let mut err: *mut c_char = ptr::null_mut();
+        let rc = unsafe {
+            vz_read_console(
+                self.raw,
+                offset,
+                buf.as_mut_ptr(),
+                buf.len() as u64,
+                &mut bytes_read,
+                &mut err,
+            )
+        };
+        if rc != 0 {
+            return Err(take_error(err).unwrap_or_else(|| "unknown console read error".into()));
+        }
+        Ok(bytes_read as usize)
     }
 }
 

@@ -37,6 +37,9 @@ struct VmEntry {
     _rosetta_mounted: bool,
     runner_pid: Option<u32>,
     runner: Option<Child>,
+    /// Paths to kernel/initrd/disk configured at create time.
+    kernel_path: Option<String>,
+    initrd_path: Option<String>,
 }
 
 fn vm_dir(id: &str) -> PathBuf {
@@ -113,6 +116,8 @@ impl MacOSHypervisor {
                     _rosetta_mounted: false,
                     runner_pid,
                     runner: None,
+                    kernel_path: None,
+                    initrd_path: None,
                 },
             );
         }
@@ -169,13 +174,27 @@ impl MacOSHypervisor {
         PathBuf::from("cargobay-vz")
     }
 
-    fn spawn_vz_runner(&self, vm: &VmInfo) -> Result<Child, HypervisorError> {
-        let kernel = std::env::var("CARGOBAY_VZ_KERNEL").map_err(|_| {
-            HypervisorError::CreateFailed(
-                "CARGOBAY_VZ_KERNEL is required to start a macOS VZ VM".into(),
-            )
-        })?;
-        let initrd = std::env::var("CARGOBAY_VZ_INITRD").ok();
+    fn spawn_vz_runner(
+        &self,
+        vm: &VmInfo,
+        kernel_path: Option<&str>,
+        initrd_path: Option<&str>,
+    ) -> Result<Child, HypervisorError> {
+        // Use explicitly configured kernel path, then env var as fallback.
+        let kernel = kernel_path
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("CARGOBAY_VZ_KERNEL").ok())
+            .ok_or_else(|| {
+                HypervisorError::CreateFailed(
+                    "No kernel_path configured and CARGOBAY_VZ_KERNEL is not set".into(),
+                )
+            })?;
+
+        // Use explicitly configured initrd path, then env var as fallback.
+        let initrd = initrd_path
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("CARGOBAY_VZ_INITRD").ok());
+
         let cmdline =
             std::env::var("CARGOBAY_VZ_CMDLINE").unwrap_or_else(|_| "console=hvc0".into());
 
@@ -209,7 +228,9 @@ impl MacOSHypervisor {
             .arg("--cmdline")
             .arg(cmdline)
             .arg("--ready-file")
-            .arg(&ready_file);
+            .arg(&ready_file)
+            .arg("--console-log")
+            .arg(&console_log);
 
         if let Some(initrd) = initrd {
             cmd.arg("--initrd").arg(initrd);
@@ -301,6 +322,8 @@ impl Hypervisor for MacOSHypervisor {
             _rosetta_mounted: false,
             runner_pid: None,
             runner: None,
+            kernel_path: config.kernel_path.clone(),
+            initrd_path: config.initrd_path.clone(),
         };
 
         self.vms.lock().unwrap().insert(id.clone(), entry);
@@ -310,21 +333,16 @@ impl Hypervisor for MacOSHypervisor {
             return Err(e);
         }
 
-        // TODO: Real implementation using Virtualization.framework FFI:
-        // 1. Create VZVirtualMachineConfiguration
-        // 2. Set VZLinuxBootLoader with kernel/initrd
-        // 3. Configure VZVirtioNetworkDeviceConfiguration
-        // 4. Configure VZVirtioBlockDeviceConfiguration for disk
-        // 5. If rosetta: Add VZLinuxRosettaDirectoryShare
-        // 6. For each shared_dir: Add VZVirtioFileSystemDeviceConfiguration
-        //    with VZSharedDirectory → VZSingleDirectoryShare
-        // 7. Validate configuration
+        // VM configuration (boot loader, network, storage, Rosetta, VirtioFS) is
+        // built by the cargobay-vz runner binary at start_vm() time via the Swift
+        // Virtualization.framework bridge. At create_vm() time we only allocate
+        // the VM directory and disk image.
 
         Ok(id)
     }
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let (already_running, need_persist, vm_info) = {
+        let (already_running, need_persist, vm_info, kernel_path, initrd_path) = {
             let mut vms = self.vms.lock().unwrap();
             let entry = vms
                 .get_mut(id)
@@ -351,7 +369,13 @@ impl Hypervisor for MacOSHypervisor {
                 entry.info.state = VmState::Running;
             }
 
-            (already_running, need_persist, entry.info.clone())
+            (
+                already_running,
+                need_persist,
+                entry.info.clone(),
+                entry.kernel_path.clone(),
+                entry.initrd_path.clone(),
+            )
         };
 
         if already_running {
@@ -361,7 +385,8 @@ impl Hypervisor for MacOSHypervisor {
             return Ok(());
         }
 
-        let mut child = self.spawn_vz_runner(&vm_info)?;
+        let mut child =
+            self.spawn_vz_runner(&vm_info, kernel_path.as_deref(), initrd_path.as_deref())?;
 
         let ready_file = vm_runner_ready_path(&vm_info.id);
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -436,11 +461,41 @@ impl Hypervisor for MacOSHypervisor {
             (child, pid_opt, prev, rosetta_prev)
         };
 
+        // Phase 1: Send SIGTERM for graceful ACPI shutdown (the runner
+        // process handles SIGTERM by calling vz_stop_vm with requestStop).
+        let runner_pid = if let Some(ref child) = child {
+            Some(child.id())
+        } else {
+            pid_opt
+        };
+
+        if let Some(pid) = runner_pid {
+            let _ = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        }
+
+        // Phase 2: Wait up to 15 seconds for graceful shutdown.
+        if let Some(pid) = runner_pid {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                if !pid_alive(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+
+            // Phase 3: Force kill if still alive.
+            if pid_alive(pid) {
+                warn!(
+                    "VM {} runner (pid {}) did not stop gracefully, sending SIGKILL",
+                    id, pid
+                );
+                let _ = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            }
+        }
+
+        // Wait for the child process to be reaped.
         if let Some(mut child) = child {
-            let _ = child.kill();
             let _ = child.wait();
-        } else if let Some(pid) = pid_opt {
-            let _ = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
         }
 
         let _ = std::fs::remove_file(vm_runner_pid_path(id));

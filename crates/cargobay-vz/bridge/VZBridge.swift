@@ -14,10 +14,13 @@ private final class VMInstance {
     let vm: VZVirtualMachine
     let queue: DispatchQueue
     var lastError: String?
+    /// Path to the console log file (if configured), for read-back.
+    var consoleLogPath: String?
 
-    init(vm: VZVirtualMachine, queue: DispatchQueue) {
+    init(vm: VZVirtualMachine, queue: DispatchQueue, consoleLogPath: String? = nil) {
         self.vm = vm
         self.queue = queue
+        self.consoleLogPath = consoleLogPath
     }
 }
 
@@ -184,6 +187,9 @@ public func vz_create_and_start_vm(
     networkDevice.attachment = VZNATNetworkDeviceAttachment()
     vzConfig.networkDevices = [networkDevice]
 
+    // --- Memory balloon (allows guest to report unused memory) ---
+    vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
+
     // --- Entropy ---
     vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 
@@ -301,7 +307,7 @@ public func vz_create_and_start_vm(
         return nil
     }
 
-    let instance = VMInstance(vm: virtualMachine, queue: queue)
+    let instance = VMInstance(vm: virtualMachine, queue: queue, consoleLogPath: consoleLogPath)
 
     // Start the VM
     queue.async {
@@ -343,47 +349,74 @@ public func vz_stop_vm(
         return -1
     }
 
-    let semaphore = DispatchSemaphore(value: 0)
-    var stopError: String? = nil
+    let timeout = timeoutSecs > 0 ? timeoutSecs : 10.0
+
+    // Step 1: Try ACPI graceful shutdown via requestStop (sends power button event).
+    let acpiSem = DispatchSemaphore(value: 0)
+    var acpiError: String? = nil
 
     instance.queue.async {
         if instance.vm.canRequestStop {
             do {
                 try instance.vm.requestStop()
-                stopError = nil
             } catch {
-                stopError = "Failed to request stop: \(error.localizedDescription)"
+                acpiError = "Failed to request ACPI stop: \(error.localizedDescription)"
             }
-        } else {
-            // Force stop if graceful stop is not possible
-            instance.vm.stop { error in
-                if let error = error {
-                    stopError = "Failed to stop VM: \(error.localizedDescription)"
-                }
-                semaphore.signal()
-            }
-            return
         }
-        semaphore.signal()
+        acpiSem.signal()
     }
 
-    let timeout = timeoutSecs > 0 ? timeoutSecs : 10.0
-    let waitResult = semaphore.wait(timeout: .now() + timeout)
-    if waitResult == .timedOut {
-        // Force stop
-        let forceSem = DispatchSemaphore(value: 0)
+    // Wait briefly for the requestStop call to complete.
+    let _ = acpiSem.wait(timeout: .now() + 2.0)
+
+    // Step 2: Poll the VM state until it stops, or the timeout expires.
+    let deadline = DispatchTime.now() + timeout
+    var stopped = false
+
+    while DispatchTime.now() < deadline {
+        let stateSem = DispatchSemaphore(value: 0)
+        var currentState: VZVirtualMachine.State = .running
+
         instance.queue.async {
-            instance.vm.stop { error in
-                if let error = error {
-                    stopError = "Force stop failed: \(error.localizedDescription)"
-                }
-                forceSem.signal()
-            }
+            currentState = instance.vm.state
+            stateSem.signal()
         }
-        let _ = forceSem.wait(timeout: .now() + 5.0)
+
+        let _ = stateSem.wait(timeout: .now() + 2.0)
+
+        if currentState == .stopped || currentState == .error {
+            stopped = true
+            break
+        }
+
+        Thread.sleep(forTimeInterval: 0.25)
     }
 
-    if let err = stopError {
+    if stopped {
+        return 0
+    }
+
+    // Step 3: Force stop (VZVirtualMachine.stop) as fallback.
+    let forceSem = DispatchSemaphore(value: 0)
+    var forceError: String? = nil
+
+    instance.queue.async {
+        instance.vm.stop { error in
+            if let error = error {
+                forceError = "Force stop failed: \(error.localizedDescription)"
+            }
+            forceSem.signal()
+        }
+    }
+
+    let forceResult = forceSem.wait(timeout: .now() + 5.0)
+    if forceResult == .timedOut {
+        let msg = acpiError ?? "Timed out waiting for VM to stop"
+        setError(outError, msg)
+        return -1
+    }
+
+    if let err = forceError {
         setError(outError, err)
         return -1
     }
@@ -458,4 +491,53 @@ public func vz_vm_state(_ handle: UnsafeMutableRawPointer?) -> Int32 {
 
     let _ = semaphore.wait(timeout: .now() + 5.0)
     return stateVal
+}
+
+// MARK: - Console read-back
+
+@_cdecl("vz_read_console")
+public func vz_read_console(
+    _ handle: UnsafeMutableRawPointer?,
+    _ offset: UInt64,
+    _ buffer: UnsafeMutablePointer<UInt8>?,
+    _ bufferLen: UInt64,
+    _ outBytesRead: UnsafeMutablePointer<UInt64>?,
+    _ outError: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard let instance = lookupVM(handle) else {
+        setError(outError, "Invalid VM handle")
+        return -1
+    }
+
+    guard let logPath = instance.consoleLogPath else {
+        // No console log configured; return 0 bytes (not an error).
+        outBytesRead?.pointee = 0
+        return 0
+    }
+
+    guard let buffer = buffer, bufferLen > 0 else {
+        setError(outError, "buffer is NULL or bufferLen is 0")
+        return -1
+    }
+
+    guard let fileHandle = FileHandle(forReadingAtPath: logPath) else {
+        // File does not exist yet; return 0 bytes.
+        outBytesRead?.pointee = 0
+        return 0
+    }
+    defer { fileHandle.closeFile() }
+
+    fileHandle.seek(toFileOffset: offset)
+    let data = fileHandle.readData(ofLength: Int(bufferLen))
+
+    if data.count > 0 {
+        data.withUnsafeBytes { rawBuf in
+            if let baseAddress = rawBuf.baseAddress {
+                buffer.initialize(from: baseAddress.assumingMemoryBound(to: UInt8.self), count: data.count)
+            }
+        }
+    }
+
+    outBytesRead?.pointee = UInt64(data.count)
+    return 0
 }
