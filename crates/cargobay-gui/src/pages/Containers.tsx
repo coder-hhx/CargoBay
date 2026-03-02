@@ -289,6 +289,7 @@ export function Containers({
     return () => {
       stopLogStream()
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showLogModal])
 
   if (loading) {
