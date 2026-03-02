@@ -103,32 +103,16 @@ export function Vms({
   const [consoleVmId, setConsoleVmId] = useState<string | null>(null)
   const [consoleVmName, setConsoleVmName] = useState("")
   const [consoleData, setConsoleData] = useState("")
-  const [consoleOffset, setConsoleOffset] = useState(0)
   const [autoScroll, setAutoScroll] = useState(true)
   const consoleEndRef = useRef<HTMLDivElement>(null)
   const consoleContainerRef = useRef<HTMLDivElement>(null)
-
-  const fetchConsole = useCallback(async (vmId: string, off: number) => {
-    try {
-      const [data, newOffset] = await invoke<[string, number]>("vm_console", {
-        id: vmId,
-        offset: off,
-      })
-      if (data.length > 0) {
-        setConsoleData(prev => prev + data)
-        setConsoleOffset(newOffset)
-      }
-    } catch (_e) {
-      // silently ignore fetch errors for console polling
-    }
-  }, [])
 
   // Poll console data when modal is open
   useEffect(() => {
     if (!consoleVmId) return
     // Initial full load
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setConsoleData("")
-    setConsoleOffset(0)
     let currentOffset = 0
     let cancelled = false
 
@@ -143,9 +127,8 @@ export function Vms({
         if (data.length > 0) {
           setConsoleData(prev => prev + data)
           currentOffset = newOffset
-          setConsoleOffset(newOffset)
         }
-      } catch (_e) {
+      } catch {
         // ignore
       }
     }
@@ -166,7 +149,6 @@ export function Vms({
     setConsoleVmId(vm.id)
     setConsoleVmName(vm.name || vm.id)
     setConsoleData("")
-    setConsoleOffset(0)
     setAutoScroll(true)
   }
 
@@ -174,13 +156,12 @@ export function Vms({
     setConsoleVmId(null)
     setConsoleVmName("")
     setConsoleData("")
-    setConsoleOffset(0)
   }
 
   const copyConsole = async () => {
     try {
       await navigator.clipboard.writeText(consoleData)
-    } catch (_e) {
+    } catch {
       // ignore
     }
   }
@@ -209,6 +190,7 @@ export function Vms({
   }, [vms])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchVmStats()
     const iv = setInterval(fetchVmStats, 5000)
     return () => clearInterval(iv)
@@ -614,7 +596,7 @@ export function Vms({
                 {t("autoScroll")}
               </label>
               <div className="console-toolbar-right">
-                <button className="btn xs" onClick={() => { setConsoleData(""); setConsoleOffset(0) }}>
+                <button className="btn xs" onClick={() => { setConsoleData("") }}>
                   {t("clear")}
                 </button>
                 <button className="btn xs" onClick={copyConsole}>

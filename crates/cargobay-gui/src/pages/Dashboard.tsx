@@ -91,6 +91,7 @@ export function Dashboard({
 
   useEffect(() => {
     if (running.length > 0 || runningVms.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchTotals()
       const iv = setInterval(fetchTotals, 5000)
       return () => clearInterval(iv)

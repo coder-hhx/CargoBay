@@ -163,7 +163,19 @@ impl Default for LinuxHypervisor {
 
 impl LinuxHypervisor {
     pub fn new() -> Self {
-        let store = VmStore::new();
+        Self::from_store(VmStore::new())
+    }
+
+    /// Build a hypervisor whose VM metadata is stored under `dir` instead of
+    /// the directory derived from environment variables.  This is useful in
+    /// tests to avoid races when multiple tests mutate `CARGOBAY_CONFIG_DIR`
+    /// in parallel.
+    #[cfg(test)]
+    fn with_dir(dir: &std::path::Path) -> Self {
+        Self::from_store(VmStore::with_dir(dir))
+    }
+
+    fn from_store(store: VmStore) -> Self {
         let mut loaded = match store.load_vms() {
             Ok(v) => v,
             Err(e) => {
@@ -1753,10 +1765,12 @@ mod tests {
     #[test]
     fn vms_persist_across_hypervisor_instances() {
         let (tmp_dir, _g1, _g2) = temp_config_dir();
+        let dir = std::path::PathBuf::from(&tmp_dir);
 
         if LinuxHypervisor::kvm_available() {
             // Create a VM with the first hypervisor instance.
-            let hyp1 = LinuxHypervisor::new();
+            // Use `with_dir` to avoid env-var races with parallel tests.
+            let hyp1 = LinuxHypervisor::with_dir(&dir);
             let config = VmConfig {
                 name: "persist-test".into(),
                 cpus: 4,
@@ -1765,8 +1779,9 @@ mod tests {
             };
             let id = hyp1.create_vm(config).unwrap();
 
-            // Create a second hypervisor instance; it should load the VM.
-            let hyp2 = LinuxHypervisor::new();
+            // Create a second hypervisor instance; it should load the VM
+            // from the same directory.
+            let hyp2 = LinuxHypervisor::with_dir(&dir);
             let vms = hyp2.list_vms().unwrap();
             assert_eq!(vms.len(), 1);
             assert_eq!(vms[0].id, id);

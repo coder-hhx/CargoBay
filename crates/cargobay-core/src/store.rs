@@ -28,6 +28,14 @@ impl VmStore {
         Self { path }
     }
 
+    /// Create a `VmStore` rooted at the given directory instead of reading
+    /// the config dir from environment variables.  This avoids races when
+    /// multiple tests run in parallel and mutate `CARGOBAY_CONFIG_DIR`.
+    pub fn with_dir(dir: &Path) -> Self {
+        let path = dir.join("vms.json");
+        Self { path }
+    }
+
     pub fn load_vms(&self) -> Result<Vec<VmInfo>, HypervisorError> {
         if !self.path.exists() {
             return Ok(vec![]);
