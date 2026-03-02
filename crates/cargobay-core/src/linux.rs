@@ -166,15 +166,6 @@ impl LinuxHypervisor {
         Self::from_store(VmStore::new())
     }
 
-    /// Build a hypervisor whose VM metadata is stored under `dir` instead of
-    /// the directory derived from environment variables.  This is useful in
-    /// tests to avoid races when multiple tests mutate `CARGOBAY_CONFIG_DIR`
-    /// in parallel.
-    #[cfg(test)]
-    fn with_dir(dir: &std::path::Path) -> Self {
-        Self::from_store(VmStore::with_dir(dir))
-    }
-
     fn from_store(store: VmStore) -> Self {
         let mut loaded = match store.load_vms() {
             Ok(v) => v,
@@ -1450,6 +1441,12 @@ mod tests {
     use super::*;
     use crate::hypervisor::{PortForward, SharedDirectory, VmConfig, VmState};
     use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    /// Global mutex to serialize tests that mutate process-wide env vars
+    /// (`CARGOBAY_CONFIG_DIR`, `CARGOBAY_DATA_DIR`).  Without this, parallel
+    /// tests race on env vars and produce flaky failures.
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     /// RAII guard that sets an env var and restores it on drop.
     struct EnvGuard {
@@ -1477,7 +1474,11 @@ mod tests {
         }
     }
 
-    fn temp_config_dir() -> (String, EnvGuard, EnvGuard) {
+    fn temp_config_dir() -> (String, EnvGuard, EnvGuard, std::sync::MutexGuard<'static, ()>) {
+        // Acquire the global mutex first so no other test can touch env vars
+        // while we hold it.
+        let lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
         let tmp = std::env::temp_dir().join(format!(
             "cargobay-linux-test-{}-{}",
             std::process::id(),
@@ -1490,7 +1491,7 @@ mod tests {
         let path = tmp.to_string_lossy().to_string();
         let g1 = EnvGuard::set("CARGOBAY_CONFIG_DIR", &path);
         let g2 = EnvGuard::set("CARGOBAY_DATA_DIR", &path);
-        (path, g1, g2)
+        (path, g1, g2, lock)
     }
 
     // -----------------------------------------------------------------------
@@ -1509,9 +1510,8 @@ mod tests {
 
     #[test]
     fn create_vm_stores_metadata() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         // create_vm will fail if /dev/kvm doesn't exist, which is expected
         // in CI. But we can test the metadata path before KVM is checked.
@@ -1551,9 +1551,8 @@ mod tests {
 
     #[test]
     fn create_vm_rejects_rosetta() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         let config = VmConfig {
             name: "rosetta-vm".into(),
@@ -1573,9 +1572,8 @@ mod tests {
 
     #[test]
     fn create_vm_rejects_duplicate_name() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         if LinuxHypervisor::kvm_available() {
             let config1 = VmConfig {
@@ -1600,9 +1598,8 @@ mod tests {
 
     #[test]
     fn delete_nonexistent_vm_returns_not_found() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         let result = hyp.delete_vm("kvm-nonexistent");
         assert!(result.is_err());
@@ -1611,9 +1608,8 @@ mod tests {
 
     #[test]
     fn stop_nonexistent_vm_returns_not_found() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         let result = hyp.stop_vm("kvm-nonexistent");
         assert!(result.is_err());
@@ -1621,9 +1617,8 @@ mod tests {
 
     #[test]
     fn start_nonexistent_vm_returns_not_found() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         let result = hyp.start_vm("kvm-nonexistent");
         assert!(result.is_err());
@@ -1631,9 +1626,8 @@ mod tests {
 
     #[test]
     fn list_vms_empty_initially() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         let vms = hyp.list_vms().unwrap();
         assert!(vms.is_empty());
@@ -1641,9 +1635,8 @@ mod tests {
 
     #[test]
     fn rosetta_not_available_on_linux() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
         assert!(!hyp.rosetta_available());
     }
 
@@ -1653,9 +1646,8 @@ mod tests {
 
     #[test]
     fn port_forward_operations() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         if LinuxHypervisor::kvm_available() {
             let config = VmConfig {
@@ -1703,9 +1695,8 @@ mod tests {
 
     #[test]
     fn virtiofs_mount_nonexistent_path_fails() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         if LinuxHypervisor::kvm_available() {
             let config = VmConfig {
@@ -1730,9 +1721,8 @@ mod tests {
 
     #[test]
     fn virtiofs_duplicate_tag_fails() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
-        let hyp = LinuxHypervisor::with_dir(&dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
+        let hyp = LinuxHypervisor::new();
 
         if LinuxHypervisor::kvm_available() {
             let share_dir = format!("{}/share", tmp_dir);
@@ -1775,13 +1765,11 @@ mod tests {
 
     #[test]
     fn vms_persist_across_hypervisor_instances() {
-        let (tmp_dir, _g1, _g2) = temp_config_dir();
-        let dir = std::path::PathBuf::from(&tmp_dir);
+        let (tmp_dir, _g1, _g2, _lock) = temp_config_dir();
 
         if LinuxHypervisor::kvm_available() {
             // Create a VM with the first hypervisor instance.
-            // Use `with_dir` to avoid env-var races with parallel tests.
-            let hyp1 = LinuxHypervisor::with_dir(&dir);
+            let hyp1 = LinuxHypervisor::new();
             let config = VmConfig {
                 name: "persist-test".into(),
                 cpus: 4,
@@ -1792,7 +1780,7 @@ mod tests {
 
             // Create a second hypervisor instance; it should load the VM
             // from the same directory.
-            let hyp2 = LinuxHypervisor::with_dir(&dir);
+            let hyp2 = LinuxHypervisor::new();
             let vms = hyp2.list_vms().unwrap();
             assert_eq!(vms.len(), 1);
             assert_eq!(vms[0].id, id);
