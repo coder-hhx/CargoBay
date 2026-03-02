@@ -14,7 +14,9 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, State};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Manager, State, WindowEvent};
 use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
@@ -1108,6 +1110,130 @@ fn parse_bearer_auth_params(header_value: &str) -> Option<HashMap<String, String
     Some(out)
 }
 
+/// Build and return the system tray menu.
+///
+/// Menu layout:
+///   CargoBay            (disabled title)
+///   ─────────────────
+///   Dashboard           → focus/show the main window
+///   Containers (N running)
+///   VMs (N running)
+///   ─────────────────
+///   Quit CargoBay       → exit the application
+fn build_tray_menu(
+    app: &tauri::AppHandle,
+    running_containers: usize,
+    running_vms: usize,
+) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+    let title_item = MenuItemBuilder::with_id("title", "CargoBay")
+        .enabled(false)
+        .build(app)?;
+
+    let sep1 = PredefinedMenuItem::separator(app)?;
+
+    let dashboard_item = MenuItemBuilder::with_id("dashboard", "Dashboard").build(app)?;
+
+    let containers_label = format!("Containers ({} running)", running_containers);
+    let containers_item =
+        MenuItemBuilder::with_id("containers", containers_label)
+            .enabled(false)
+            .build(app)?;
+
+    let vms_label = format!("VMs ({} running)", running_vms);
+    let vms_item = MenuItemBuilder::with_id("vms", vms_label)
+        .enabled(false)
+        .build(app)?;
+
+    let sep2 = PredefinedMenuItem::separator(app)?;
+
+    let quit_item = MenuItemBuilder::with_id("quit", "Quit CargoBay").build(app)?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&title_item)
+        .item(&sep1)
+        .item(&dashboard_item)
+        .item(&containers_item)
+        .item(&vms_item)
+        .item(&sep2)
+        .item(&quit_item)
+        .build()?;
+
+    Ok(menu)
+}
+
+/// Count containers with state == "running" via the Docker API.
+async fn count_running_containers() -> usize {
+    let Ok(docker) = connect_docker() else {
+        return 0;
+    };
+    let opts = ListContainersOptions::<String> {
+        all: true,
+        ..Default::default()
+    };
+    let Ok(containers) = docker.list_containers(Some(opts)).await else {
+        return 0;
+    };
+    containers
+        .iter()
+        .filter(|c| {
+            c.state
+                .as_deref()
+                .map(|s| s == "running")
+                .unwrap_or(false)
+        })
+        .count()
+}
+
+/// Count VMs with state == "running" via the gRPC daemon (or local hypervisor).
+async fn count_running_vms(app_state: &AppState) -> usize {
+    if let Ok(mut client) = connect_vm_service(&app_state.grpc_addr).await {
+        if let Ok(resp) = client
+            .list_v_ms(proto::ListVMsRequest {})
+            .await
+        {
+            return resp
+                .into_inner()
+                .vms
+                .iter()
+                .filter(|vm| vm.status == "running")
+                .count();
+        }
+    }
+    // Fallback to local hypervisor
+    if let Ok(vms) = app_state.hv.list_vms() {
+        return vms
+            .iter()
+            .filter(|vm| matches!(vm.state, cargobay_core::hypervisor::VmState::Running))
+            .count();
+    }
+    0
+}
+
+/// Refresh the tray menu with up-to-date container/VM counts.
+fn refresh_tray_menu(app: &tauri::AppHandle) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let running_containers = count_running_containers().await;
+        let running_vms = {
+            let state = app_handle.state::<AppState>();
+            count_running_vms(&state).await
+        };
+
+        if let Some(tray) = app_handle.tray_by_id("main-tray") {
+            match build_tray_menu(&app_handle, running_containers, running_vms) {
+                Ok(menu) => {
+                    if let Err(e) = tray.set_menu(Some(menu)) {
+                        error!("Failed to update tray menu: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to build tray menu: {}", e);
+                }
+            }
+        }
+    });
+}
+
 pub fn run() {
     cargobay_core::logging::init();
     tauri::Builder::default()
@@ -1118,6 +1244,7 @@ pub fn run() {
             daemon: Mutex::new(None),
         })
         .setup(|app| {
+            // ── Daemon startup ──────────────────────────────────────────
             let state = app.state::<AppState>();
             let grpc_addr = state.grpc_addr.clone();
             let daemon_up = tauri::async_runtime::block_on(async {
@@ -1126,33 +1253,72 @@ pub fn run() {
 
             if daemon_up {
                 info!("CargoBay daemon already running at {}", grpc_addr);
-                return Ok(());
-            }
+            } else {
+                info!("CargoBay daemon not detected at {}, starting it", grpc_addr);
+                match spawn_daemon(&grpc_addr) {
+                    Ok(child) => {
+                        if let Ok(mut guard) = state.daemon.lock() {
+                            *guard = Some(child);
+                        }
 
-            info!("CargoBay daemon not detected at {}, starting it", grpc_addr);
-            match spawn_daemon(&grpc_addr) {
-                Ok(child) => {
-                    if let Ok(mut guard) = state.daemon.lock() {
-                        *guard = Some(child);
+                        let ready = tauri::async_runtime::block_on(async {
+                            wait_for_daemon(&grpc_addr, Duration::from_secs(5)).await
+                        });
+                        if ready {
+                            info!("CargoBay daemon is ready at {}", grpc_addr);
+                        } else {
+                            warn!(
+                                "CargoBay daemon did not become ready in time ({}), falling back to local hypervisor",
+                                grpc_addr
+                            );
+                        }
                     }
-
-                    let ready = tauri::async_runtime::block_on(async {
-                        wait_for_daemon(&grpc_addr, Duration::from_secs(5)).await
-                    });
-                    if ready {
-                        info!("CargoBay daemon is ready at {}", grpc_addr);
-                    } else {
-                        warn!(
-                            "CargoBay daemon did not become ready in time ({}), falling back to local hypervisor",
-                            grpc_addr
-                        );
+                    Err(e) => {
+                        error!("Failed to start CargoBay daemon: {}", e);
                     }
                 }
-                Err(e) => {
-                    error!("Failed to start CargoBay daemon: {}", e);
-                }
             }
+
+            // ── System tray ─────────────────────────────────────────────
+            let app_handle = app.handle().clone();
+            let menu = build_tray_menu(&app_handle, 0, 0)?;
+
+            TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().cloned().unwrap())
+                .icon_as_template(true)
+                .tooltip("CargoBay")
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .on_menu_event(move |app, event| match event.id().as_ref() {
+                    "dashboard" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            // Initial tray menu refresh (to get real counts)
+            refresh_tray_menu(&app_handle);
+
             Ok(())
+        })
+        // ── Hide window on close instead of quitting ────────────────
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+
+                // Refresh the tray menu so counts are up-to-date when the
+                // user re-opens via the tray.
+                refresh_tray_menu(window.app_handle());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_containers,
