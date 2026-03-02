@@ -192,6 +192,7 @@ fn query_vm_network_stats(hyperv_name: &str) -> (u64, u64) {
 // VmEntry
 // -----------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct VmEntry {
     info: VmInfo,
     /// The Hyper-V internal VM name (CargoBay-<id>-<user_name>).
@@ -1217,7 +1218,7 @@ impl Hypervisor for WindowsHypervisor {
 
         // If VM is running, apply the rule immediately.
         if is_running {
-            if let Err(e) = Self::apply_port_forwards(&hyperv_name, &[pf.clone()]) {
+            if let Err(e) = Self::apply_port_forwards(&hyperv_name, std::slice::from_ref(pf)) {
                 warn!(
                     "Failed to apply port forward {}:{} immediately: {}",
                     pf.host_port, pf.guest_port, e

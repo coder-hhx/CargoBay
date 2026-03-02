@@ -253,7 +253,10 @@ impl K3sManager {
             ));
         }
 
-        info!("K3s cluster stopped");
+        #[cfg(unix)]
+        {
+            info!("K3s cluster stopped");
+        }
         Ok(())
     }
 
