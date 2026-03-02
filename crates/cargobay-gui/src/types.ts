@@ -7,6 +7,11 @@ export interface ContainerInfo {
   ports: string
 }
 
+export interface EnvVar {
+  key: string
+  value: string
+}
+
 export interface ImageSearchResult {
   source: string
   reference: string
@@ -75,6 +80,25 @@ export interface VolumeInfo {
   labels: Record<string, string>
   options: Record<string, string>
   scope: string
+}
+
+export interface LocalImageInfo {
+  id: string
+  repo_tags: string[]
+  size_bytes: number
+  size_human: string
+  created: number
+}
+
+export interface ImageInspectInfo {
+  id: string
+  repo_tags: string[]
+  size_bytes: number
+  created: string
+  architecture: string
+  os: string
+  docker_version: string
+  layers: number
 }
 
 export type NavPage = "dashboard" | "containers" | "vms" | "images" | "volumes" | "settings"

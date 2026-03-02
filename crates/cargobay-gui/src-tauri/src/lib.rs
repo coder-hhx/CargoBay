@@ -1,9 +1,9 @@
 use bollard::container::{
-    Config, CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
-    StartContainerOptions, StatsOptions, StopContainerOptions,
+    Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
+    RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::image::CreateImageOptions;
+use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions, TagImageOptions};
 use bollard::service::HostConfig;
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -254,6 +254,42 @@ pub struct VolumeInfo {
     scope: String,
 }
 
+#[derive(Serialize)]
+pub struct LocalImageInfo {
+    id: String,
+    repo_tags: Vec<String>,
+    size_bytes: u64,
+    size_human: String,
+    created: i64,
+}
+
+#[derive(Serialize)]
+pub struct ImageInspectInfo {
+    id: String,
+    repo_tags: Vec<String>,
+    size_bytes: u64,
+    created: String,
+    architecture: String,
+    os: String,
+    docker_version: String,
+    layers: usize,
+}
+
+fn format_bytes_human(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 #[tauri::command]
 async fn list_containers() -> Result<Vec<ContainerInfo>, String> {
     let docker = connect_docker()?;
@@ -354,6 +390,7 @@ async fn docker_run(
     cpus: Option<u32>,
     memory_mb: Option<u64>,
     pull: bool,
+    env: Option<Vec<String>>,
 ) -> Result<RunContainerResult, String> {
     let docker = connect_docker()?;
 
@@ -373,6 +410,7 @@ async fn docker_run(
     let config = Config::<String> {
         image: Some(image.clone()),
         host_config: Some(host_config),
+        env: env.filter(|v| !v.is_empty()),
         ..Default::default()
     };
 
@@ -481,6 +519,44 @@ fn container_exec_interactive_cmd(container_id: String) -> String {
     } else {
         format!("docker exec -it {} /bin/sh", container_id)
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnvVar {
+    key: String,
+    value: String,
+}
+
+#[tauri::command]
+async fn container_env(id: String) -> Result<Vec<EnvVar>, String> {
+    let docker = connect_docker()?;
+
+    let inspect = docker
+        .inspect_container(&id, None::<InspectContainerOptions>)
+        .await
+        .map_err(|e| format!("Failed to inspect container {}: {}", id, e))?;
+
+    let env_list = inspect
+        .config
+        .and_then(|c| c.env)
+        .unwrap_or_default();
+
+    Ok(env_list
+        .into_iter()
+        .map(|entry| {
+            if let Some((k, v)) = entry.split_once('=') {
+                EnvVar {
+                    key: k.to_string(),
+                    value: v.to_string(),
+                }
+            } else {
+                EnvVar {
+                    key: entry,
+                    value: String::new(),
+                }
+            }
+        })
+        .collect())
 }
 
 #[derive(Debug, Serialize)]
@@ -1342,6 +1418,102 @@ async fn volume_remove(name: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn image_list() -> Result<Vec<LocalImageInfo>, String> {
+    let docker = connect_docker()?;
+    let opts = ListImagesOptions::<String> {
+        all: false,
+        ..Default::default()
+    };
+    let images = docker
+        .list_images(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(images
+        .into_iter()
+        .map(|img| {
+            let full_id = img.id.clone();
+            let short_id = if full_id.starts_with("sha256:") {
+                full_id[7..].chars().take(12).collect::<String>()
+            } else {
+                full_id.chars().take(12).collect::<String>()
+            };
+            let size = img.size.max(0) as u64;
+            LocalImageInfo {
+                id: short_id,
+                repo_tags: img.repo_tags,
+                size_bytes: size,
+                size_human: format_bytes_human(size),
+                created: img.created,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn image_remove(id: String) -> Result<(), String> {
+    let docker = connect_docker()?;
+    let opts = RemoveImageOptions {
+        force: false,
+        noprune: false,
+    };
+    docker
+        .remove_image(&id, Some(opts), None)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn image_tag(source: String, repo: String, tag: String) -> Result<(), String> {
+    let docker = connect_docker()?;
+    let opts = TagImageOptions { repo: &repo, tag: &tag };
+    docker
+        .tag_image(&source, Some(opts))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn image_inspect(id: String) -> Result<ImageInspectInfo, String> {
+    let docker = connect_docker()?;
+    let detail = docker
+        .inspect_image(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let full_id = detail.id.clone().unwrap_or_default();
+    let short_id = if full_id.starts_with("sha256:") {
+        full_id[7..].chars().take(12).collect::<String>()
+    } else {
+        full_id.chars().take(12).collect::<String>()
+    };
+    let repo_tags = detail.repo_tags.clone().unwrap_or_default();
+    let size = detail.size.unwrap_or(0).max(0) as u64;
+    let created = detail.created.clone().unwrap_or_default();
+    let architecture = detail.architecture.clone().unwrap_or_default();
+    let os = detail.os.clone().unwrap_or_default();
+    let docker_version = detail.docker_version.clone().unwrap_or_default();
+    let layers = detail
+        .root_fs
+        .as_ref()
+        .and_then(|r| r.layers.as_ref())
+        .map(|l| l.len())
+        .unwrap_or(0);
+
+    Ok(ImageInspectInfo {
+        id: short_id,
+        repo_tags,
+        size_bytes: size,
+        created,
+        architecture,
+        os,
+        docker_version,
+        layers,
+    })
+}
+
 async fn docker_pull_image(docker: &Docker, reference: &str) -> Result<(), String> {
     let (from_image, tag) = split_image_reference(reference);
     let opts = CreateImageOptions {
@@ -1824,6 +1996,7 @@ pub fn run() {
             container_logs,
             container_exec,
             container_exec_interactive_cmd,
+            container_env,
             container_stats,
             image_search,
             image_tags,
@@ -1851,7 +2024,11 @@ pub fn run() {
             volume_list,
             volume_create,
             volume_inspect,
-            volume_remove
+            volume_remove,
+            image_list,
+            image_remove,
+            image_tag,
+            image_inspect
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

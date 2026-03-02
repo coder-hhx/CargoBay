@@ -1,8 +1,8 @@
 use bollard::container::{
-    Config, CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
-    StartContainerOptions, StopContainerOptions,
+    Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
+    RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
-use bollard::image::CreateImageOptions;
+use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions, TagImageOptions};
 use bollard::service::HostConfig;
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
 use bollard::Docker;
@@ -163,6 +163,9 @@ enum DockerCommands {
         /// Pull image before creating the container
         #[arg(long)]
         pull: bool,
+        /// Set environment variables (can be repeated, e.g. --env KEY=VALUE)
+        #[arg(long = "env", short = 'e')]
+        env: Vec<String>,
     },
     /// Print a shell login command for a container
     LoginCmd {
@@ -180,6 +183,11 @@ enum DockerCommands {
         /// Show timestamps
         #[arg(long)]
         timestamps: bool,
+    },
+    /// Show environment variables of a container
+    Env {
+        /// Container name or ID
+        id: String,
     },
 }
 
@@ -199,6 +207,25 @@ enum ImageCommands {
         reference: String,
         #[arg(long, default_value_t = 50)]
         limit: usize,
+    },
+    /// List local Docker images
+    List,
+    /// Remove a local Docker image
+    Remove {
+        /// Image ID or reference (e.g. nginx:latest)
+        reference: String,
+    },
+    /// Tag a local Docker image with a new name
+    Tag {
+        /// Source image reference (e.g. nginx:latest)
+        source: String,
+        /// Target tag in repo:tag format (e.g. myrepo/nginx:v1)
+        target: String,
+    },
+    /// Inspect a local Docker image (show details as JSON)
+    Inspect {
+        /// Image ID or reference
+        reference: String,
     },
     /// Load a local image archive into Docker (same as `docker load -i`)
     Load { path: String },
@@ -1290,6 +1317,132 @@ async fn handle_image(cmd: ImageCommands) -> Result<(), String> {
             }
             Ok(())
         }
+        ImageCommands::List => {
+            let docker = connect_docker()?;
+            let opts = ListImagesOptions::<String> {
+                all: false,
+                ..Default::default()
+            };
+            let images = docker
+                .list_images(Some(opts))
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if images.is_empty() {
+                println!("No local images found.");
+                return Ok(());
+            }
+
+            println!(
+                "{:<40} {:<14} {:<12} {}",
+                "REPOSITORY:TAG", "IMAGE ID", "SIZE", "CREATED"
+            );
+            for img in images {
+                let full_id = img.id.clone();
+                let short_id = if full_id.starts_with("sha256:") {
+                    full_id[7..].chars().take(12).collect::<String>()
+                } else {
+                    full_id.chars().take(12).collect::<String>()
+                };
+                let size = img.size.max(0) as u64;
+                let size_str = format_bytes(size);
+                let created = {
+                    let ts = img.created;
+                    if ts > 0 {
+                        // Simple UTC timestamp formatting without chrono
+                        let secs_per_min = 60i64;
+                        let secs_per_hour = 3600i64;
+                        let secs_per_day = 86400i64;
+                        let days_since_epoch = ts / secs_per_day;
+                        let time_of_day = ts % secs_per_day;
+                        let hours = time_of_day / secs_per_hour;
+                        let minutes = (time_of_day % secs_per_hour) / secs_per_min;
+
+                        // Simple days-since-epoch to Y-M-D (good enough for display)
+                        let mut y = 1970i64;
+                        let mut remaining = days_since_epoch;
+                        loop {
+                            let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
+                            if remaining < days_in_year { break; }
+                            remaining -= days_in_year;
+                            y += 1;
+                        }
+                        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+                        let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+                        let mut m = 0usize;
+                        for &md in &month_days {
+                            if remaining < md { break; }
+                            remaining -= md;
+                            m += 1;
+                        }
+                        format!("{:04}-{:02}-{:02} {:02}:{:02}", y, m + 1, remaining + 1, hours, minutes)
+                    } else {
+                        "-".to_string()
+                    }
+                };
+
+                if img.repo_tags.is_empty() {
+                    println!(
+                        "{:<40} {:<14} {:<12} {}",
+                        "<none>:<none>", short_id, size_str, created
+                    );
+                } else {
+                    for tag in &img.repo_tags {
+                        println!(
+                            "{:<40} {:<14} {:<12} {}",
+                            tag, short_id, size_str, created
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+        ImageCommands::Remove { reference } => {
+            let docker = connect_docker()?;
+            let opts = RemoveImageOptions {
+                force: false,
+                noprune: false,
+            };
+            let results = docker
+                .remove_image(&reference, Some(opts), None)
+                .await
+                .map_err(|e| e.to_string())?;
+            for info in results {
+                if let Some(deleted) = info.deleted {
+                    println!("Deleted: {}", deleted);
+                }
+                if let Some(untagged) = info.untagged {
+                    println!("Untagged: {}", untagged);
+                }
+            }
+            Ok(())
+        }
+        ImageCommands::Tag { source, target } => {
+            let docker = connect_docker()?;
+            let (repo, tag) = if let Some(pos) = target.rfind(':') {
+                (&target[..pos], &target[pos + 1..])
+            } else {
+                (target.as_str(), "latest")
+            };
+            let opts = TagImageOptions { repo, tag };
+            docker
+                .tag_image(&source, Some(opts))
+                .await
+                .map_err(|e| e.to_string())?;
+            println!("Tagged {} as {}", source, target);
+            Ok(())
+        }
+        ImageCommands::Inspect { reference } => {
+            let docker = connect_docker()?;
+            let detail = docker
+                .inspect_image(&reference)
+                .await
+                .map_err(|e| e.to_string())?;
+            let json = serde_json::to_string_pretty(&detail)
+                .map_err(|e| e.to_string())?;
+            println!("{}", json);
+            Ok(())
+        }
         ImageCommands::Load { path } => {
             let out = run_docker_cli(&["load", "-i", &path])?;
             if out.is_empty() {
@@ -1773,6 +1926,7 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
             cpus,
             memory,
             pull,
+            env,
         } => {
             if pull {
                 docker_pull_image(&docker, &image).await?;
@@ -1790,6 +1944,7 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
             let config = Config::<String> {
                 image: Some(image.clone()),
                 host_config: Some(host_config),
+                env: if env.is_empty() { None } else { Some(env) },
                 ..Default::default()
             };
 
@@ -1835,6 +1990,30 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
             let mut stream = docker.logs(&container, Some(opts));
             while let Some(chunk) = stream.try_next().await.map_err(|e| e.to_string())? {
                 print!("{}", chunk);
+            }
+        }
+        DockerCommands::Env { id } => {
+            let inspect = docker
+                .inspect_container(&id, None::<InspectContainerOptions>)
+                .await
+                .map_err(|e| format!("Failed to inspect container {}: {}", id, e))?;
+
+            let env_list = inspect
+                .config
+                .and_then(|c| c.env)
+                .unwrap_or_default();
+
+            if env_list.is_empty() {
+                println!("No environment variables set.");
+            } else {
+                println!("{:<32} VALUE", "KEY");
+                for entry in env_list {
+                    if let Some((k, v)) = entry.split_once('=') {
+                        println!("{:<32} {}", k, v);
+                    } else {
+                        println!("{:<32}", entry);
+                    }
+                }
             }
         }
     }

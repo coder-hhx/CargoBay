@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
+import { invoke } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 import { I } from "../icons"
 import { ErrorInline } from "../components/ErrorDisplay"
-import type { ImageSearchResult, RunContainerResult } from "../types"
+import type { ImageSearchResult, RunContainerResult, LocalImageInfo, ImageInspectInfo } from "../types"
 
 interface ImagesProps {
   imgQuery: string
@@ -59,6 +60,98 @@ export function Images({
   const [showImportModal, setShowImportModal] = useState(false)
   const canTags = (ref: string) => ref.includes(".") || ref.includes(":") || ref.startsWith("localhost/")
 
+  // Local images state
+  const [localImages, setLocalImages] = useState<LocalImageInfo[]>([])
+  const [localLoading, setLocalLoading] = useState(true)
+  const [localFilter, setLocalFilter] = useState("")
+  const [inspectInfo, setInspectInfo] = useState<ImageInspectInfo | null>(null)
+  const [inspectLoading, setInspectLoading] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState("")
+  const [showTagModal, setShowTagModal] = useState(false)
+  const [tagSource, setTagSource] = useState("")
+  const [tagRepo, setTagRepo] = useState("")
+  const [tagTag, setTagTag] = useState("")
+  const [tagLoading, setTagLoading] = useState(false)
+
+  const fetchLocalImages = useCallback(async () => {
+    try {
+      const result = await invoke<LocalImageInfo[]>("image_list")
+      setLocalImages(result)
+    } catch {
+      // silently ignore - Docker may not be running
+    } finally {
+      setLocalLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchLocalImages()
+    const iv = setInterval(fetchLocalImages, 10000)
+    return () => clearInterval(iv)
+  }, [fetchLocalImages])
+
+  const filteredImages = localImages.filter(img => {
+    if (!localFilter.trim()) return true
+    const q = localFilter.toLowerCase()
+    return img.id.toLowerCase().includes(q) ||
+      img.repo_tags.some(tag => tag.toLowerCase().includes(q))
+  })
+
+  const handleRemoveImage = async (ref: string) => {
+    try {
+      await invoke<void>("image_remove", { id: ref })
+      await fetchLocalImages()
+      setImgError("")
+    } catch (e) {
+      setImgError(String(e))
+    } finally {
+      setConfirmRemove("")
+    }
+  }
+
+  const handleInspect = async (ref: string) => {
+    setInspectLoading(true)
+    try {
+      const info = await invoke<ImageInspectInfo>("image_inspect", { id: ref })
+      setInspectInfo(info)
+    } catch (e) {
+      setImgError(String(e))
+    } finally {
+      setInspectLoading(false)
+    }
+  }
+
+  const openTagModal = (source: string) => {
+    setTagSource(source)
+    setTagRepo("")
+    setTagTag("latest")
+    setShowTagModal(true)
+  }
+
+  const handleTag = async () => {
+    if (!tagRepo.trim()) return
+    setTagLoading(true)
+    try {
+      await invoke<void>("image_tag", { source: tagSource, repo: tagRepo.trim(), tag: tagTag.trim() || "latest" })
+      await fetchLocalImages()
+      setShowTagModal(false)
+    } catch (e) {
+      setImgError(String(e))
+    } finally {
+      setTagLoading(false)
+    }
+  }
+
+  const formatCreated = (timestamp: number) => {
+    if (!timestamp) return "-"
+    try {
+      const d = new Date(timestamp * 1000)
+      return d.toLocaleString()
+    } catch {
+      return "-"
+    }
+  }
+
   const formatPulls = (n?: number) => {
     if (n == null) return "-"
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -83,7 +176,80 @@ export function Images({
 
   return (
     <div className="page">
-      {/* Search bar */}
+      {/* ---- Local Images Section ---- */}
+      <div className="toolbar">
+        <h3 style={{ margin: 0, fontWeight: 600 }}>{t("localImages")}</h3>
+        <div style={{ flex: 1 }} />
+        <input
+          className="input"
+          style={{ width: 220 }}
+          placeholder={t("filterLocalImages")}
+          value={localFilter}
+          onChange={e => setLocalFilter(e.target.value)}
+        />
+        <button className="btn" onClick={fetchLocalImages} disabled={localLoading}>
+          <span className="icon">{I.refresh}</span>{t("refresh")}
+        </button>
+      </div>
+
+      {localLoading ? (
+        <div className="hint">{t("loading")}</div>
+      ) : filteredImages.length === 0 ? (
+        <div className="hint" style={{ padding: "16px 0", textAlign: "center" }}>{t("noLocalImages")}</div>
+      ) : (
+        filteredImages.map((img, idx) => (
+          <div className="container-card" key={`${img.id}-${idx}`}>
+            <div className="card-icon" style={{ background: "var(--surface2)" }}>
+              {I.layers}
+            </div>
+            <div className="card-body">
+              <div className="card-name">
+                {img.repo_tags.length > 0
+                  ? img.repo_tags.join(", ")
+                  : "<none>:<none>"}
+              </div>
+              <div className="card-meta">
+                {t("imageId")}: {img.id} · {t("imageSize")}: {img.size_human} · {t("imageCreated")}: {formatCreated(img.created)}
+              </div>
+            </div>
+            <div className="card-actions">
+              <button
+                className="action-btn"
+                onClick={() => onCopy(img.id)}
+                title={t("copyId")}
+              >
+                {I.copy}
+              </button>
+              <button
+                className="action-btn"
+                onClick={() => handleInspect(img.repo_tags[0] || img.id)}
+                title={t("inspectImage")}
+                disabled={inspectLoading}
+              >
+                {I.fileText}
+              </button>
+              <button
+                className="action-btn"
+                onClick={() => openTagModal(img.repo_tags[0] || img.id)}
+                title={t("tagImage")}
+              >
+                {I.plus}
+              </button>
+              <button
+                className="action-btn danger"
+                onClick={() => setConfirmRemove(img.repo_tags[0] || img.id)}
+                title={t("removeImage")}
+              >
+                {I.trash}
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+
+      <div style={{ borderTop: "1px solid var(--border)", margin: "16px 0" }} />
+
+      {/* ---- Registry Search Section ---- */}
       <div className="toolbar">
         <input
           className="input toolbar-search"
@@ -170,7 +336,7 @@ export function Images({
             <div className="modal-head">
               <div className="modal-title">{t("runContainer")}</div>
               <div className="modal-actions">
-                <button className="icon-btn" onClick={() => setShowRunModal(false)} title={t("close")}>×</button>
+                <button className="icon-btn" onClick={() => setShowRunModal(false)} title={t("close")}>x</button>
               </div>
             </div>
             <div className="modal-body">
@@ -225,7 +391,7 @@ export function Images({
             <div className="modal-head">
               <div className="modal-title">{t("importImage")} / {t("pushImage")}</div>
               <div className="modal-actions">
-                <button className="icon-btn" onClick={() => setShowImportModal(false)} title={t("close")}>×</button>
+                <button className="icon-btn" onClick={() => setShowImportModal(false)} title={t("close")}>x</button>
               </div>
             </div>
             <div className="modal-body">
@@ -255,6 +421,131 @@ export function Images({
                 </div>
                 <div className="hint">{t("pushHint")}</div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inspect Image Modal */}
+      {inspectInfo && (
+        <div className="modal-backdrop" onClick={() => setInspectInfo(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+            <div className="modal-head">
+              <div className="modal-title">{t("inspectImage")} -- {inspectInfo.id}</div>
+              <div className="modal-actions">
+                <button className="icon-btn" onClick={() => setInspectInfo(null)} title={t("close")}>x</button>
+              </div>
+            </div>
+            <div className="modal-body">
+              <div className="form">
+                <div className="row">
+                  <label>{t("imageId")}</label>
+                  <div>{inspectInfo.id}</div>
+                </div>
+                <div className="row">
+                  <label>{t("repoTags")}</label>
+                  <div>{inspectInfo.repo_tags.length > 0 ? inspectInfo.repo_tags.join(", ") : "-"}</div>
+                </div>
+                <div className="row">
+                  <label>{t("imageSize")}</label>
+                  <div>{(inspectInfo.size_bytes / (1024 * 1024)).toFixed(1)} MB</div>
+                </div>
+                <div className="row">
+                  <label>{t("imageCreated")}</label>
+                  <div>{inspectInfo.created || "-"}</div>
+                </div>
+                <div className="row">
+                  <label>{t("architecture")}</label>
+                  <div>{inspectInfo.architecture || "-"}</div>
+                </div>
+                <div className="row">
+                  <label>OS</label>
+                  <div>{inspectInfo.os || "-"}</div>
+                </div>
+                <div className="row">
+                  <label>Docker Version</label>
+                  <div>{inspectInfo.docker_version || "-"}</div>
+                </div>
+                <div className="row">
+                  <label>{t("layers")}</label>
+                  <div>{inspectInfo.layers}</div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setInspectInfo(null)}>{t("close")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tag Image Modal */}
+      {showTagModal && (
+        <div className="modal-backdrop" onClick={() => setShowTagModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-head">
+              <div className="modal-title">{t("tagImage")}</div>
+              <div className="modal-actions">
+                <button className="icon-btn" onClick={() => setShowTagModal(false)} title={t("close")}>x</button>
+              </div>
+            </div>
+            <div className="modal-body">
+              <div className="form">
+                <div className="row">
+                  <label>{t("sourceRef")}</label>
+                  <div style={{ color: "var(--text-secondary)" }}>{tagSource}</div>
+                </div>
+                <div className="row">
+                  <label>{t("targetTag")} (repository)</label>
+                  <input
+                    className="input"
+                    value={tagRepo}
+                    onChange={e => setTagRepo(e.target.value)}
+                    placeholder="myrepo/myimage"
+                    autoFocus
+                    onKeyDown={e => { if (e.key === "Enter") handleTag() }}
+                  />
+                </div>
+                <div className="row">
+                  <label>{t("targetTag")} (tag)</label>
+                  <input
+                    className="input"
+                    value={tagTag}
+                    onChange={e => setTagTag(e.target.value)}
+                    placeholder="latest"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowTagModal(false)}>{t("close")}</button>
+              <button className="btn primary" disabled={tagLoading || !tagRepo.trim()} onClick={handleTag} style={{ marginLeft: 8 }}>
+                {tagLoading ? t("working") : t("tagImage")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Remove Image Modal */}
+      {confirmRemove && (
+        <div className="modal-backdrop" onClick={() => setConfirmRemove("")}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-head">
+              <div className="modal-title">{t("removeImage")}</div>
+              <div className="modal-actions">
+                <button className="icon-btn" onClick={() => setConfirmRemove("")} title={t("close")}>x</button>
+              </div>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0 }}>{t("confirmRemoveImage")}</p>
+              <p style={{ margin: "8px 0 0", fontWeight: 600, color: "var(--text)" }}>{confirmRemove}</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setConfirmRemove("")}>{t("close")}</button>
+              <button className="btn primary" onClick={() => handleRemoveImage(confirmRemove)} style={{ marginLeft: 8, background: "var(--red)", borderColor: "var(--red)" }}>
+                {t("remove")}
+              </button>
             </div>
           </div>
         </div>
