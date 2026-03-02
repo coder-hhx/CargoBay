@@ -76,6 +76,38 @@ pub trait Hypervisor: Send + Sync {
         let new_offset = offset + buf.len() as u64;
         Ok((data, new_offset))
     }
+
+    /// Add a port forward rule to a VM (persisted in the VM store).
+    fn add_port_forward(
+        &self,
+        _vm_id: &str,
+        _pf: &PortForward,
+    ) -> Result<(), HypervisorError> {
+        Err(HypervisorError::Unsupported)
+    }
+
+    /// Remove a port forward rule from a VM.
+    fn remove_port_forward(
+        &self,
+        _vm_id: &str,
+        _host_port: u16,
+    ) -> Result<(), HypervisorError> {
+        Err(HypervisorError::Unsupported)
+    }
+
+    /// List port forwards for a VM.
+    fn list_port_forwards(&self, _vm_id: &str) -> Result<Vec<PortForward>, HypervisorError> {
+        Ok(vec![])
+    }
+}
+
+/// A single host-port to guest-port forwarding rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortForward {
+    pub host_port: u16,
+    pub guest_port: u16,
+    /// "tcp" or "udp"
+    pub protocol: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +132,9 @@ pub struct VmConfig {
     /// Explicit path to the disk/rootfs file (set automatically from os_image).
     #[serde(default)]
     pub disk_path: Option<String>,
+    /// Port forwards from host to guest.
+    #[serde(default)]
+    pub port_forwards: Vec<PortForward>,
 }
 
 impl Default for VmConfig {
@@ -115,6 +150,7 @@ impl Default for VmConfig {
             kernel_path: None,
             initrd_path: None,
             disk_path: None,
+            port_forwards: vec![],
         }
     }
 }
@@ -144,6 +180,9 @@ pub struct VmInfo {
     pub rosetta_enabled: bool,
     /// Active VirtioFS mounts.
     pub shared_dirs: Vec<SharedDirectory>,
+    /// Active port forwards.
+    #[serde(default)]
+    pub port_forwards: Vec<PortForward>,
 }
 
 fn default_disk_gb() -> u64 {

@@ -10,6 +10,7 @@ download = ["reqwest", "sha2", "futures-util"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 tonic = "0.12"
 prost = "0.13"
 thiserror = "2"

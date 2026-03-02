@@ -1,6 +1,7 @@
 pub mod hypervisor;
 pub mod images;
 pub mod logging;
+pub mod portfwd;
 pub mod store;
 pub mod vm;
 

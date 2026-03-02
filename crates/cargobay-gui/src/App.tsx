@@ -149,6 +149,14 @@ function App() {
             setMountGuestPath={vmHook.setMountGuestPath}
             mountReadonly={vmHook.mountReadonly}
             setMountReadonly={vmHook.setMountReadonly}
+            pfVmId={vmHook.pfVmId}
+            setPfVmId={vmHook.setPfVmId}
+            pfHostPort={vmHook.pfHostPort}
+            setPfHostPort={vmHook.setPfHostPort}
+            pfGuestPort={vmHook.pfGuestPort}
+            setPfGuestPort={vmHook.setPfGuestPort}
+            pfProtocol={vmHook.pfProtocol}
+            setPfProtocol={vmHook.setPfProtocol}
             onFetchVms={vmHook.fetchVms}
             onVmAction={vmHook.vmAction}
             onCreateVm={async () => {
@@ -174,6 +182,8 @@ function App() {
               const ok = await vmHook.deleteOsImage(imageId)
               if (ok) showToast(t("osImageDeleted"))
             }}
+            onAddPortForward={vmHook.addPortForward}
+            onRemovePortForward={vmHook.removePortForward}
             t={t}
           />
         )
