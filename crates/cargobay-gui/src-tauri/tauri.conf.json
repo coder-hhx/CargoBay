@@ -21,6 +21,11 @@
         "fullscreen": false
       }
     ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "CargoBay"
+    },
     "security": {
       "csp": null
     }
