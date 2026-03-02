@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
+import { invoke } from "@tauri-apps/api/core"
 import { I } from "../icons"
 import { ErrorInline } from "../components/ErrorDisplay"
 import type { VmInfoDto } from "../types"
@@ -62,7 +63,93 @@ export function Vms({
 }: VmsProps) {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [expandedVmId, setExpandedVmId] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<"info" | "ssh" | "mounts">("info")
+  const [activeTab, setActiveTab] = useState<"info" | "ssh" | "mounts" | "console">("info")
+
+  // Console modal state
+  const [consoleVmId, setConsoleVmId] = useState<string | null>(null)
+  const [consoleVmName, setConsoleVmName] = useState("")
+  const [consoleData, setConsoleData] = useState("")
+  const [consoleOffset, setConsoleOffset] = useState(0)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const consoleEndRef = useRef<HTMLDivElement>(null)
+  const consoleContainerRef = useRef<HTMLDivElement>(null)
+
+  const fetchConsole = useCallback(async (vmId: string, off: number) => {
+    try {
+      const [data, newOffset] = await invoke<[string, number]>("vm_console", {
+        id: vmId,
+        offset: off,
+      })
+      if (data.length > 0) {
+        setConsoleData(prev => prev + data)
+        setConsoleOffset(newOffset)
+      }
+    } catch (_e) {
+      // silently ignore fetch errors for console polling
+    }
+  }, [])
+
+  // Poll console data when modal is open
+  useEffect(() => {
+    if (!consoleVmId) return
+    // Initial full load
+    setConsoleData("")
+    setConsoleOffset(0)
+    let currentOffset = 0
+    let cancelled = false
+
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const [data, newOffset] = await invoke<[string, number]>("vm_console", {
+          id: consoleVmId,
+          offset: currentOffset,
+        })
+        if (cancelled) return
+        if (data.length > 0) {
+          setConsoleData(prev => prev + data)
+          currentOffset = newOffset
+          setConsoleOffset(newOffset)
+        }
+      } catch (_e) {
+        // ignore
+      }
+    }
+
+    poll()
+    const iv = setInterval(poll, 1500)
+    return () => { cancelled = true; clearInterval(iv) }
+  }, [consoleVmId])
+
+  // Auto-scroll when new data arrives
+  useEffect(() => {
+    if (autoScroll && consoleEndRef.current) {
+      consoleEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [consoleData, autoScroll])
+
+  const openConsole = (vm: VmInfoDto) => {
+    setConsoleVmId(vm.id)
+    setConsoleVmName(vm.name || vm.id)
+    setConsoleData("")
+    setConsoleOffset(0)
+    setAutoScroll(true)
+  }
+
+  const closeConsole = () => {
+    setConsoleVmId(null)
+    setConsoleVmName("")
+    setConsoleData("")
+    setConsoleOffset(0)
+  }
+
+  const copyConsole = async () => {
+    try {
+      await navigator.clipboard.writeText(consoleData)
+    } catch (_e) {
+      // ignore
+    }
+  }
 
   const handleCreate = () => {
     onCreateVm()
@@ -122,6 +209,7 @@ export function Vms({
                       <button className="action-btn" disabled={vmActing === vm.id} onClick={e => { e.stopPropagation(); onVmAction("vm_start", vm.id) }} title={t("start")}>{I.play}</button>
                     )}
                     <button className="action-btn" disabled={vmActing === vm.id} onClick={e => { e.stopPropagation(); onLoginCmd(vm) }} title={t("loginCommand")}>{I.terminal}</button>
+                    <button className="action-btn" onClick={e => { e.stopPropagation(); openConsole(vm) }} title={t("console")}>{I.fileText}</button>
                     <button className="action-btn danger" disabled={vmActing === vm.id} onClick={e => { e.stopPropagation(); onVmAction("vm_delete", vm.id) }} title={t("delete")}>{I.trash}</button>
                   </div>
                   <div className="vm-chevron">{isExpanded ? I.chevronDown : I.chevronRight}</div>
@@ -134,6 +222,7 @@ export function Vms({
                       <button className={`vm-tab ${activeTab === "info" ? "active" : ""}`} onClick={() => setActiveTab("info")}>{t("status")}</button>
                       <button className={`vm-tab ${activeTab === "ssh" ? "active" : ""}`} onClick={() => setActiveTab("ssh")}>{t("loginCommand")}</button>
                       <button className={`vm-tab ${activeTab === "mounts" ? "active" : ""}`} onClick={() => setActiveTab("mounts")}>{t("virtiofs")}</button>
+                      <button className={`vm-tab ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>{t("console")}</button>
                     </div>
 
                     {activeTab === "info" && (
@@ -230,6 +319,17 @@ export function Vms({
                         </div>
                       </div>
                     )}
+
+                    {activeTab === "console" && (
+                      <div className="vm-detail-content">
+                        <div style={{ marginBottom: 8 }}>
+                          <button className="btn sm" onClick={() => openConsole(vm)}>
+                            <span className="icon">{I.terminal}</span>{t("vmConsole")}
+                          </button>
+                        </div>
+                        <div className="hint">{t("vmHint")}</div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -279,6 +379,44 @@ export function Vms({
               <button className="btn primary" disabled={vmActing === "create" || !vmName.trim()} onClick={handleCreate} style={{ marginLeft: 8 }}>
                 {vmActing === "create" ? t("creating") : t("create")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Console Modal */}
+      {consoleVmId && (
+        <div className="modal-backdrop" onClick={closeConsole}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 800, width: "96vw" }}>
+            <div className="modal-head">
+              <div className="modal-title">{t("vmConsole")} — {consoleVmName}</div>
+              <div className="modal-actions">
+                <button className="icon-btn" onClick={closeConsole} title={t("close")}>×</button>
+              </div>
+            </div>
+            <div className="console-toolbar">
+              <label className="console-auto-scroll">
+                <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} />
+                {t("autoScroll")}
+              </label>
+              <div className="console-toolbar-right">
+                <button className="btn xs" onClick={() => { setConsoleData(""); setConsoleOffset(0) }}>
+                  {t("clear")}
+                </button>
+                <button className="btn xs" onClick={copyConsole}>
+                  <span className="icon">{I.copy}</span>{t("copy")}
+                </button>
+              </div>
+            </div>
+            <div className="console-viewer" ref={consoleContainerRef}>
+              {consoleData ? (
+                <pre className="console-content">{consoleData}<div ref={consoleEndRef} /></pre>
+              ) : (
+                <div className="console-empty">{t("noConsoleOutput")}</div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={closeConsole}>{t("close")}</button>
             </div>
           </div>
         </div>

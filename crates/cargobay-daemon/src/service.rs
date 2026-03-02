@@ -242,4 +242,20 @@ impl VmService for VmServiceImpl {
             mounts: mounts.into_iter().map(Self::proto_shared_dir).collect(),
         }))
     }
+
+    async fn get_vm_console(
+        &self,
+        request: Request<proto::GetVmConsoleRequest>,
+    ) -> Result<Response<proto::GetVmConsoleResponse>, Status> {
+        let req = request.into_inner();
+        let vm_id = self.resolve_vm_id(&req.vm_id)?;
+        let (data, new_offset) = self
+            .hv
+            .read_vm_console(&vm_id, req.offset)
+            .map_err(|e| Self::status_from_error("read_vm_console", e))?;
+        Ok(Response::new(proto::GetVmConsoleResponse {
+            data,
+            new_offset,
+        }))
+    }
 }

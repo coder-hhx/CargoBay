@@ -218,6 +218,7 @@ fn run(args: Args) -> Result<(), String> {
         initrd_path,
         cmdline: args.cmdline.clone(),
         disk_path,
+        console_log_path: None,
         cpus: args.cpus,
         memory_mb: args.memory_mb,
         rosetta: args.rosetta,

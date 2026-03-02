@@ -32,6 +32,7 @@ pub struct VZVMConfig {
     pub initrd_path: *const c_char,
     pub cmdline: *const c_char,
     pub disk_path: *const c_char,
+    pub console_log_path: *const c_char,
     pub cpus: u32,
     pub memory_mb: u64,
     pub rosetta: bool,
@@ -172,6 +173,7 @@ pub struct VmCreateConfig {
     pub initrd_path: Option<String>,
     pub cmdline: String,
     pub disk_path: String,
+    pub console_log_path: Option<String>,
     pub cpus: u32,
     pub memory_mb: u64,
     pub rosetta: bool,
@@ -192,6 +194,12 @@ pub fn create_and_start_vm(cfg: &VmCreateConfig) -> Result<VmHandle, String> {
         CString::new(cfg.cmdline.as_str()).map_err(|e| format!("invalid cmdline: {}", e))?;
     let disk =
         CString::new(cfg.disk_path.as_str()).map_err(|e| format!("invalid disk_path: {}", e))?;
+    let console_log = cfg
+        .console_log_path
+        .as_ref()
+        .map(|s| CString::new(s.as_str()))
+        .transpose()
+        .map_err(|e| format!("invalid console_log_path: {}", e))?;
 
     // Build C-level shared dir array.
     let c_dirs: Vec<VZSharedDir> = cfg
@@ -209,6 +217,7 @@ pub fn create_and_start_vm(cfg: &VmCreateConfig) -> Result<VmHandle, String> {
         initrd_path: initrd.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
         cmdline: cmdline.as_ptr(),
         disk_path: disk.as_ptr(),
+        console_log_path: console_log.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
         cpus: cfg.cpus,
         memory_mb: cfg.memory_mb,
         rosetta: cfg.rosetta,

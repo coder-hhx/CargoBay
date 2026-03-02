@@ -135,6 +135,11 @@ export const messages: Record<string, Record<string, string>> = {
     commandPlaceholder: "Enter command (e.g. ls -la)",
     copyExecCmd: "Copy docker exec command",
     execError: "Exec failed",
+    // VM console
+    console: "Console",
+    vmConsole: "VM Console",
+    noConsoleOutput: "No console output",
+    autoScroll: "Auto-scroll",
   },
   zh: {
     appName: "CargoBay",
@@ -264,6 +269,11 @@ export const messages: Record<string, Record<string, string>> = {
     commandPlaceholder: "输入命令（如 ls -la）",
     copyExecCmd: "复制 docker exec 命令",
     execError: "执行失败",
+    // VM console
+    console: "控制台",
+    vmConsole: "虚拟机控制台",
+    noConsoleOutput: "暂无控制台输出",
+    autoScroll: "自动滚动",
   },
 }
 

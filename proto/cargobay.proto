@@ -11,6 +11,7 @@ service VMService {
   rpc MountVirtioFS(MountVirtioFSRequest) returns (MountVirtioFSResponse);
   rpc UnmountVirtioFS(UnmountVirtioFSRequest) returns (UnmountVirtioFSResponse);
   rpc ListVirtioFSMounts(ListVirtioFSMountsRequest) returns (ListVirtioFSMountsResponse);
+  rpc GetVMConsole(GetVMConsoleRequest) returns (GetVMConsoleResponse);
 }
 
 message CreateVMRequest {
@@ -100,4 +101,14 @@ message ListVirtioFSMountsRequest {
 
 message ListVirtioFSMountsResponse {
   repeated SharedDirectory mounts = 1;
+}
+
+message GetVMConsoleRequest {
+  string vm_id = 1;
+  uint64 offset = 2;
+}
+
+message GetVMConsoleResponse {
+  string data = 1;
+  uint64 new_offset = 2;
 }

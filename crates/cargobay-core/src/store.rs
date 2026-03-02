@@ -77,6 +77,11 @@ pub fn next_id_for_prefix(vms: &[VmInfo], prefix: &str) -> u64 {
         .max(1)
 }
 
+/// Path to the console log file for a given VM.
+pub fn vm_console_log_path(vm_id: &str) -> PathBuf {
+    data_dir().join("vms").join(vm_id).join("console.log")
+}
+
 pub fn config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("CARGOBAY_CONFIG_DIR") {
         return PathBuf::from(dir);

@@ -814,6 +814,32 @@ fn vm_login_cmd(
 }
 
 #[tauri::command]
+async fn vm_console(
+    state: State<'_, AppState>,
+    id: String,
+    offset: Option<u64>,
+) -> Result<(String, u64), String> {
+    let off = offset.unwrap_or(0);
+
+    if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
+        let resp = client
+            .get_vm_console(proto::GetVmConsoleRequest {
+                vm_id: id.clone(),
+                offset: off,
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .into_inner();
+        return Ok((resp.data, resp.new_offset));
+    }
+
+    state
+        .hv
+        .read_vm_console(&id, off)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn vm_mount_add(
     state: State<'_, AppState>,
     vm: String,
@@ -1389,6 +1415,7 @@ pub fn run() {
             vm_stop,
             vm_delete,
             vm_login_cmd,
+            vm_console,
             vm_mount_add,
             vm_mount_remove,
             vm_mount_list

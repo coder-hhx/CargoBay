@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::io::{Read, Seek, SeekFrom};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -53,6 +54,27 @@ pub trait Hypervisor: Send + Sync {
     /// List active VirtioFS mounts for a VM.
     fn list_virtiofs_mounts(&self, _vm_id: &str) -> Result<Vec<SharedDirectory>, HypervisorError> {
         Ok(vec![])
+    }
+
+    /// Read console output for a VM starting from the given byte offset.
+    /// Returns the data read and the new offset (for incremental reads).
+    fn read_vm_console(&self, vm_id: &str, offset: u64) -> Result<(String, u64), HypervisorError> {
+        let path = crate::store::vm_console_log_path(vm_id);
+        if !path.exists() {
+            return Ok((String::new(), 0));
+        }
+        let mut file = std::fs::File::open(&path)?;
+        let metadata = file.metadata()?;
+        let file_len = metadata.len();
+        if offset >= file_len {
+            return Ok((String::new(), file_len));
+        }
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        let data = String::from_utf8_lossy(&buf).into_owned();
+        let new_offset = offset + buf.len() as u64;
+        Ok((data, new_offset))
     }
 }
 

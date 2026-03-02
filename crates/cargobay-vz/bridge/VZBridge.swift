@@ -187,13 +187,41 @@ public func vz_create_and_start_vm(
     // --- Entropy ---
     vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 
-    // --- Serial console (stdout) ---
+    // --- Serial console (file or stdout) ---
     let serialPort = VZVirtioConsoleDeviceSerialPortConfiguration()
-    let stdoutHandle = FileHandle.standardOutput
-    serialPort.attachment = VZFileHandleSerialPortAttachment(
-        fileHandleForReading: nil,
-        fileHandleForWriting: stdoutHandle
-    )
+
+    var consoleLogPath: String? = nil
+    if let consoleCStr = cfg.console_log_path {
+        consoleLogPath = String(cString: consoleCStr)
+    }
+
+    if let logPath = consoleLogPath {
+        let logURL = URL(fileURLWithPath: logPath)
+        let logDir = logURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: logPath) {
+            FileManager.default.createFile(atPath: logPath, contents: nil)
+        }
+        if let writeHandle = FileHandle(forWritingAtPath: logPath) {
+            writeHandle.seekToEndOfFile()
+            serialPort.attachment = VZFileHandleSerialPortAttachment(
+                fileHandleForReading: nil,
+                fileHandleForWriting: writeHandle
+            )
+        } else {
+            // Fallback to stdout if file cannot be opened
+            serialPort.attachment = VZFileHandleSerialPortAttachment(
+                fileHandleForReading: nil,
+                fileHandleForWriting: FileHandle.standardOutput
+            )
+        }
+    } else {
+        let stdoutHandle = FileHandle.standardOutput
+        serialPort.attachment = VZFileHandleSerialPortAttachment(
+            fileHandleForReading: nil,
+            fileHandleForWriting: stdoutHandle
+        )
+    }
     vzConfig.serialPorts = [serialPort]
 
     // --- VirtioFS shared directories ---

@@ -75,3 +75,7 @@ pub fn data_dir() -> std::path::PathBuf {
 pub fn log_dir() -> std::path::PathBuf {
     store::log_dir()
 }
+
+pub fn vm_console_log_path(vm_id: &str) -> std::path::PathBuf {
+    store::vm_console_log_path(vm_id)
+}

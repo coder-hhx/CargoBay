@@ -50,6 +50,7 @@ typedef struct {
     const char *initrd_path;   // NULL if not used
     const char *cmdline;       // NULL => "console=hvc0"
     const char *disk_path;
+    const char *console_log_path; // NULL => write to stdout
     uint32_t cpus;
     uint64_t memory_mb;
     bool rosetta;
