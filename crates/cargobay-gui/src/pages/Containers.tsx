@@ -1,9 +1,15 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { I } from "../icons"
 import { ErrorBanner } from "../components/ErrorDisplay"
 import { EmptyState } from "../components/EmptyState"
 import type { ContainerInfo, ContainerGroup, RunContainerResult } from "../types"
+
+interface ExecEntry {
+  command: string
+  output: string
+  isError: boolean
+}
 
 interface ContainersProps {
   containers: ContainerInfo[]
@@ -35,6 +41,50 @@ export function Containers({
   const [runLoading, setRunLoading] = useState(false)
   const [runResult, setRunResult] = useState<RunContainerResult | null>(null)
   const [runError, setRunError] = useState("")
+
+  // Exec terminal state
+  const [execContainer, setExecContainer] = useState<ContainerInfo | null>(null)
+  const [execCmd, setExecCmd] = useState("")
+  const [execHistory, setExecHistory] = useState<ExecEntry[]>([])
+  const [execRunning, setExecRunning] = useState(false)
+  const [execInteractiveCmd, setExecInteractiveCmd] = useState("")
+  const execOutputRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (execOutputRef.current) {
+      execOutputRef.current.scrollTop = execOutputRef.current.scrollHeight
+    }
+  }, [execHistory])
+
+  const openExecModal = async (c: ContainerInfo) => {
+    setExecContainer(c)
+    setExecCmd("")
+    setExecHistory([])
+    setExecRunning(false)
+    try {
+      const target = c.name || c.id
+      const cmd = await invoke<string>("container_exec_interactive_cmd", { containerId: target })
+      setExecInteractiveCmd(cmd)
+    } catch {
+      setExecInteractiveCmd(`docker exec -it ${c.name || c.id} /bin/sh`)
+    }
+  }
+
+  const handleExec = async () => {
+    if (!execContainer || !execCmd.trim() || execRunning) return
+    const command = execCmd.trim()
+    setExecCmd("")
+    setExecRunning(true)
+    try {
+      const target = execContainer.name || execContainer.id
+      const output = await invoke<string>("container_exec", { containerId: target, command })
+      setExecHistory(prev => [...prev, { command, output, isError: false }])
+    } catch (e) {
+      setExecHistory(prev => [...prev, { command, output: String(e), isError: true }])
+    } finally {
+      setExecRunning(false)
+    }
+  }
 
   const handleRun = async () => {
     if (!runImage.trim()) return
@@ -104,6 +154,16 @@ export function Containers({
           >
             {I.terminal}
           </button>
+          {isRunning && (
+            <button
+              className="action-btn"
+              disabled={acting === c.id}
+              onClick={() => openExecModal(c)}
+              title={t("execCommand")}
+            >
+              {I.command}
+            </button>
+          )}
           {isRunning ? (
             <button className="action-btn" disabled={acting === c.id} onClick={() => onContainerAction("stop_container", c.id)} title={t("stop")}>{I.stop}</button>
           ) : (
@@ -244,6 +304,63 @@ export function Containers({
               <button className="btn primary" disabled={runLoading || !runImage.trim()} onClick={handleRun} style={{ marginLeft: 8 }}>
                 {runLoading ? t("creating") : t("create")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Exec Terminal Modal */}
+      {execContainer && (
+        <div className="modal-backdrop" onClick={() => setExecContainer(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+            <div className="modal-head">
+              <div className="modal-title">{t("terminal")} — {execContainer.name || execContainer.id}</div>
+              <div className="modal-actions">
+                <button className="btn xs" onClick={() => { setExecHistory([]); }} title={t("clear")}>{t("clear")}</button>
+                <button className="icon-btn" onClick={() => setExecContainer(null)} title={t("close")}>×</button>
+              </div>
+            </div>
+            <div className="exec-modal-body">
+              <div className="exec-toolbar">
+                <input
+                  className="input"
+                  value={execCmd}
+                  onChange={e => setExecCmd(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleExec() }}
+                  placeholder={t("commandPlaceholder")}
+                  disabled={execRunning}
+                  autoFocus
+                />
+                <button className="btn primary sm" disabled={execRunning || !execCmd.trim()} onClick={handleExec}>
+                  {execRunning ? t("working") : t("runCommand")}
+                </button>
+              </div>
+              <div className="exec-output" ref={execOutputRef}>
+                {execHistory.length === 0 && (
+                  <span style={{ color: "var(--text3)" }}>{t("commandPlaceholder")}</span>
+                )}
+                {execHistory.map((entry, i) => (
+                  <div className="exec-entry" key={i}>
+                    <div><span className="exec-prompt">$ </span>{entry.command}</div>
+                    {entry.isError ? (
+                      <div className="exec-error-text">{entry.output}</div>
+                    ) : (
+                      <div className="exec-result">{entry.output}</div>
+                    )}
+                  </div>
+                ))}
+                {execRunning && <div className="exec-prompt" style={{ opacity: 0.5 }}>...</div>}
+              </div>
+              <div className="exec-copy-bar">
+                <code>{execInteractiveCmd}</code>
+                <button
+                  className="btn xs"
+                  onClick={() => navigator.clipboard.writeText(execInteractiveCmd)}
+                  title={t("copyExecCmd")}
+                >
+                  {I.copy} {t("copy")}
+                </button>
+              </div>
             </div>
           </div>
         </div>
