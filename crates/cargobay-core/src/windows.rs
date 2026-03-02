@@ -1439,6 +1439,23 @@ mod tests {
     mod windows_integration {
         use super::*;
 
+        /// Check if we can actually create VMs (Hyper-V + Default Switch present).
+        fn can_create_vms() -> bool {
+            if !WindowsHypervisor::hyperv_available() {
+                return false;
+            }
+            // CI runners may have Hyper-V enabled but lack the Default Switch.
+            #[cfg(target_os = "windows")]
+            {
+                run_powershell("Get-VMSwitch -Name 'Default Switch' -ErrorAction Stop | Out-Null")
+                    .is_ok()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                false
+            }
+        }
+
         #[test]
         fn hypervisor_new_loads_without_panic() {
             // This test verifies that constructing the hypervisor does not panic,
@@ -1508,7 +1525,7 @@ mod tests {
 
         #[test]
         fn duplicate_vm_name_rejected() {
-            if !WindowsHypervisor::hyperv_available() {
+            if !can_create_vms() {
                 return;
             }
 
@@ -1551,7 +1568,7 @@ mod tests {
 
         #[test]
         fn create_vm_with_os_image() {
-            if !WindowsHypervisor::hyperv_available() {
+            if !can_create_vms() {
                 return;
             }
 
