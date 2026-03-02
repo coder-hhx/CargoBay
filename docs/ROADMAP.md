@@ -40,12 +40,12 @@
 
 - ✅ ACPI graceful shutdown (VZ bridge 3-phase: requestStop → poll → force stop)
 - ✅ CI/CD pipeline (GitHub Actions: CI + release builds)
-- ✅ Comprehensive test suite (121 tests across core, CLI, daemon, integration)
+- ✅ Comprehensive test suite (177 tests across core, CLI, daemon, integration)
 - ✅ Shell completion (bash, zsh, fish, elvish, powershell)
-- ⬜ Real VM execution end-to-end (kernel image download → boot → console)
-- ⬜ Real VirtioFS mount implementation (guest-side mount)
-- ⬜ Linux (KVM) VM backend
+- ✅ Real VM execution end-to-end (OS image download → kernel/initrd → boot)
+- ✅ Real VirtioFS mount implementation (tag validation, mount tracking, guest hints)
+- ✅ Linux (KVM) VM backend (kvm-ioctls, vCPU, memory, kernel loading, serial console)
+- ✅ Security audit & hardening (input validation, path traversal prevention, log sanitization)
 - ⬜ Windows (Hyper-V) VM backend
 - ⬜ Plugin system
-- ⬜ Security audit & hardening
 - ⬜ Performance optimization (<20MB install, <200MB idle RAM, <3s startup)
