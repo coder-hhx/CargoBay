@@ -250,7 +250,7 @@ function App() {
         <div className="sidebar-header">
           <img src="/logo.png" alt={t("appName")} />
           <span className="brand-name">{t("appName")}</span>
-          <span className="brand-version">v0.1</span>
+          <span className="brand-version">v1.0.0</span>
         </div>
         <div className="sidebar-nav">
           {navItems.map(item => (

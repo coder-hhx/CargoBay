@@ -51,6 +51,13 @@ jobs:
             # cargobay-vz requires Virtualization.framework (macOS only)
             clippy-args: --workspace --exclude cargobay-gui --exclude cargobay-vz -- -D warnings
             test-args: --workspace --exclude cargobay-gui --exclude cargobay-vz
+          - name: Windows
+            os: windows-latest
+            install-protoc: choco install protoc -y
+            # cargobay-vz requires Virtualization.framework (macOS only);
+            # cargobay-gui requires WebKitGTK / WebView2 build tooling
+            clippy-args: --workspace --exclude cargobay-gui --exclude cargobay-vz -- -D warnings
+            test-args: --workspace --exclude cargobay-gui --exclude cargobay-vz
 
     steps:
       - uses: actions/checkout@v4
@@ -178,3 +185,61 @@ jobs:
             fi
           done
           echo "All binaries within size budget."
+
+  # -----------------------------------------------------------
+  # Performance benchmark (binary size + startup + idle RAM)
+  # -----------------------------------------------------------
+  perf-bench:
+    name: Performance Benchmark (${{ matrix.name }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            install-protoc: brew install protobuf
+          - name: Linux
+            os: ubuntu-latest
+            install-protoc: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: ${{ matrix.install-protoc }}
+
+      # Linux-only: system libs required by workspace resolve
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: perf-bench
+
+      - name: Build release binaries
+        run: cargo build --release -p cargobay-cli -p cargobay-daemon
+
+      - name: Run performance benchmarks
+        run: ./scripts/bench-perf.sh
+
+      - name: Write benchmark summary
+        if: always()
+        run: |
+          echo "## Performance Benchmark (${{ matrix.name }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/bench-perf.sh 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

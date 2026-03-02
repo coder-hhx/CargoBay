@@ -27,16 +27,25 @@ jobs:
             target: aarch64-apple-darwin
             cli-artifact: cargobay-macos-aarch64
             daemon-artifact: cargobay-daemon-macos-aarch64
+            ext: ""
           - name: macOS-x86_64
             os: macos-13
             target: x86_64-apple-darwin
             cli-artifact: cargobay-macos-x86_64
             daemon-artifact: cargobay-daemon-macos-x86_64
+            ext: ""
           - name: Linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             cli-artifact: cargobay-linux-x86_64
             daemon-artifact: cargobay-daemon-linux-x86_64
+            ext: ""
+          - name: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cli-artifact: cargobay-windows-x86_64
+            daemon-artifact: cargobay-daemon-windows-x86_64
+            ext: ".exe"
 
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +95,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.cli-artifact }}
-          path: target/${{ matrix.target }}/release/cargobay
+          path: target/${{ matrix.target }}/release/cargobay${{ matrix.ext }}
           if-no-files-found: error
 
       # -- Upload daemon binary --
@@ -94,7 +103,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.daemon-artifact }}
-          path: target/${{ matrix.target }}/release/cargobay-daemon
+          path: target/${{ matrix.target }}/release/cargobay-daemon${{ matrix.ext }}
           if-no-files-found: error
 
   # -----------------------------------------------------------
@@ -119,6 +128,10 @@ jobs:
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: cargobay-gui-linux-x86_64
+          - name: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: cargobay-gui-windows-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -179,6 +192,8 @@ jobs:
             target/${{ matrix.target }}/release/bundle/macos/*.app
             target/${{ matrix.target }}/release/bundle/deb/*.deb
             target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            target/${{ matrix.target }}/release/bundle/msi/*.msi
+            target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: warn
 
   # -----------------------------------------------------------

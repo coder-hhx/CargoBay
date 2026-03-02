@@ -167,19 +167,23 @@ Docker volume management:
 
 ### Virtual Machines (虚拟机)
 
-Preview in v0.1:
+Fully supported in v1.0:
 
-- **Create / start / stop / delete / list** (preview)
+- **Create / start / stop / delete / list** with full lifecycle management
 - **CPU / Memory / Disk** parameters on creation
+- **ACPI graceful shutdown** (3-phase: requestStop → poll → force stop)
 - **Rosetta toggle** (macOS Apple Silicon only; availability depends on macOS 13+)
-- **VirtioFS mount list** (tracked in UI; real mounting will be implemented later)
-- **Login command**: generates an `ssh user@host -p <port>` string (you provide the port)
+- **VirtioFS file sharing** (real mount with tag validation and guest hints)
+- **Port forwarding** (TCP proxy for VM services)
+- **Resource monitoring** (CPU / memory / disk / network stats)
+- **OS image download** (Alpine, Ubuntu — auto-download kernel/initrd)
+- **Login command**: generates an `ssh user@host -p <port>` string
 
 > Note: VM metadata is persisted to `vms.json` under the Config directory. The VM runtime backend uses Virtualization.framework (macOS), KVM (Linux), or Hyper-V (Windows).
 
 ### Images (镜像)
 
-Available in v0.1:
+Available in v1.0:
 
 - **Search images** across **Docker Hub** and **Quay**
 - **List tags** for registry-domain references (e.g. `quay.io/org/image`, `ghcr.io/org/image`)

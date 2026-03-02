@@ -1,10 +1,10 @@
 [package]
 name = "cargobay-gui"
 version = "1.0.0"
-description = "A Tauri App"
+description = "CargoBay desktop GUI — containers and Linux VMs in one app"
 authors = ["coder-hhx <houhaixu_email@163.com>"]
-license = ""
-repository = ""
+license = "Apache-2.0"
+repository = "https://github.com/coder-hhx/CargoBay"
 edition = "2021"
 rust-version = "1.77.2"
 

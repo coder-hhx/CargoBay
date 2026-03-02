@@ -1,3 +1,15 @@
+/// Acquire a mutex lock, recovering from poisoning.
+///
+/// If a thread panics while holding a mutex, the mutex becomes "poisoned".
+/// Rather than propagating the panic via `.unwrap()`, this function recovers
+/// the inner data so the rest of the application can continue.
+pub fn lock_or_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 pub mod hypervisor;
 pub mod images;
 pub mod k3s;

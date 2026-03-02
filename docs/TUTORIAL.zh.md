@@ -167,19 +167,23 @@ Docker 存储卷管理：
 
 ### Virtual Machines（虚拟机）
 
-v0.1 预览版支持：
+v1.0 完整支持：
 
-- **创建 / 启动 / 停止 / 删除 / 列表**（预览版）
+- **创建 / 启动 / 停止 / 删除 / 列表**，完整生命周期管理
 - 创建时可设置 **CPU / 内存 / 磁盘**
+- **ACPI 优雅关机**（三阶段：requestStop → 轮询 → 强制停止）
 - **Rosetta 开关**（仅 macOS Apple Silicon；是否可用取决于 macOS 13+）
-- **VirtioFS 挂载列表**（UI 中会记录；真实挂载后续接入）
-- **登录命令**：生成 `ssh user@host -p <port>`（端口需你手动提供）
+- **VirtioFS 文件共享**（真实挂载，标签校验 + guest hints）
+- **端口转发**（TCP 代理，暴露 VM 服务）
+- **资源监控**（CPU / 内存 / 磁盘 / 网络统计）
+- **OS 镜像下载**（Alpine、Ubuntu — 自动下载 kernel/initrd）
+- **登录命令**：生成 `ssh user@host -p <port>`
 
 > 注意：VM 元数据会持久化到”配置”目录下的 `vms.json`。VM 运行时后端使用 Virtualization.framework（macOS）、KVM（Linux）或 Hyper-V（Windows）。
 
 ### Images（镜像）
 
-v0.1 已支持：
+v1.0 已支持：
 
 - **镜像搜索**：Docker Hub、Quay
 - **标签列表**：对带域名的镜像引用列出 tags（如 `quay.io/org/image`、`ghcr.io/org/image`）

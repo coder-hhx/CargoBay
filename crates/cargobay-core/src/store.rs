@@ -28,6 +28,12 @@ impl VmStore {
         Self { path }
     }
 
+    /// Create a `VmStore` backed by an explicit file path.
+    /// Useful for testing and benchmarking.
+    pub fn with_path(path: PathBuf) -> Self {
+        Self { path }
+    }
+
     pub fn load_vms(&self) -> Result<Vec<VmInfo>, HypervisorError> {
         if !self.path.exists() {
             return Ok(vec![]);

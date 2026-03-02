@@ -996,7 +996,7 @@ impl Hypervisor for LinuxHypervisor {
 
         // Check for duplicate VM name.
         {
-            let vms = self.vms.lock().unwrap();
+            let vms = crate::lock_or_recover(&self.vms);
             if vms.values().any(|e| e.info.name == config.name) {
                 return Err(HypervisorError::CreateFailed(format!(
                     "VM name already exists: {}",
@@ -1006,7 +1006,7 @@ impl Hypervisor for LinuxHypervisor {
         }
 
         // Generate unique ID.
-        let mut id_counter = self.next_id.lock().unwrap();
+        let mut id_counter = crate::lock_or_recover(&self.next_id);
         let id = format!("kvm-{}", *id_counter);
         *id_counter += 1;
 
@@ -1045,9 +1045,9 @@ impl Hypervisor for LinuxHypervisor {
             initrd_path: config.initrd_path.clone(),
         };
 
-        self.vms.lock().unwrap().insert(id.clone(), entry);
+        crate::lock_or_recover(&self.vms).insert(id.clone(), entry);
         if let Err(e) = self.persist() {
-            self.vms.lock().unwrap().remove(&id);
+            crate::lock_or_recover(&self.vms).remove(&id);
             let _ = std::fs::remove_dir_all(&dir);
             return Err(e);
         }
@@ -1059,7 +1059,7 @@ impl Hypervisor for LinuxHypervisor {
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
         // Check current state and extract config needed for start.
         let (config, _kernel_path, _initrd_path, shared_dirs) = {
-            let vms = self.vms.lock().unwrap();
+            let vms = crate::lock_or_recover(&self.vms);
             let entry = vms.get(id).ok_or(HypervisorError::NotFound(id.into()))?;
 
             if entry.info.state == VmState::Running && entry.runtime.is_some() {
@@ -1111,7 +1111,7 @@ impl Hypervisor for LinuxHypervisor {
 
         // Update VM state.
         let previous_state = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(id)
                 .ok_or(HypervisorError::NotFound(id.into()))?;
@@ -1129,7 +1129,7 @@ impl Hypervisor for LinuxHypervisor {
 
         if let Err(e) = self.persist() {
             // Rollback: stop the VM.
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(id) {
                 entry.info.state = previous_state;
                 // Drop runtime to clean up vCPU threads and memory.
@@ -1150,7 +1150,7 @@ impl Hypervisor for LinuxHypervisor {
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let (runtime, virtiofsd_pids, previous_state) = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(id)
                 .ok_or(HypervisorError::NotFound(id.into()))?;
@@ -1188,7 +1188,7 @@ impl Hypervisor for LinuxHypervisor {
         drop(runtime);
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(id) {
                 entry.info.state = previous_state;
                 for (tag, pid) in virtiofsd_pids {
@@ -1214,7 +1214,7 @@ impl Hypervisor for LinuxHypervisor {
             .ok_or(HypervisorError::NotFound(id.into()))?;
 
         if let Err(e) = self.persist() {
-            self.vms.lock().unwrap().insert(id.to_string(), removed);
+            crate::lock_or_recover(&self.vms).insert(id.to_string(), removed);
             return Err(e);
         }
 
@@ -1228,7 +1228,7 @@ impl Hypervisor for LinuxHypervisor {
     fn list_vms(&self) -> Result<Vec<VmInfo>, HypervisorError> {
         let mut changed = false;
         {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             for entry in vms.values_mut() {
                 if entry.info.state == VmState::Running {
                     // Check if the runtime has stopped (vCPU threads exited).
@@ -1280,7 +1280,7 @@ impl Hypervisor for LinuxHypervisor {
 
         let is_running;
         {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -1297,7 +1297,7 @@ impl Hypervisor for LinuxHypervisor {
         }
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry.info.shared_dirs.retain(|d| d.tag != share.tag);
             }
@@ -1308,7 +1308,7 @@ impl Hypervisor for LinuxHypervisor {
         if is_running {
             match Self::spawn_virtiofsd(&share.tag, &share.host_path, share.read_only) {
                 Ok(pid) => {
-                    let mut vms = self.vms.lock().unwrap();
+                    let mut vms = crate::lock_or_recover(&self.vms);
                     if let Some(entry) = vms.get_mut(vm_id) {
                         entry.virtiofsd_pids.insert(share.tag.clone(), pid);
                     }
@@ -1327,7 +1327,7 @@ impl Hypervisor for LinuxHypervisor {
 
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
         let (previous_dirs, pid_to_kill) = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -1347,7 +1347,7 @@ impl Hypervisor for LinuxHypervisor {
         }
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry.info.shared_dirs = previous_dirs;
                 if let Some(pid) = pid_to_kill {
@@ -1360,7 +1360,7 @@ impl Hypervisor for LinuxHypervisor {
     }
 
     fn list_virtiofs_mounts(&self, vm_id: &str) -> Result<Vec<SharedDirectory>, HypervisorError> {
-        let vms = self.vms.lock().unwrap();
+        let vms = crate::lock_or_recover(&self.vms);
         let entry = vms
             .get(vm_id)
             .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -1369,7 +1369,7 @@ impl Hypervisor for LinuxHypervisor {
 
     fn add_port_forward(&self, vm_id: &str, pf: &PortForward) -> Result<(), HypervisorError> {
         {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -1387,7 +1387,7 @@ impl Hypervisor for LinuxHypervisor {
             entry.info.port_forwards.push(pf.clone());
         }
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry
                     .info
@@ -1401,7 +1401,7 @@ impl Hypervisor for LinuxHypervisor {
 
     fn remove_port_forward(&self, vm_id: &str, host_port: u16) -> Result<(), HypervisorError> {
         let previous = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -1413,7 +1413,7 @@ impl Hypervisor for LinuxHypervisor {
             prev
         };
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry.info.port_forwards = previous;
             }
@@ -1423,7 +1423,7 @@ impl Hypervisor for LinuxHypervisor {
     }
 
     fn list_port_forwards(&self, vm_id: &str) -> Result<Vec<PortForward>, HypervisorError> {
-        let vms = self.vms.lock().unwrap();
+        let vms = crate::lock_or_recover(&self.vms);
         let entry = vms
             .get(vm_id)
             .ok_or(HypervisorError::NotFound(vm_id.into()))?;

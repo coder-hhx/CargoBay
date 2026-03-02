@@ -4,6 +4,7 @@
 
 # Dependencies
 /node_modules/
+assets/node_modules/
 
 # IDE
 .idea/
@@ -15,6 +16,12 @@
 # Environment
 .env
 .env.*
+
+# Secrets / certificates
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Internal docs (never commit)
 /internal/

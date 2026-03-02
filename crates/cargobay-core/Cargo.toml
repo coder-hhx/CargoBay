@@ -28,5 +28,13 @@ futures-util = { version = "0.3", optional = true }
 kvm-ioctls = "0.19"
 kvm-bindings = { version = "0.10", features = ["fam-wrappers"] }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+
 [build-dependencies]
 tonic-build = "0.12"
+
+[[bench]]
+name = "startup"
+harness = false

@@ -165,10 +165,7 @@ impl MacOSHypervisor {
     }
 
     fn persist(&self) -> Result<(), HypervisorError> {
-        let vms = self
-            .vms
-            .lock()
-            .unwrap()
+        let vms = crate::lock_or_recover(&self.vms)
             .values()
             .map(|e| e.info.clone())
             .collect::<Vec<_>>();
@@ -302,7 +299,7 @@ impl Hypervisor for MacOSHypervisor {
         }
 
         {
-            let vms = self.vms.lock().unwrap();
+            let vms = crate::lock_or_recover(&self.vms);
             if vms.values().any(|e| e.info.name == config.name) {
                 return Err(HypervisorError::CreateFailed(format!(
                     "VM name already exists: {}",
@@ -311,7 +308,7 @@ impl Hypervisor for MacOSHypervisor {
             }
         }
 
-        let mut id_counter = self.next_id.lock().unwrap();
+        let mut id_counter = crate::lock_or_recover(&self.next_id);
         let id = format!("vz-{}", *id_counter);
         *id_counter += 1;
 
@@ -370,9 +367,9 @@ impl Hypervisor for MacOSHypervisor {
             cmdline,
         };
 
-        self.vms.lock().unwrap().insert(id.clone(), entry);
+        crate::lock_or_recover(&self.vms).insert(id.clone(), entry);
         if let Err(e) = self.persist() {
-            self.vms.lock().unwrap().remove(&id);
+            crate::lock_or_recover(&self.vms).remove(&id);
             let _ = std::fs::remove_dir_all(&vm_dir);
             return Err(e);
         }
@@ -387,7 +384,7 @@ impl Hypervisor for MacOSHypervisor {
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let (already_running, need_persist, vm_info, kernel_path, initrd_path, cmdline) = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(id)
                 .ok_or(HypervisorError::NotFound(id.into()))?;
@@ -465,7 +462,7 @@ impl Hypervisor for MacOSHypervisor {
         let pid = child.id();
 
         let previous_state = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(id)
                 .ok_or(HypervisorError::NotFound(id.into()))?;
@@ -477,7 +474,7 @@ impl Hypervisor for MacOSHypervisor {
         };
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(id) {
                 entry.info.state = previous_state;
                 if let Some(mut child) = entry.runner.take() {
@@ -496,7 +493,7 @@ impl Hypervisor for MacOSHypervisor {
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
         let (child, pid_opt, previous_state, rosetta_prev) = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(id)
                 .ok_or(HypervisorError::NotFound(id.into()))?;
@@ -551,7 +548,7 @@ impl Hypervisor for MacOSHypervisor {
         let _ = std::fs::remove_file(vm_runner_ready_path(id));
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(id) {
                 entry.info.state = previous_state;
                 entry._rosetta_mounted = rosetta_prev;
@@ -575,7 +572,7 @@ impl Hypervisor for MacOSHypervisor {
             .remove(id)
             .ok_or(HypervisorError::NotFound(id.into()))?;
         if let Err(e) = self.persist() {
-            self.vms.lock().unwrap().insert(id.to_string(), removed);
+            crate::lock_or_recover(&self.vms).insert(id.to_string(), removed);
             return Err(e);
         }
 
@@ -586,7 +583,7 @@ impl Hypervisor for MacOSHypervisor {
     fn list_vms(&self) -> Result<Vec<VmInfo>, HypervisorError> {
         let mut changed = false;
         {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             for entry in vms.values_mut() {
                 if entry
                     .runner
@@ -677,7 +674,7 @@ impl Hypervisor for MacOSHypervisor {
 
         let is_running;
         {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -695,7 +692,7 @@ impl Hypervisor for MacOSHypervisor {
         }
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry.info.shared_dirs.retain(|d| d.tag != share.tag);
             }
@@ -722,7 +719,7 @@ impl Hypervisor for MacOSHypervisor {
 
     fn unmount_virtiofs(&self, vm_id: &str, tag: &str) -> Result<(), HypervisorError> {
         let (previous, is_running, found) = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -741,7 +738,7 @@ impl Hypervisor for MacOSHypervisor {
         }
 
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry.info.shared_dirs = previous;
             }
@@ -764,7 +761,7 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn list_virtiofs_mounts(&self, vm_id: &str) -> Result<Vec<SharedDirectory>, HypervisorError> {
-        let vms = self.vms.lock().unwrap();
+        let vms = crate::lock_or_recover(&self.vms);
         let entry = vms
             .get(vm_id)
             .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -773,7 +770,7 @@ impl Hypervisor for MacOSHypervisor {
 
     fn add_port_forward(&self, vm_id: &str, pf: &PortForward) -> Result<(), HypervisorError> {
         {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -791,7 +788,7 @@ impl Hypervisor for MacOSHypervisor {
             entry.info.port_forwards.push(pf.clone());
         }
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry
                     .info
@@ -805,7 +802,7 @@ impl Hypervisor for MacOSHypervisor {
 
     fn remove_port_forward(&self, vm_id: &str, host_port: u16) -> Result<(), HypervisorError> {
         let previous = {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(vm_id)
                 .ok_or(HypervisorError::NotFound(vm_id.into()))?;
@@ -817,7 +814,7 @@ impl Hypervisor for MacOSHypervisor {
             prev
         };
         if let Err(e) = self.persist() {
-            let mut vms = self.vms.lock().unwrap();
+            let mut vms = crate::lock_or_recover(&self.vms);
             if let Some(entry) = vms.get_mut(vm_id) {
                 entry.info.port_forwards = previous;
             }
@@ -827,7 +824,7 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn list_port_forwards(&self, vm_id: &str) -> Result<Vec<PortForward>, HypervisorError> {
-        let vms = self.vms.lock().unwrap();
+        let vms = crate::lock_or_recover(&self.vms);
         let entry = vms
             .get(vm_id)
             .ok_or(HypervisorError::NotFound(vm_id.into()))?;

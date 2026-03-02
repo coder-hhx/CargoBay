@@ -107,13 +107,20 @@ fn macos_build() {
 
     // Link the Swift runtime libraries.
     if swift_lib_dir.exists() {
-        println!("cargo:rustc-link-search=native={}", swift_lib_dir.display());
+        let swift_lib_path = swift_lib_dir.display().to_string();
+        println!("cargo:rustc-link-search=native={}", swift_lib_path);
+        // Set the rpath so that test binaries (and debug builds) can find
+        // libswiftCore.dylib at runtime. Without this, `cargo test` fails on
+        // Intel macOS with "Library not loaded: @rpath/libswiftCore.dylib".
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", swift_lib_path);
     }
 
     // Also check the SDK's Swift library path.
     let sdk_swift_lib = Path::new(&sdk_path).join("usr").join("lib").join("swift");
     if sdk_swift_lib.exists() {
-        println!("cargo:rustc-link-search=native={}", sdk_swift_lib.display());
+        let sdk_swift_lib_path = sdk_swift_lib.display().to_string();
+        println!("cargo:rustc-link-search=native={}", sdk_swift_lib_path);
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", sdk_swift_lib_path);
     }
 
     // Link system Swift support libraries.

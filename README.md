@@ -49,12 +49,12 @@ OrbStack is great, but it's **closed-source and macOS-only**. Docker Desktop is 
 | **GUI** | Tauri (native) | Swift (native) | Electron | Electron | None |
 | **Idle RAM** | <200 MB | <1 GB | 3-6 GB | 300-500 MB | ~400 MB |
 | **macOS** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Windows** | Planned | ❌ | ✅ | ✅ | ❌ |
-| **Linux** | Planned | ❌ | ✅ | ✅ | ✅ |
+| **Windows** | ✅ | ❌ | ✅ | ✅ | ❌ |
+| **Linux** | ✅ | ❌ | ✅ | ✅ | ✅ |
 | **Docker management** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Linux VMs** | ✅ | ✅ | ❌ | ❌ | Indirect |
 | **Kubernetes** | ✅ (K3s + Dashboard) | ✅ | ✅ | ✅ | ✅ (K3s) |
-| **Auto port forwarding** | Planned | ✅ | ✅ | ❌ | ✅ |
+| **Auto port forwarding** | ✅ | ✅ | ✅ | ❌ | ✅ |
 | **VirtioFS file sharing** | ✅ | ✅ | ✅ | ❌ | ✅ |
 | **Tech stack** | Rust | Swift | Go + Electron | Electron + TS | Go |
 

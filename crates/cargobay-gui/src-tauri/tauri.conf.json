@@ -27,11 +27,12 @@
       "tooltip": "CargoBay"
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' https: data:; script-src 'self'; style-src 'self' 'unsafe-inline'"
     }
   },
   "plugins": {
     "updater": {
+      "active": false,
       "endpoints": ["https://github.com/coder-hhx/CargoBay/releases/latest/download/latest.json"],
       "dialog": false,
       "pubkey": ""

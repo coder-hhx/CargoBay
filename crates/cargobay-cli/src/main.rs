@@ -443,7 +443,7 @@ async fn main() {
             }
         }
         Commands::Status => {
-            println!("CargoBay v0.1.0");
+            println!("CargoBay v1.0.0");
             println!("Platform: {}", cargobay_core::platform_info());
             let hv = cargobay_core::create_hypervisor();
             println!(
