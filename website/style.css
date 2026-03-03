@@ -1014,6 +1014,10 @@ svg {
   position: relative;
   overflow-x: auto;
 }
+.code-block code {
+  white-space: pre;
+  display: block;
+}
 .code-block .prompt {
   color: var(--text3);
   user-select: none;
