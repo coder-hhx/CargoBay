@@ -337,7 +337,9 @@ function App() {
           </div>
         </div>
         <div className="content">
-          {renderPage()}
+          <div key={activePage} className="page-transition">
+            {renderPage()}
+          </div>
         </div>
       </div>
     </div>

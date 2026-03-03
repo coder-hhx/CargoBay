@@ -316,86 +316,95 @@ export function Containers({
     const childClass = opts?.child ? " container-child" : ""
     const stats = isRunning ? containerStats[c.id] : undefined
     return (
-      <div className={`container-card${childClass}`} key={c.id}>
-        <div className="card-icon" style={{ background: isRunning ? undefined : "var(--surface2)" }}>{I.box}</div>
-        <div className="card-body">
-          <div className="card-name">{name}</div>
-          <div className="card-meta">{c.image} · {meta}</div>
-        </div>
-        {isRunning && stats && (
-          <div className="card-stats">
-            <div className="stat-item">
-              <span className="stat-icon">{I.cpu}</span>
-              <span className="stat-value">{stats.cpu_percent.toFixed(1)}%</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-icon">{I.memory}</span>
-              <span className="stat-value">{stats.memory_usage_mb.toFixed(0)}</span>
-            </div>
+      <div className={`container-card${childClass}${isRunning ? "" : " stopped"}`} key={c.id}>
+        <div className="card-main">
+          <div className={`card-icon${isRunning ? "" : " stopped"}`}>{I.box}</div>
+          <div className="card-body">
+            <div className="card-name">{name}</div>
+            <div className="card-meta">{c.image} · {meta}</div>
           </div>
-        )}
-        <div className="card-status">
-          <span className={`dot ${isRunning ? "running" : "stopped"}`} />
-          <span>{c.status}</span>
+          {isRunning && stats && (
+            <div className="card-stats">
+              <div className="stat-item">
+                <span className="stat-icon">{I.cpu}</span>
+                <span className="stat-value">{stats.cpu_percent.toFixed(1)}%</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-icon">{I.memory}</span>
+                <span className="stat-value">{stats.memory_usage_mb.toFixed(0)} MB</span>
+              </div>
+            </div>
+          )}
+          <div className="card-status">
+            <span className={`dot ${isRunning ? "running" : "stopped"}`} />
+            <span>{c.status}</span>
+          </div>
         </div>
         <div className="card-actions">
+          <div className="card-actions-group">
             <button
               className="action-btn"
               disabled={acting === c.id}
-              onClick={async () => {
+              onClick={async (e) => {
+                e.stopPropagation()
                 const target = c.name || c.id
                 const cmd = await invoke<string>("container_login_cmd", { container: target, shell: "/bin/sh" })
                 onOpenTextModal(t("loginCommand"), cmd, cmd)
               }}
               title={t("loginCommand")}
             >
-              {I.terminal}
+              {I.terminal}<span className="action-label">{t("loginCommand")}</span>
             </button>
             <button
               className="action-btn"
               disabled={acting === c.id}
-              onClick={() => openLogModal(c)}
+              onClick={(e) => { e.stopPropagation(); openLogModal(c) }}
               title={t("viewLogs")}
             >
-              {I.fileText}
+              {I.fileText}<span className="action-label">{t("logs")}</span>
             </button>
             <button
               className="action-btn"
               disabled={acting === c.id}
-              onClick={() => openEnvModal(c)}
+              onClick={(e) => { e.stopPropagation(); openEnvModal(c) }}
               title={t("viewEnvVars")}
             >
-              {I.settings}
+              {I.settings}<span className="action-label">{t("envVars")}</span>
             </button>
             {isRunning && (
               <button
                 className="action-btn"
                 disabled={acting === c.id}
-                onClick={() => openExecModal(c)}
+                onClick={(e) => { e.stopPropagation(); openExecModal(c) }}
                 title={t("execCommand")}
               >
-                {I.command}
+                {I.command}<span className="action-label">{t("execCommand")}</span>
               </button>
-            )}
-            {isRunning ? (
-              <button className="action-btn" disabled={acting === c.id} onClick={() => onContainerAction("stop_container", c.id)} title={t("stop")}>{I.stop}</button>
-            ) : (
-              <button className="action-btn" disabled={acting === c.id} onClick={() => onContainerAction("start_container", c.id)} title={t("start")}>{I.play}</button>
             )}
             <button
               className="action-btn"
               disabled={acting === c.id}
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation()
                 const target = c.name || c.id
                 const defaultTag = `${(c.image || "image").split(":")[0]}-snapshot:latest`
                 onOpenPackageModal(target, defaultTag)
               }}
               title={t("packageImage")}
             >
-              {I.layers}
+              {I.layers}<span className="action-label">{t("package")}</span>
             </button>
-            <button className="action-btn danger" disabled={acting === c.id} onClick={() => { setConfirmRemove(c.id); setContainerToRemoveName(c.name || c.id) }} title={t("delete")}>{I.trash}</button>
           </div>
+          <div className="card-actions-sep" />
+          <div className="card-actions-group">
+            {isRunning ? (
+              <button className="action-btn warn" disabled={acting === c.id} onClick={(e) => { e.stopPropagation(); onContainerAction("stop_container", c.id) }} title={t("stop")}>{I.stop}<span className="action-label">{t("stop")}</span></button>
+            ) : (
+              <button className="action-btn success" disabled={acting === c.id} onClick={(e) => { e.stopPropagation(); onContainerAction("start_container", c.id) }} title={t("start")}>{I.play}<span className="action-label">{t("start")}</span></button>
+            )}
+            <button className="action-btn danger" disabled={acting === c.id} onClick={(e) => { e.stopPropagation(); setConfirmRemove(c.id); setContainerToRemoveName(c.name || c.id) }} title={t("delete")}>{I.trash}</button>
+          </div>
+        </div>
       </div>
     )
   }
@@ -439,19 +448,21 @@ export function Containers({
                 }}
                 title={expanded ? "Collapse" : "Expand"}
               >
-                <div className="card-icon">{I.box}</div>
-                <div className="card-body">
-                  <div className="card-name">{g.key}</div>
-                  <div className="card-meta">
-                    {t("running")}: {g.runningCount} · {t("stopped")}: {g.stoppedCount}
+                <div className="card-main">
+                  <div className="card-icon">{I.box}</div>
+                  <div className="card-body">
+                    <div className="card-name">{g.key}</div>
+                    <div className="card-meta">
+                      {t("running")}: {g.runningCount} · {t("stopped")}: {g.stoppedCount}
+                    </div>
                   </div>
-                </div>
-                <div className="card-status">
-                  <span className={`dot ${hasRunning ? "running" : "stopped"}`} />
-                  <span>{hasRunning ? t("running") : t("stopped")}</span>
-                </div>
-                <div className="group-chevron" aria-hidden="true">
-                  {expanded ? I.chevronDown : I.chevronRight}
+                  <div className="card-status">
+                    <span className={`dot ${hasRunning ? "running" : "stopped"}`} />
+                    <span>{hasRunning ? t("running") : t("stopped")}</span>
+                  </div>
+                  <div className="group-chevron" aria-hidden="true">
+                    {expanded ? I.chevronDown : I.chevronRight}
+                  </div>
                 </div>
               </div>
               {expanded && (
@@ -597,8 +608,8 @@ export function Containers({
                     <tbody>
                       {envVars.map((ev, i) => (
                         <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                          <td style={{ padding: "5px 10px", fontFamily: "monospace", fontWeight: 600, wordBreak: "break-all" }}>{ev.key}</td>
-                          <td style={{ padding: "5px 10px", fontFamily: "monospace", wordBreak: "break-all" }}>{ev.value}</td>
+                          <td style={{ padding: "5px 10px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontWeight: 600, wordBreak: "break-all" }}>{ev.key}</td>
+                          <td style={{ padding: "5px 10px", fontFamily: "'Geist Mono', ui-monospace, monospace", wordBreak: "break-all" }}>{ev.value}</td>
                         </tr>
                       ))}
                     </tbody>
