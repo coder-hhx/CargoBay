@@ -193,10 +193,19 @@
   flex-shrink: 0;
 }
 
+/* Windows: topbar is draggable (custom titlebar) */
+.platform-windows .topbar {
+  -webkit-app-region: drag;
+}
+
 .topbar-left {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.platform-windows .topbar-left {
+  -webkit-app-region: no-drag;
 }
 
 .topbar-left h1 {
@@ -221,6 +230,10 @@
   gap: 6px;
 }
 
+.platform-windows .topbar-right {
+  -webkit-app-region: no-drag;
+}
+
 .status-pill {
   display: flex;
   align-items: center;
@@ -231,6 +244,48 @@
   border-radius: 20px;
   background: var(--surface2);
   color: var(--text2);
+}
+
+/* === Window controls === */
+.window-controls {
+  display: flex;
+  align-items: center;
+  margin-left: 8px;
+}
+
+.win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.win-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.win-btn-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.win-btn svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .status-pill .dot,
