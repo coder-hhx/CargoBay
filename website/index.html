@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CargoBay — Lightweight Container & VM Manager</title>
-  <meta name="description" content="CargoBay is a free, open-source desktop app for managing Docker containers and Linux VMs. A lightweight alternative to Docker Desktop and OrbStack." />
-  <meta name="keywords" content="Docker, containers, VM, virtual machine, Rust, Tauri, open-source, container manager, Linux, macOS" />
+  <meta name="description" content="CargoBay is a free, open-source desktop app for managing Docker containers, Linux VMs, and Kubernetes clusters. A lightweight alternative to Docker Desktop and OrbStack." />
+  <meta name="keywords" content="Docker, containers, VM, virtual machine, Kubernetes, K3s, Rust, Tauri, open-source, container manager, Linux, macOS" />
   <meta property="og:title" content="CargoBay — Lightweight Container & VM Manager" />
-  <meta property="og:description" content="Free, open-source desktop app for managing Docker containers and Linux VMs." />
+  <meta property="og:description" content="Free, open-source desktop app for managing Docker containers, Linux VMs, and K8s." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://coder-hhx.github.io/CargoBay/" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
@@ -25,23 +25,7 @@
   <nav class="navbar">
     <div class="navbar-inner">
       <a href="#" class="nav-logo">
-        <!-- Inline logo icon -->
-        <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="nav-hull" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#8b5cf6"/>
-              <stop offset="100%" stop-color="#6d28d9"/>
-            </linearGradient>
-          </defs>
-          <path d="M56 340 L100 420 L412 420 L456 340 L400 340 L400 160 L112 160 L112 340 Z" fill="url(#nav-hull)" opacity="0.9"/>
-          <rect x="132" y="270" width="72" height="55" rx="4" fill="#34d399" opacity="0.9"/>
-          <rect x="220" y="270" width="72" height="55" rx="4" fill="#8b5cf6" opacity="0.9"/>
-          <rect x="308" y="270" width="72" height="55" rx="4" fill="#22d3ee" opacity="0.9"/>
-          <rect x="132" y="200" width="72" height="55" rx="4" fill="#8b5cf6" opacity="0.85"/>
-          <rect x="220" y="200" width="72" height="55" rx="4" fill="#22d3ee" opacity="0.85"/>
-          <rect x="308" y="200" width="72" height="55" rx="4" fill="#34d399" opacity="0.85"/>
-          <path d="M24 460 Q80 445 136 460 Q192 475 248 460 Q304 445 360 460 Q416 475 488 460" stroke="#22d3ee" stroke-width="3" fill="none" opacity="0.4"/>
-        </svg>
+        <img src="logo.png" alt="CargoBay" width="28" height="28" />
         CargoBay
       </a>
 
@@ -58,6 +42,12 @@
           </div>
         </li>
         <li>
+          <button class="theme-toggle" aria-label="Toggle theme" data-i18n-title="themeToggle" title="Toggle dark/light mode">
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          </button>
+        </li>
+        <li>
           <a href="https://github.com/coder-hhx/CargoBay" target="_blank" rel="noopener" class="nav-github">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.6c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.38 11.38 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.8 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.22.7.82.58A12 12 0 0012 .3"/></svg>
             GitHub
@@ -65,9 +55,15 @@
         </li>
       </ul>
 
-      <button class="mobile-menu-btn" aria-label="Toggle menu">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-      </button>
+      <div class="nav-right-mobile">
+        <button class="theme-toggle theme-toggle-mobile" aria-label="Toggle theme" title="Toggle dark/light mode">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+        </button>
+        <button class="mobile-menu-btn" aria-label="Toggle menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+      </div>
     </div>
   </nav>
 
@@ -80,7 +76,7 @@
     <div class="hero-content">
       <div class="hero-badge">
         <span class="dot"></span>
-        <span data-i18n="heroBadge">v0.1.0 Pre-release</span>
+        <span data-i18n="heroBadge">v1.0.0 Stable Release</span>
       </div>
 
       <h1>
@@ -88,11 +84,11 @@
       </h1>
 
       <p class="hero-tagline" data-i18n="heroTagline">
-        A lightweight, open-source desktop app for managing Docker containers and Linux VMs. The fast alternative to Docker Desktop.
+        The open-source desktop app for managing Docker containers, Linux VMs, and Kubernetes — blazing fast, built with Rust.
       </p>
 
       <div class="hero-actions">
-        <a href="https://github.com/coder-hhx/CargoBay/releases" target="_blank" rel="noopener" class="btn btn-primary">
+        <a href="https://github.com/coder-hhx/CargoBay/releases/tag/v1.0.0" target="_blank" rel="noopener" class="btn btn-primary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span data-i18n="heroDownload">Download for macOS</span>
         </a>
@@ -109,7 +105,11 @@
         </div>
         <div class="hero-stat">
           <div class="hero-stat-value">Apache 2.0</div>
-          <div class="hero-stat-label" data-i18n="statLicense">Apache 2.0</div>
+          <div class="hero-stat-label" data-i18n="statLicense">Open Source</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-value">&lt;20 MB</div>
+          <div class="hero-stat-label" data-i18n="statSize">App Size</div>
         </div>
       </div>
     </div>
@@ -120,8 +120,8 @@
     <div class="container">
       <div class="reveal">
         <div class="section-label" data-i18n="featLabel">Features</div>
-        <h2 class="section-title" data-i18n="featTitle">Everything you need to manage containers.</h2>
-        <p class="section-desc" data-i18n="featDesc">CargoBay brings a unified, native-speed experience for Docker containers and Linux VMs — without the overhead.</p>
+        <h2 class="section-title" data-i18n="featTitle">Everything you need to manage containers and beyond.</h2>
+        <p class="section-desc" data-i18n="featDesc">CargoBay brings a unified, native-speed experience for Docker containers, Linux VMs, and Kubernetes clusters — without the overhead.</p>
       </div>
 
       <div class="features-grid">
@@ -143,13 +143,13 @@
           <p data-i18n="feat2Desc">Native VM support via Virtualization.framework (macOS), KVM (Linux), and Hyper-V (Windows). Boot in seconds.</p>
         </div>
 
-        <!-- 3: Image Registry Search -->
+        <!-- 3: Image & Volume Management -->
         <div class="feature-card reveal">
           <div class="feature-icon">
-            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05"/><path d="M12 22.08V12"/></svg>
           </div>
-          <h3 data-i18n="feat3Title">Image Registry Search</h3>
-          <p data-i18n="feat3Desc">Search and pull images from Docker Hub, Quay.io, and private registries. Browse tags, inspect layers.</p>
+          <h3 data-i18n="feat3Title">Image & Volume Management</h3>
+          <p data-i18n="feat3Desc">Search and pull images from Docker Hub and private registries. Manage volumes with inspect, create, prune, and mount operations.</p>
         </div>
 
         <!-- 4: Resource Monitoring -->
@@ -170,13 +170,31 @@
           <p data-i18n="feat5Desc">Automatic port forwarding and near-native file sharing between host and guest via VirtioFS.</p>
         </div>
 
-        <!-- 6: Cross-platform -->
+        <!-- 6: Kubernetes (K3s) -->
+        <div class="feature-card reveal">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          </div>
+          <h3 data-i18n="feat6Title">Kubernetes (K3s)</h3>
+          <p data-i18n="feat6Desc">Built-in K3s integration with pod, service, and deployment dashboards. Manage namespaces and workloads effortlessly.</p>
+        </div>
+
+        <!-- 7: Plugin System -->
+        <div class="feature-card reveal">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-4.24 4.24M9.17 14.83l-4.24 4.24M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24"/></svg>
+          </div>
+          <h3 data-i18n="feat7Title">Plugin System</h3>
+          <p data-i18n="feat7Desc">Extensible architecture with lifecycle hooks. Build custom plugins to integrate your own tools and workflows.</p>
+        </div>
+
+        <!-- 8: Cross-platform -->
         <div class="feature-card reveal">
           <div class="feature-icon">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
           </div>
-          <h3 data-i18n="feat6Title">Cross-platform</h3>
-          <p data-i18n="feat6Desc">Runs on macOS, Linux, and Windows. Same interface, same speed, same experience on every platform.</p>
+          <h3 data-i18n="feat8Title">Cross-platform</h3>
+          <p data-i18n="feat8Desc">Runs on macOS, Linux, and Windows. Same interface, same speed, same experience on every platform.</p>
         </div>
       </div>
     </div>
@@ -201,6 +219,10 @@
         <div class="demo-body">
           <div class="mock-dashboard">
             <div class="mock-sidebar">
+              <div class="mock-sidebar-item">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                <span data-i18n="demoSidebar0">Dashboard</span>
+              </div>
               <div class="mock-sidebar-item active">
                 <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                 <span data-i18n="demoSidebar1">Containers</span>
@@ -214,12 +236,12 @@
                 <span data-i18n="demoSidebar3">Volumes</span>
               </div>
               <div class="mock-sidebar-item">
-                <svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-                <span data-i18n="demoSidebar4">Networks</span>
+                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M9 8h.01M12 8h6"/></svg>
+                <span data-i18n="demoSidebar4">VMs</span>
               </div>
               <div class="mock-sidebar-item">
-                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M9 8h.01M12 8h6"/></svg>
-                <span data-i18n="demoSidebar5">VMs</span>
+                <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                <span data-i18n="demoSidebar5">Kubernetes</span>
               </div>
             </div>
             <div class="mock-main">
@@ -239,29 +261,29 @@
                 </thead>
                 <tbody>
                   <tr>
-                    <td style="color:var(--text);font-weight:500" data-i18n="demoR1Name">web-frontend</td>
-                    <td><code style="color:var(--cyan);font-size:0.75rem" data-i18n="demoR1Img">nginx:alpine</code></td>
+                    <td class="mock-name" data-i18n="demoR1Name">web-frontend</td>
+                    <td><code class="mock-image" data-i18n="demoR1Img">nginx:alpine</code></td>
                     <td><span class="mock-status running"><span class="dot"></span> <span data-i18n="demoR1Status">Running</span></span></td>
                     <td data-i18n="demoR1Cpu">0.3%</td>
                     <td data-i18n="demoR1Mem">24 MB</td>
                   </tr>
                   <tr>
-                    <td style="color:var(--text);font-weight:500" data-i18n="demoR2Name">api-server</td>
-                    <td><code style="color:var(--cyan);font-size:0.75rem" data-i18n="demoR2Img">node:20-slim</code></td>
+                    <td class="mock-name" data-i18n="demoR2Name">api-server</td>
+                    <td><code class="mock-image" data-i18n="demoR2Img">node:20-slim</code></td>
                     <td><span class="mock-status running"><span class="dot"></span> <span data-i18n="demoR2Status">Running</span></span></td>
                     <td data-i18n="demoR2Cpu">1.2%</td>
                     <td data-i18n="demoR2Mem">128 MB</td>
                   </tr>
                   <tr>
-                    <td style="color:var(--text);font-weight:500" data-i18n="demoR3Name">db-postgres</td>
-                    <td><code style="color:var(--cyan);font-size:0.75rem" data-i18n="demoR3Img">postgres:16</code></td>
+                    <td class="mock-name" data-i18n="demoR3Name">db-postgres</td>
+                    <td><code class="mock-image" data-i18n="demoR3Img">postgres:16</code></td>
                     <td><span class="mock-status stopped"><span class="dot"></span> <span data-i18n="demoR3Status">Stopped</span></span></td>
                     <td data-i18n="demoR3Cpu">&mdash;</td>
                     <td data-i18n="demoR3Mem">&mdash;</td>
                   </tr>
                   <tr>
-                    <td style="color:var(--text);font-weight:500" data-i18n="demoR4Name">redis-cache</td>
-                    <td><code style="color:var(--cyan);font-size:0.75rem" data-i18n="demoR4Img">redis:7-alpine</code></td>
+                    <td class="mock-name" data-i18n="demoR4Name">redis-cache</td>
+                    <td><code class="mock-image" data-i18n="demoR4Img">redis:7-alpine</code></td>
                     <td><span class="mock-status paused"><span class="dot"></span> <span data-i18n="demoR4Status">Paused</span></span></td>
                     <td data-i18n="demoR4Cpu">&mdash;</td>
                     <td data-i18n="demoR4Mem">52 MB</td>
@@ -310,47 +332,42 @@
           <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="#facc15" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Tokio
         </div>
-        <!-- containerd -->
+        <!-- bollard -->
         <div class="tech-badge">
           <svg viewBox="0 0 24 24" fill="none"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke="#8b5cf6" stroke-width="1.5"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" stroke="#8b5cf6" stroke-width="1.5" stroke-linecap="round"/></svg>
-          containerd
+          bollard (Docker API)
         </div>
       </div>
 
       <div class="tech-arch reveal">
         <pre>
-┌──────────────────────────────────────────────────────────────┐
-│                         Host OS                              │
-│                                                              │
-│  ┌──────────────┐  ┌──────────┐  ┌────────────────────────┐  │
-│  │  GUI App     │  │   CLI    │  │  Docker CLI            │  │
-│  │  (Tauri v2 + │  │  (Rust / │  │  (Socket Proxy)        │  │
-│  │   React)     │  │   clap)  │  │                        │  │
-│  └──────┬───────┘  └────┬─────┘  └───────────┬────────────┘  │
-│         │               │                    │               │
-│         └───────────┬───┴────────────────────┘               │
-│                     │  gRPC (tonic)                           │
-│              ┌──────▼───────┐                                │
-│              │   Daemon     │                                │
-│              │   (Rust)     │                                │
-│              └──────┬───────┘                                │
-│                     │                                        │
-│       ┌─────────────▼──────────────┐                         │
-│       │  Hypervisor Abstraction    │                         │
-│       ├──────────────┬─────────────┤                         │
-│       │ macOS:       │ Linux:      │                         │
-│       │ Vz.framework │ KVM         │                         │
-│       │ (FFI)        │ (rust-vmm)  │                         │
-│       └──────────────┴──────┬──────┘                         │
-│                             │                                │
-│       ┌─────────────────────▼──────────────────────────┐     │
-│       │           Lightweight Linux VM                 │     │
-│       │  ┌──────────────────────────────────────────┐  │     │
-│       │  │  Linux Kernel 6.x  ·  containerd         │  │     │
-│       │  │  nerdctl  ·  k3s (opt)  ·  virtiofs      │  │     │
-│       │  └──────────────────────────────────────────┘  │     │
-│       └────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────┘</pre>
+┌─────────────────────────────────────────────────────────────────┐
+│                          Host OS                                │
+│                                                                 │
+│  ┌──────────────────┐   ┌───────────┐   ┌───────────────────┐  │
+│  │  GUI App          │   │  CLI      │   │  Plugins          │  │
+│  │  (Tauri v2 +      │   │  (clap)   │   │  (lifecycle hooks)│  │
+│  │   React + TS)     │   │           │   │                   │  │
+│  └────────┬─────────┘   └─────┬─────┘   └────────┬──────────┘  │
+│           │                   │                   │             │
+│           └───────────┬───────┴───────────────────┘             │
+│                       │                                         │
+│  ┌────────────────────▼──────────────────────────────────────┐  │
+│  │                   Hybrid IPC Layer                         │  │
+│  ├──────────────┬──────────────────┬────────────────────────┤  │
+│  │  Docker:     │  VMs:            │  K8s:                  │  │
+│  │  bollard     │  gRPC daemon     │  kubectl JSON          │  │
+│  │  (direct)    │  (tonic/tokio)   │  (K3s on-demand)       │  │
+│  └──────┬───────┴────────┬─────────┴─────────┬──────────────┘  │
+│         │                │                   │                  │
+│  ┌──────▼─────┐  ┌───────▼──────────┐  ┌────▼──────────────┐  │
+│  │  Docker    │  │  Hypervisor      │  │  K3s Cluster      │  │
+│  │  Engine    │  │  Abstraction     │  │  (lightweight K8s)│  │
+│  │  (socket)  │  ├──────┬───────────┤  │                   │  │
+│  │            │  │macOS │Linux      │  │  pods / services  │  │
+│  │            │  │Vz.fw │KVM        │  │  deployments      │  │
+│  └────────────┘  └──────┴───────────┘  └───────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘</pre>
       </div>
     </div>
   </section>
@@ -377,18 +394,18 @@
           <tbody>
             <tr>
               <td data-i18n="compAppSize">App Size</td>
-              <td class="highlight" data-i18n="compCBSize">~20 MB</td>
+              <td class="highlight" data-i18n="compCBSize">~18 MB</td>
               <td data-i18n="compDDSize">~1.5 GB</td>
               <td data-i18n="compOSSize">~200 MB</td>
             </tr>
             <tr>
               <td data-i18n="compMemory">Memory Usage</td>
-              <td class="highlight" data-i18n="compCBMem">~50 MB</td>
+              <td class="highlight" data-i18n="compCBMem">~50 MB idle</td>
               <td data-i18n="compDDMem">~2 GB</td>
               <td data-i18n="compOSMem">~200 MB</td>
             </tr>
             <tr>
-              <td data-i18n="compStartup">Container Startup</td>
+              <td data-i18n="compStartup">Startup Time</td>
               <td class="highlight" data-i18n="compCBStart">&lt; 1s</td>
               <td data-i18n="compDDStart">~10s</td>
               <td data-i18n="compOSStart">~2s</td>
@@ -410,6 +427,18 @@
               <td class="highlight check">&#10003;</td>
               <td class="cross">&#10007;</td>
               <td class="check">&#10003;</td>
+            </tr>
+            <tr>
+              <td data-i18n="compK8s">Kubernetes</td>
+              <td class="highlight check">&#10003; <span class="comp-note" data-i18n="compK8sNote">(K3s)</span></td>
+              <td class="check">&#10003;</td>
+              <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+              <td data-i18n="compPlugin">Plugin System</td>
+              <td class="highlight check">&#10003;</td>
+              <td class="cross">&#10007;</td>
+              <td class="cross">&#10007;</td>
             </tr>
             <tr>
               <td data-i18n="compCross">Cross-platform</td>
@@ -460,8 +489,8 @@
           <p class="install-desc" data-i18n="installDirectDesc">Pre-built binary</p>
           <div class="code-block">
             <button class="copy-btn">Copy</button>
-            <code><span class="comment"># Download latest release</span>
-<span class="prompt">$ </span>curl -fsSL https://github.com/coder-hhx/CargoBay/releases/latest/download/cargobay-darwin-arm64.tar.gz | tar xz
+            <code><span class="comment"># Download v1.0.0 release</span>
+<span class="prompt">$ </span>curl -fsSL https://github.com/coder-hhx/CargoBay/releases/download/v1.0.0/cargobay-darwin-arm64.tar.gz | tar xz
 <span class="prompt">$ </span>./cargobay</code>
           </div>
         </div>
@@ -475,16 +504,7 @@
       <div class="footer-inner">
         <div class="footer-left">
           <div class="footer-logo">
-            <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" width="22" height="22">
-              <defs><linearGradient id="ftr-hull" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#6d28d9"/></linearGradient></defs>
-              <path d="M56 340 L100 420 L412 420 L456 340 L400 340 L400 160 L112 160 L112 340 Z" fill="url(#ftr-hull)" opacity="0.9"/>
-              <rect x="132" y="270" width="72" height="55" rx="4" fill="#34d399" opacity="0.9"/>
-              <rect x="220" y="270" width="72" height="55" rx="4" fill="#8b5cf6" opacity="0.9"/>
-              <rect x="308" y="270" width="72" height="55" rx="4" fill="#22d3ee" opacity="0.9"/>
-              <rect x="132" y="200" width="72" height="55" rx="4" fill="#8b5cf6" opacity="0.85"/>
-              <rect x="220" y="200" width="72" height="55" rx="4" fill="#22d3ee" opacity="0.85"/>
-              <rect x="308" y="200" width="72" height="55" rx="4" fill="#34d399" opacity="0.85"/>
-            </svg>
+            <img src="logo.png" alt="CargoBay" width="22" height="22" />
             CargoBay
           </div>
           <span class="footer-copy">&copy; 2026 CargoBay &middot; Apache License 2.0</span>

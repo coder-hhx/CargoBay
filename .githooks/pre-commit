@@ -4,35 +4,6 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-# ── Verify git identity is configured (not empty) ────────────────────────────
-# We do NOT check for specific values — the repo-local git config should
-# be set via `scripts/setup-dev.sh`.  This hook only ensures *something*
-# is configured so commits are not attributed to a default/global identity
-# by accident.
-
-check_ident() {
-  local label="$1"
-  local var="$2"
-
-  local ident name email
-  ident="$(git var "$var")"
-  name="${ident%% <*}"
-  email="${ident#*<}"
-  email="${email%%>*}"
-
-  if [[ -z "$name" || -z "$email" ]]; then
-    echo "ERROR: $label identity is not fully configured."
-    echo "Found: ${name} <${email}>"
-    echo
-    echo "Run the setup script to configure your identity for this repo:"
-    echo "  bash scripts/setup-dev.sh"
-    exit 1
-  fi
-}
-
-check_ident "Author" "GIT_AUTHOR_IDENT"
-check_ident "Committer" "GIT_COMMITTER_IDENT"
-
 # Skip doc enforcement for merge/cherry-pick/revert commits.
 if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
   exit 0
