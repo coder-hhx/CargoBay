@@ -895,13 +895,12 @@ svg {
   border-radius: 14px;
   padding: 32px;
   overflow-x: auto;
+  text-align: center;
 }
-.tech-arch pre {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--text2);
-  white-space: pre;
+.tech-arch .arch-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
 }
 
 /* --- Comparison Table -------------------------------------- */
@@ -1125,9 +1124,6 @@ svg {
     overflow-x: auto;
     padding: 12px;
   }
-  .tech-arch pre {
-    font-size: 0.6rem;
-  }
 }
 
 @media (max-width: 640px) {
@@ -1184,8 +1180,5 @@ svg {
   }
   .footer-left {
     flex-direction: column;
-  }
-  .tech-arch pre {
-    font-size: 0.5rem;
   }
 }
