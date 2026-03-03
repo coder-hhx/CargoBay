@@ -178,6 +178,41 @@ sys.exit(0)
 '
 fi
 
+# ── Website sync reminder (prompt, non-blocking) ────────────────────────────
+# When source code, docs, or features change but website/ is not updated,
+# print a visible reminder.  This does NOT block the commit.
+
+website_changed=0
+source_changed=0
+
+if printf '%s\n' "$staged_files" | grep -q '^website/'; then
+  website_changed=1
+fi
+
+# Detect meaningful source/doc changes (not just formatting or CI tweaks)
+if printf '%s\n' "$staged_files" | grep -Eq \
+  '\.rs$|\.tsx?$|\.css$|\.proto$|docs/|README|CHANGELOG|ROADMAP|Cargo\.toml$'; then
+  source_changed=1
+fi
+
+if [[ "$source_changed" -eq 1 && "$website_changed" -eq 0 ]]; then
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════════╗"
+  echo "║  ⚠  WEBSITE SYNC REMINDER                                      ║"
+  echo "║                                                                  ║"
+  echo "║  Source code or docs changed but website/ was not updated.       ║"
+  echo "║                                                                  ║"
+  echo "║  Please check if the following need updating:                    ║"
+  echo "║    • website/index.html  — feature list, screenshots, stats     ║"
+  echo "║    • website/script.js   — interactive demos, version numbers   ║"
+  echo "║    • website/style.css   — new component styles                 ║"
+  echo "║                                                                  ║"
+  echo "║  The website auto-deploys to GitHub Pages on push.              ║"
+  echo "║  URL: https://coder-hhx.github.io/CargoBay/                    ║"
+  echo "╚══════════════════════════════════════════════════════════════════╝"
+  echo ""
+fi
+
 # Build check: ensure the Rust workspace compiles before every commit that touches code.
 should_build=0
 if printf '%s\n' "$staged_files" | grep -Eq '\.rs$|\.proto$|(^|/)Cargo\.toml$|(^|/)Cargo\.lock$'; then

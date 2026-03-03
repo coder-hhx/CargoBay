@@ -61,6 +61,19 @@ Hooks are in `.githooks/`. New devs run `scripts/setup-dev.sh` to activate them.
 
 - **ci.yml**: check + test + clippy + fmt + size-check + perf-bench (macOS + Linux + Windows)
 - **release.yml**: triggered by `v*` tags, builds CLI/daemon/GUI for macOS/Linux/Windows, creates GitHub Release
+- **pages.yml**: deploys `website/` to GitHub Pages on push (paths: `website/**`) or manual dispatch
+
+## Website Sync (IMPORTANT)
+
+Official website: https://coder-hhx.github.io/CargoBay/ (auto-deployed from `website/` directory)
+
+**Every time you add features, fix bugs, update docs, or change user-facing behavior, you MUST also update the website content to reflect those changes:**
+
+- `website/index.html` — feature list, comparison tables, performance stats, version numbers
+- `website/script.js` — interactive demos, feature highlights
+- `website/style.css` — styles for any new sections
+
+The pre-commit hook will remind you if source code changed but `website/` was not updated.
 
 ## Performance Claims (README)
 
