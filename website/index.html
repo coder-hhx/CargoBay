@@ -10,7 +10,9 @@
   <meta property="og:description" content="Free, open-source desktop app for managing Docker containers, Linux VMs, and K8s." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://cratebay.io/" />
-  <link rel="icon" type="image/png" href="logo.png" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+  <meta name="theme-color" content="#0f111a" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -256,14 +258,14 @@
             </div>
             <div class="mock-main">
               <div class="mock-main-header">
-                <div style="display:flex;align-items:center;gap:10px">
+                <div class="mock-main-header-left">
                   <h4 data-i18n="demoHeader">Containers</h4>
                   <span class="mock-chip">3 running</span>
                 </div>
-                <div style="display:flex;align-items:center;gap:10px">
+                <div class="mock-main-header-right">
                   <button class="mock-btn" data-i18n="demoBtn">+ Create Container</button>
                   <div class="mock-status-pill">
-                    <span class="dot" style="background:#34d399"></span> Connected
+                    <span class="dot online"></span> Connected
                   </div>
                 </div>
               </div>
@@ -324,7 +326,7 @@
                   </div>
                 </div>
                 <div class="mock-container-card mock-child-card">
-                  <div class="mock-card-icon" style="background:linear-gradient(135deg,#64748b,#475569)"></div>
+                  <div class="mock-card-icon muted"></div>
                   <div class="mock-card-body">
                     <div class="mock-card-name">db-postgres</div>
                     <div class="mock-card-meta">postgres:16 &middot; 5432:5432</div>
@@ -335,7 +337,7 @@
                   </div>
                 </div>
                 <div class="mock-container-card">
-                  <div class="mock-card-icon" style="background:linear-gradient(135deg,#22d3ee,#0891b2)"></div>
+                  <div class="mock-card-icon redis"></div>
                   <div class="mock-card-body">
                     <div class="mock-card-name">redis-cache</div>
                     <div class="mock-card-meta">redis:7-alpine &middot; 6379:6379</div>
