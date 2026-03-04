@@ -358,6 +358,79 @@
   onScroll();
 
   // ----------------------------------------------------------
+  // Desktop wheel section snap (debounce + anti-misfire)
+  // ----------------------------------------------------------
+  var snapSectionIds = ['hero', 'features', 'demo', 'techstack', 'comparison', 'install'];
+  var snapSections = snapSectionIds
+    .map(function (id) { return document.getElementById(id); })
+    .filter(Boolean);
+  var snapLocked = false;
+  var snapWheelAccum = 0;
+  var snapWheelResetTimer = null;
+  var snapThreshold = 60;
+  var snapLockMs = 760;
+
+  function isDesktopSnapEnabled() {
+    return window.innerWidth > 768 && snapSections.length > 1;
+  }
+
+  function nearestSectionIndex() {
+    var y = window.scrollY + 8;
+    var nearest = 0;
+    var minDistance = Number.POSITIVE_INFINITY;
+    snapSections.forEach(function (section, index) {
+      var d = Math.abs(section.offsetTop - y);
+      if (d < minDistance) {
+        minDistance = d;
+        nearest = index;
+      }
+    });
+    return nearest;
+  }
+
+  function scrollToSection(index) {
+    if (index < 0 || index >= snapSections.length) return;
+    snapLocked = true;
+    window.scrollTo({
+      top: snapSections[index].offsetTop,
+      behavior: 'smooth',
+    });
+    setTimeout(function () {
+      snapLocked = false;
+    }, snapLockMs);
+  }
+
+  window.addEventListener('wheel', function (event) {
+    if (!isDesktopSnapEnabled()) return;
+    if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    if (Math.abs(event.deltaY) < 10) return;
+
+    if (snapLocked) {
+      event.preventDefault();
+      return;
+    }
+
+    snapWheelAccum += event.deltaY;
+    if (snapWheelResetTimer) clearTimeout(snapWheelResetTimer);
+    snapWheelResetTimer = setTimeout(function () {
+      snapWheelAccum = 0;
+    }, 120);
+
+    if (Math.abs(snapWheelAccum) < snapThreshold) return;
+
+    event.preventDefault();
+
+    var direction = snapWheelAccum > 0 ? 1 : -1;
+    snapWheelAccum = 0;
+    var currentIndex = nearestSectionIndex();
+    var targetIndex = Math.max(0, Math.min(snapSections.length - 1, currentIndex + direction));
+
+    if (targetIndex !== currentIndex) {
+      scrollToSection(targetIndex);
+    }
+  }, { passive: false });
+
+  // ----------------------------------------------------------
   // Mobile menu
   // ----------------------------------------------------------
   var mobileBtn = document.querySelector('.mobile-menu-btn');
@@ -382,6 +455,84 @@
       setLang(btn.dataset.lang);
     });
   });
+
+  // ----------------------------------------------------------
+  // Demo window: auto rotate + manual switch
+  // ----------------------------------------------------------
+  var demoWindow = document.querySelector('.mock-dashboard');
+  if (demoWindow) {
+    var demoSlides = Array.from(demoWindow.querySelectorAll('.mock-page-slide'));
+    var demoTabs = Array.from(demoWindow.querySelectorAll('.mock-demo-tab'));
+    var demoNavItems = Array.from(demoWindow.querySelectorAll('.mock-sidebar-item[data-demo-nav]'));
+    var demoActiveIndex = 0;
+    var demoTimer = null;
+    var demoIntervalMs = 4200;
+
+    function demoFindIndex(page) {
+      return demoSlides.findIndex(function (slide) {
+        return slide.dataset.demoPage === page;
+      });
+    }
+
+    function demoSetPage(page) {
+      var nextIndex = demoFindIndex(page);
+      if (nextIndex < 0) return;
+      demoActiveIndex = nextIndex;
+      demoSlides.forEach(function (slide) {
+        slide.classList.toggle('active', slide.dataset.demoPage === page);
+      });
+      demoTabs.forEach(function (tab) {
+        tab.classList.toggle('active', tab.dataset.demoTarget === page);
+      });
+      demoNavItems.forEach(function (item) {
+        item.classList.toggle('active', item.dataset.demoNav === page);
+      });
+    }
+
+    function demoNextPage() {
+      if (demoSlides.length < 2) return;
+      demoActiveIndex = (demoActiveIndex + 1) % demoSlides.length;
+      var page = demoSlides[demoActiveIndex].dataset.demoPage;
+      demoSetPage(page);
+    }
+
+    function demoStartAuto() {
+      demoStopAuto();
+      if (demoSlides.length < 2) return;
+      demoTimer = setInterval(demoNextPage, demoIntervalMs);
+    }
+
+    function demoStopAuto() {
+      if (demoTimer) {
+        clearInterval(demoTimer);
+        demoTimer = null;
+      }
+    }
+
+    demoTabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        demoSetPage(tab.dataset.demoTarget);
+        demoStartAuto();
+      });
+    });
+
+    demoWindow.addEventListener('mouseenter', demoStopAuto);
+    demoWindow.addEventListener('mouseleave', demoStartAuto);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) {
+        demoStopAuto();
+      } else {
+        demoStartAuto();
+      }
+    });
+
+    if (demoSlides.length > 0) {
+      var initialSlide = demoWindow.querySelector('.mock-page-slide.active');
+      var initialPage = initialSlide ? initialSlide.dataset.demoPage : demoSlides[0].dataset.demoPage;
+      demoSetPage(initialPage);
+      demoStartAuto();
+    }
+  }
 
   // ----------------------------------------------------------
   // Copy code blocks
@@ -429,7 +580,9 @@
     var ctx = canvas.getContext('2d');
     var w, h;
     var particles = [];
+    var ions = [];
     var PARTICLE_COUNT = 60;
+    var ION_COUNT = 12;
     var GRID_SIZE = 60;
     var CONNECTION_DIST = 140;
 
@@ -451,12 +604,30 @@
       }
     }
 
+    function initIons() {
+      ions = [];
+      for (var i = 0; i < ION_COUNT; i++) {
+        ions.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          vx: (Math.random() - 0.5) * 0.22,
+          vy: (Math.random() - 0.5) * 0.22,
+          r: Math.random() * 48 + 36,
+          phase: Math.random() * Math.PI * 2,
+          kind: i % 2 === 0 ? 'a' : 'b',
+        });
+      }
+    }
+
     function getCanvasColors() {
       var style = getComputedStyle(document.documentElement);
       return {
         grid: style.getPropertyValue('--canvas-grid').trim(),
         particle: style.getPropertyValue('--canvas-particle').trim(),
         line: style.getPropertyValue('--canvas-line').trim(),
+        ionA: style.getPropertyValue('--ion-glow-a').trim(),
+        ionB: style.getPropertyValue('--ion-glow-b').trim(),
+        ionCore: style.getPropertyValue('--ion-core').trim(),
       };
     }
 
@@ -513,9 +684,34 @@
       }
     }
 
+    function drawIons(colors, t) {
+      for (var i = 0; i < ions.length; i++) {
+        var ion = ions[i];
+        ion.x += ion.vx;
+        ion.y += ion.vy;
+        if (ion.x < -ion.r) ion.x = w + ion.r;
+        if (ion.x > w + ion.r) ion.x = -ion.r;
+        if (ion.y < -ion.r) ion.y = h + ion.r;
+        if (ion.y > h + ion.r) ion.y = -ion.r;
+
+        var pulse = 0.86 + Math.sin(t * 0.0012 + ion.phase) * 0.16;
+        var radius = ion.r * pulse;
+        var glow = ctx.createRadialGradient(ion.x, ion.y, 0, ion.x, ion.y, radius);
+        glow.addColorStop(0, colors.ionCore);
+        glow.addColorStop(0.24, ion.kind === 'a' ? colors.ionA : colors.ionB);
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+
+        ctx.beginPath();
+        ctx.arc(ion.x, ion.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = glow;
+        ctx.fill();
+      }
+    }
+
     function animate() {
       ctx.clearRect(0, 0, w, h);
       var colors = getCanvasColors();
+      drawIons(colors, performance.now());
       drawGrid(colors);
       drawParticles(colors);
       requestAnimationFrame(animate);
@@ -523,11 +719,13 @@
 
     resize();
     initParticles();
+    initIons();
     animate();
 
     window.addEventListener('resize', function () {
       resize();
       initParticles();
+      initIons();
     });
   }
 
