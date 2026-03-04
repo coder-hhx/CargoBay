@@ -39,9 +39,8 @@ export function Containers({
   const [runCpus, setRunCpus] = useState<number | "">("")
   const [runMem, setRunMem] = useState<number | "">("")
   const [runPull, setRunPull] = useState(true)
-  const [_runLoading, _setRunLoading] = useState(false)
-  const [_runResult, setRunResult] = useState<RunContainerResult | null>(null)
-  const [_runError, setRunError] = useState("")
+  const [, setRunResult] = useState<RunContainerResult | null>(null)
+  const [, setRunError] = useState("")
   const [runEnvVars, setRunEnvVars] = useState<{ key: string; value: string }[]>([])
 
   // Log viewer state

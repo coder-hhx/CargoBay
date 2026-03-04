@@ -1070,10 +1070,7 @@ fn vm_state_to_string(state: cratebay_core::hypervisor::VmState) -> String {
 async fn vm_list(state: State<'_, AppState>) -> Result<Vec<VmInfoDto>, String> {
     state.ensure_daemon().await;
     if let Ok(mut client) = connect_vm_service(&state.grpc_addr).await {
-        if let Ok(resp) = client
-            .list_v_ms(proto::ListVMsRequest {})
-            .await
-        {
+        if let Ok(resp) = client.list_v_ms(proto::ListVMsRequest {}).await {
             let resp = resp.into_inner();
             return Ok(resp
                 .vms
@@ -2079,7 +2076,10 @@ async fn search_dockerhub(
     let mut out = Vec::new();
 
     for r in data.results.into_iter().take(limit) {
-        let ns = r.namespace.filter(|s| !s.is_empty()).unwrap_or_else(|| "library".to_string());
+        let ns = r
+            .namespace
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "library".to_string());
         let name = if ns == "library" {
             r.name.clone()
         } else {
@@ -2485,7 +2485,10 @@ async fn check_update() -> Result<UpdateInfo, String> {
         let url = body["html_url"].as_str().unwrap_or("").to_string();
         (api_tag, notes, url)
     } else {
-        let url = format!("https://github.com/coder-hhx/CrateBay/releases/tag/v{}", tag);
+        let url = format!(
+            "https://github.com/coder-hhx/CrateBay/releases/tag/v{}",
+            tag
+        );
         (tag, String::new(), url)
     };
 
