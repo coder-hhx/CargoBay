@@ -106,6 +106,32 @@ export type NavPage = "dashboard" | "containers" | "vms" | "images" | "volumes" 
 export type Theme = "dark" | "light" | "system"
 export type ModalKind = "" | "text" | "package"
 
+export interface AiProviderProfile {
+  id: string
+  provider_id: string
+  display_name: string
+  model: string
+  base_url: string
+  api_key_ref: string
+  headers: Record<string, string>
+}
+
+export interface AiSecurityPolicy {
+  destructive_action_confirmation: boolean
+  mcp_remote_enabled: boolean
+}
+
+export interface AiSettings {
+  profiles: AiProviderProfile[]
+  active_profile_id: string
+  security_policy: AiSecurityPolicy
+}
+
+export interface AiProfileValidationResult {
+  ok: boolean
+  message: string
+}
+
 export interface ContainerGroup {
   key: string
   containers: ContainerInfo[]

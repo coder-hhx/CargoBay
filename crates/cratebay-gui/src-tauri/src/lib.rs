@@ -12,7 +12,7 @@ use futures_util::stream::TryStreamExt;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -2405,6 +2405,331 @@ fn refresh_tray_menu(app: &tauri::AppHandle) {
     });
 }
 
+// ── AI settings commands ───────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProviderProfile {
+    id: String,
+    provider_id: String,
+    display_name: String,
+    model: String,
+    base_url: String,
+    api_key_ref: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSecurityPolicy {
+    destructive_action_confirmation: bool,
+    mcp_remote_enabled: bool,
+}
+
+impl Default for AiSecurityPolicy {
+    fn default() -> Self {
+        Self {
+            destructive_action_confirmation: true,
+            mcp_remote_enabled: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSettings {
+    profiles: Vec<AiProviderProfile>,
+    active_profile_id: String,
+    #[serde(default)]
+    security_policy: AiSecurityPolicy,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        default_ai_settings()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProfileValidationResult {
+    ok: bool,
+    message: String,
+}
+
+fn ai_profile(
+    id: &str,
+    provider_id: &str,
+    display_name: &str,
+    model: &str,
+    base_url: &str,
+    api_key_ref: &str,
+) -> AiProviderProfile {
+    AiProviderProfile {
+        id: id.to_string(),
+        provider_id: provider_id.to_string(),
+        display_name: display_name.to_string(),
+        model: model.to_string(),
+        base_url: base_url.to_string(),
+        api_key_ref: api_key_ref.to_string(),
+        headers: HashMap::new(),
+    }
+}
+
+fn default_ai_profiles() -> Vec<AiProviderProfile> {
+    vec![
+        ai_profile(
+            "openai-default",
+            "openai",
+            "OpenAI (GPT-4.1-mini)",
+            "gpt-4.1-mini",
+            "https://api.openai.com/v1",
+            "OPENAI_API_KEY",
+        ),
+        ai_profile(
+            "anthropic-default",
+            "anthropic",
+            "Anthropic (Claude 3.7 Sonnet)",
+            "claude-3-7-sonnet-latest",
+            "https://api.anthropic.com/v1",
+            "ANTHROPIC_API_KEY",
+        ),
+        ai_profile(
+            "gemini-default",
+            "gemini",
+            "Gemini (2.5 Pro)",
+            "gemini-2.5-pro",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "GEMINI_API_KEY",
+        ),
+        ai_profile(
+            "openrouter-default",
+            "openrouter",
+            "OpenRouter (GPT-4.1-mini)",
+            "openai/gpt-4.1-mini",
+            "https://openrouter.ai/api/v1",
+            "OPENROUTER_API_KEY",
+        ),
+        ai_profile(
+            "deepseek-default",
+            "deepseek",
+            "DeepSeek (chat)",
+            "deepseek-chat",
+            "https://api.deepseek.com/v1",
+            "DEEPSEEK_API_KEY",
+        ),
+        ai_profile(
+            "minimax-default",
+            "minimax",
+            "MiniMax (Text-01)",
+            "MiniMax-Text-01",
+            "https://api.minimax.chat/v1",
+            "MINIMAX_API_KEY",
+        ),
+        ai_profile(
+            "kimi-default",
+            "kimi",
+            "Kimi (Moonshot)",
+            "moonshot-v1-8k",
+            "https://api.moonshot.cn/v1",
+            "KIMI_API_KEY",
+        ),
+        ai_profile(
+            "glm-default",
+            "glm",
+            "GLM (4 Plus)",
+            "glm-4-plus",
+            "https://open.bigmodel.cn/api/paas/v4",
+            "GLM_API_KEY",
+        ),
+        ai_profile(
+            "ollama-default",
+            "ollama",
+            "Ollama Local",
+            "qwen2.5:7b",
+            "http://127.0.0.1:11434/v1",
+            "",
+        ),
+        ai_profile(
+            "custom-default",
+            "custom",
+            "Custom Provider",
+            "model-name",
+            "https://api.example.com/v1",
+            "CUSTOM_LLM_API_KEY",
+        ),
+    ]
+}
+
+fn default_ai_settings() -> AiSettings {
+    let profiles = default_ai_profiles();
+    let active_profile_id = profiles
+        .first()
+        .map(|p| p.id.clone())
+        .unwrap_or_else(|| "openai-default".to_string());
+    AiSettings {
+        profiles,
+        active_profile_id,
+        security_policy: AiSecurityPolicy::default(),
+    }
+}
+
+fn ai_settings_path() -> PathBuf {
+    cratebay_core::config_dir().join("ai-settings.json")
+}
+
+fn validate_ai_profile_inner(profile: &AiProviderProfile) -> AiProfileValidationResult {
+    if profile.id.trim().is_empty() {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "Profile id is required".to_string(),
+        };
+    }
+    if profile.provider_id.trim().is_empty() {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "Provider id is required".to_string(),
+        };
+    }
+    if profile.display_name.trim().is_empty() {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "Display name is required".to_string(),
+        };
+    }
+    if profile.model.trim().is_empty() {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "Model is required".to_string(),
+        };
+    }
+
+    let base_url = profile.base_url.trim();
+    if base_url.is_empty() {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "Base URL is required".to_string(),
+        };
+    }
+    if !(base_url.starts_with("https://") || base_url.starts_with("http://")) {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "Base URL must start with http:// or https://".to_string(),
+        };
+    }
+
+    for (key, value) in &profile.headers {
+        if key.trim().is_empty() {
+            return AiProfileValidationResult {
+                ok: false,
+                message: "Header key cannot be empty".to_string(),
+            };
+        }
+        if value.trim().is_empty() {
+            return AiProfileValidationResult {
+                ok: false,
+                message: format!("Header value for '{}' cannot be empty", key),
+            };
+        }
+    }
+
+    let base_lower = base_url.to_ascii_lowercase();
+    let is_local_endpoint = base_lower.contains("127.0.0.1") || base_lower.contains("localhost");
+    if !is_local_endpoint && profile.api_key_ref.trim().is_empty() {
+        return AiProfileValidationResult {
+            ok: false,
+            message: "API key reference is required for non-local endpoints".to_string(),
+        };
+    }
+
+    AiProfileValidationResult {
+        ok: true,
+        message: "Profile is valid".to_string(),
+    }
+}
+
+fn normalize_ai_settings(mut settings: AiSettings) -> AiSettings {
+    if settings.profiles.is_empty() {
+        return default_ai_settings();
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    settings.profiles.retain(|profile| {
+        let id = profile.id.trim();
+        !id.is_empty() && seen.insert(id.to_string())
+    });
+
+    if settings.profiles.is_empty() {
+        return default_ai_settings();
+    }
+
+    if !settings
+        .profiles
+        .iter()
+        .any(|p| p.id == settings.active_profile_id)
+    {
+        if let Some(profile) = settings.profiles.first() {
+            settings.active_profile_id = profile.id.clone();
+        }
+    }
+
+    settings
+}
+
+fn persist_ai_settings(path: &Path, settings: &AiSettings) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Err(format!("Invalid settings path: {}", path.display()));
+    };
+    std::fs::create_dir_all(parent).map_err(|e| {
+        format!(
+            "Failed to create config directory {}: {}",
+            parent.display(),
+            e
+        )
+    })?;
+
+    let body = serde_json::to_vec_pretty(settings)
+        .map_err(|e| format!("Failed to encode settings: {}", e))?;
+    std::fs::write(path, body)
+        .map_err(|e| format!("Failed to write settings file {}: {}", path.display(), e))
+}
+
+#[tauri::command]
+fn load_ai_settings() -> Result<AiSettings, String> {
+    let path = ai_settings_path();
+    if !path.exists() {
+        let defaults = default_ai_settings();
+        persist_ai_settings(&path, &defaults)?;
+        return Ok(defaults);
+    }
+
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read settings file {}: {}", path.display(), e))?;
+    let parsed: AiSettings = serde_json::from_str(&raw)
+        .map_err(|e| format!("Failed to parse AI settings JSON: {}", e))?;
+    Ok(normalize_ai_settings(parsed))
+}
+
+#[tauri::command]
+fn save_ai_settings(settings: AiSettings) -> Result<AiSettings, String> {
+    let normalized = normalize_ai_settings(settings);
+    for profile in &normalized.profiles {
+        let result = validate_ai_profile_inner(profile);
+        if !result.ok {
+            return Err(format!(
+                "Profile '{}' validation failed: {}",
+                profile.display_name, result.message
+            ));
+        }
+    }
+
+    let path = ai_settings_path();
+    persist_ai_settings(&path, &normalized)?;
+    Ok(normalized)
+}
+
+#[tauri::command]
+fn validate_ai_profile(profile: AiProviderProfile) -> AiProfileValidationResult {
+    validate_ai_profile_inner(&profile)
+}
+
 // ── Auto-update ────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -2664,6 +2989,9 @@ pub fn run() {
             k8s_list_services,
             k8s_list_deployments,
             k8s_pod_logs,
+            load_ai_settings,
+            save_ai_settings,
+            validate_ai_profile,
             check_update,
             open_release_page,
             set_window_theme
