@@ -168,7 +168,7 @@ Docker volume management:
 
 ### Virtual Machines (虚拟机)
 
-Fully supported in v1.0:
+Available in the current v1.0.0 preview (GA coming soon):
 
 - **Create / start / stop / delete / list** with full lifecycle management
 - **CPU / Memory / Disk** parameters on creation
@@ -184,7 +184,7 @@ Fully supported in v1.0:
 
 ### Images (镜像)
 
-Available in v1.0:
+Also available in the current v1.0.0 preview:
 
 - **Search images** across **Docker Hub** and **Quay**
 - **List tags** for registry-domain references (e.g. `quay.io/org/image`, `ghcr.io/org/image`)
@@ -437,7 +437,7 @@ Error logs are written to the Logs directory as `cratebay-error.log.YYYY-MM-DD` 
 | **v0.2** | VM & Networking | VM lifecycle, VirtioFS, port forwarding, resource monitoring |
 | **v0.3** | Developer Experience | Container logs/terminal, image management, volumes, env vars |
 | **v0.4** | Kubernetes | K3s integration, K8s dashboard, auto-update |
-| **v1.0** (current) | Production Ready | Real VM execution, cross-platform, testing, security audit |
+| **v1.0.0-rc** (GA coming soon) | GA Readiness | Real VM execution, cross-platform, testing, security audit |
 
 ---
 

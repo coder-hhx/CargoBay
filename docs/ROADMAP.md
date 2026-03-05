@@ -36,7 +36,7 @@
 - ✅ Auto-update checker (GitHub releases)
 - ✅ Official website (GitHub Pages)
 
-## v1.0.0 — Production Ready (In Progress, GA Coming Soon)
+## v1.0.0 — GA Readiness (In Progress, Coming Soon)
 
 - ⚠️ Core feature scope is mostly complete, but GA release is not announced yet.
 
