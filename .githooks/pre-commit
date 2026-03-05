@@ -20,6 +20,62 @@ if [[ -z "${staged_files}" ]]; then
   exit 0
 fi
 
+# ── Remote sync check (prompt-type + blocking) ───────────────────────────────
+# Require local branch to be synced with upstream before each commit.
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  PRE-COMMIT SYNC CHECK"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+current_branch="$(git branch --show-current || true)"
+if [[ -z "$current_branch" ]]; then
+  echo "ERROR: Unable to determine current branch (detached HEAD)."
+  echo "Please switch to a branch before committing."
+  exit 1
+fi
+
+upstream_ref="$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)"
+if [[ -z "$upstream_ref" ]]; then
+  upstream_ref="origin/$current_branch"
+fi
+
+remote_name="${upstream_ref%%/*}"
+remote_branch="${upstream_ref#*/}"
+
+echo "Fetching latest upstream: $upstream_ref"
+if ! git fetch --quiet "$remote_name" "$remote_branch"; then
+  echo "ERROR: Failed to fetch $upstream_ref."
+  echo "Please check network/remote access and retry."
+  exit 1
+fi
+
+local_sha="$(git rev-parse HEAD)"
+remote_sha="$(git rev-parse "$upstream_ref" 2>/dev/null || true)"
+base_sha="$(git merge-base HEAD "$upstream_ref" 2>/dev/null || true)"
+
+if [[ -z "$remote_sha" || -z "$base_sha" ]]; then
+  echo "ERROR: Unable to compare with upstream ($upstream_ref)."
+  echo "Run: git fetch $remote_name $remote_branch"
+  exit 1
+fi
+
+if [[ "$local_sha" == "$remote_sha" ]]; then
+  echo "Sync check: up-to-date with $upstream_ref."
+elif [[ "$local_sha" == "$base_sha" ]]; then
+  echo "ERROR: Local branch is behind $upstream_ref."
+  echo "Please sync and resolve conflicts before commit:"
+  echo "  git pull --rebase $remote_name $remote_branch"
+  exit 1
+elif [[ "$remote_sha" == "$base_sha" ]]; then
+  echo "Sync check: local branch is ahead of $upstream_ref (OK)."
+else
+  echo "ERROR: Local branch has diverged from $upstream_ref."
+  echo "Please sync and resolve conflicts before commit:"
+  echo "  git pull --rebase $remote_name $remote_branch"
+  exit 1
+fi
+
 # i18n (docs): if one language is updated, the other must be updated too.
 doc_pairs=(
   "README.md:README.zh.md"

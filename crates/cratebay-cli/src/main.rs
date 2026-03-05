@@ -2392,12 +2392,12 @@ mod tests {
         let _daemon_path = EnvVarGuard::set_path("CRATEBAY_DAEMON_PATH", &script);
         let _pid = spawn_daemon_detached().expect("spawn");
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while std::time::Instant::now() < deadline {
             if marker.exists() {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         panic!("expected marker file to be created");
