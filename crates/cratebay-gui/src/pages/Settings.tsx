@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cardActionOutline, cardActionSecondary } from "@/lib/styles"
 import type {
   AgentCliPreset,
@@ -80,6 +81,7 @@ export function Settings({ theme, setTheme, lang, setLang, t }: SettingsProps) {
   const [agentRunning, setAgentRunning] = useState(false)
   const [agentResult, setAgentResult] = useState<AgentCliRunResult | null>(null)
   const [agentError, setAgentError] = useState("")
+  const [settingsTab, setSettingsTab] = useState<"general" | "ai">("general")
 
   const sectionTitle = (key: string) => {
     const value = t(key)
@@ -381,7 +383,14 @@ export function Settings({ theme, setTheme, lang, setLang, t }: SettingsProps) {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-3">
+      <Tabs value={settingsTab} onValueChange={(v) => setSettingsTab(v as "general" | "ai")}>
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="general">{t("settingsGeneralTab")}</TabsTrigger>
+          <TabsTrigger value="ai">{t("settingsAiTab")}</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      <section className="space-y-3" hidden={settingsTab !== "general"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">
           {sectionTitle("theme")}
         </div>
@@ -410,7 +419,7 @@ export function Settings({ theme, setTheme, lang, setLang, t }: SettingsProps) {
         </Card>
       </section>
 
-      <section className="space-y-3">
+      <section className="space-y-3" hidden={settingsTab !== "general"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">
           {sectionTitle("language")}
         </div>
@@ -445,7 +454,7 @@ export function Settings({ theme, setTheme, lang, setLang, t }: SettingsProps) {
         </Card>
       </section>
 
-      <section className="space-y-3">
+      <section className="space-y-3" hidden={settingsTab !== "ai"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">
           {sectionTitle("aiSettings")}
         </div>
@@ -863,7 +872,7 @@ export function Settings({ theme, setTheme, lang, setLang, t }: SettingsProps) {
         </Card>
       </section>
 
-      <section className="space-y-3">
+      <section className="space-y-3" hidden={settingsTab !== "ai"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">
           {sectionTitle("agentCliBridge")}
         </div>
@@ -994,7 +1003,7 @@ export function Settings({ theme, setTheme, lang, setLang, t }: SettingsProps) {
         </Card>
       </section>
 
-      <section className="space-y-3">
+      <section className="space-y-3" hidden={settingsTab !== "general"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">
           {sectionTitle("updates")}
         </div>

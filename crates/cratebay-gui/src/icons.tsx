@@ -12,6 +12,7 @@ export const I = {
   memory: <svg viewBox="0 0 24 24"><path d="M2 6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/><path d="M6 4v4"/><path d="M10 4v4"/><path d="M14 4v4"/><path d="M18 4v4"/><path d="M6 16v4"/><path d="M10 16v4"/><path d="M14 16v4"/><path d="M18 16v4"/><rect x="6" y="9" width="12" height="6" rx="1"/></svg>,
   terminal: <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>,
   command: <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><line x1="14" y1="15" x2="20" y2="15"/></svg>,
+  aiAssistant: <svg viewBox="0 0 24 24"><path d="M12 4a5 5 0 015 5v1.5a3.5 3.5 0 01-2.06 3.19L14 14.1V17a2 2 0 01-2 2 2 2 0 01-2-2v-2.9l-.94-.41A3.5 3.5 0 017 10.5V9a5 5 0 015-5z"/><circle cx="9.5" cy="10.5" r="0.8"/><circle cx="14.5" cy="10.5" r="0.8"/><path d="M9.5 13.5c.8.6 1.7.9 2.5.9s1.7-.3 2.5-.9"/><path d="M12 2v2"/><path d="M5 8h2"/><path d="M17 8h2"/></svg>,
   key: <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
   copy: <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>,
   refresh: <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>,

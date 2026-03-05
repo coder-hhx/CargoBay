@@ -22,6 +22,7 @@
 - Clean-machine validation:
   - Fresh install works
   - App starts and tray icon is visible
+  - Settings `General` / `AI` tabs switch correctly
   - Containers page, VMs page, K8s page load without fatal errors
   - Uninstall + reinstall works
 
@@ -33,6 +34,7 @@
 - Clean-machine validation:
   - Fresh install works
   - App starts, no missing runtime dependency popup
+  - Settings `General` / `AI` tabs switch correctly
   - Container and K8s read actions succeed
   - Uninstall + reinstall works
 
@@ -42,7 +44,8 @@
   - `bash scripts/build-release-windows.sh`
 - Clean-machine validation:
   - MSI/NSIS installer works
-  - App starts and can open Settings/Assistant pages
+  - App starts and can open Settings/Assistant pages (assistant AI icon visible)
+  - Settings `General` / `AI` tabs switch correctly
   - VM backend reports status (Hyper-V environment)
   - Uninstall + reinstall works
 

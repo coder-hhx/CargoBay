@@ -92,6 +92,12 @@ cd crates/cratebay-gui
 npm run tauri build
 ```
 
+For local macOS installation without DMG packaging:
+
+```bash
+./scripts/install-local-macos-app.sh --open
+```
+
 Output: `crates/cratebay-gui/src-tauri/target/release/bundle/`
 
 - macOS: `.dmg` and `.app`
@@ -204,12 +210,12 @@ Also available in the current v1.0.0 preview:
 
 ### Settings (设置)
 
-| Setting | Options |
-|---------|---------|
-| **Theme** | Dark (default) / Light |
-| **Language** | English, 中文 |
+Settings are split into two tabs:
 
-Preferences are saved in `localStorage` and persist across sessions.
+- **General**: Theme, language, update checks
+- **AI**: Provider profiles, secret refs, MCP policy, skills registry preview, Agent/CLI bridge
+
+Preferences are saved in `localStorage` (GUI) and AI settings are persisted to `ai-settings.json`.
 
 ---
 

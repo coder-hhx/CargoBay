@@ -128,6 +128,11 @@ cratebay mount add --vm myvm --tag code --host-path ~/code --guest-path /mnt/cod
 
 See [Tutorial](docs/TUTORIAL.md) for detailed instructions.
 
+AI UX update in current preview:
+
+- Assistant now uses a dedicated AI icon in navigation and page header.
+- Settings are split into `General` and `AI` tabs to avoid long stacked forms.
+
 ## Development Setup (Contributors)
 
 ```bash
@@ -143,6 +148,9 @@ bash scripts/setup-dev.sh
 
 # 4) Run v1.0 release gate checks
 ./scripts/release-readiness.sh
+
+# 5) Build and install local macOS app (app-only, skips dmg)
+./scripts/install-local-macos-app.sh --open
 ```
 
 ## Tauri MCP Bridge (Local Debug)

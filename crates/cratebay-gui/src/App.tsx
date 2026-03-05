@@ -185,7 +185,7 @@ function App() {
     { page: "volumes", icon: I.hardDrive, count: volumeHook.volumes.length },
     { page: "vms", icon: I.server, count: vmHook.vms.length },
     { page: "kubernetes", icon: I.kubernetes },
-    { page: "assistant", icon: I.command },
+    { page: "assistant", icon: I.aiAssistant },
   ]
 
   const pageNames: Record<NavPage, string> = {

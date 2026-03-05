@@ -105,7 +105,7 @@ export function Assistant({ t }: AssistantProps) {
         <CardContent className="space-y-3 py-4">
           <div className="flex items-center gap-3">
             <div className="size-10 shrink-0 rounded-lg bg-primary/10 text-primary flex items-center justify-center [&_svg]:size-5 [&_svg]:fill-none [&_svg]:stroke-current [&_svg]:stroke-2 [&_svg]:stroke-linecap-round [&_svg]:stroke-linejoin-round">
-              {I.command}
+              {I.aiAssistant}
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-foreground">{t("assistant")}</div>

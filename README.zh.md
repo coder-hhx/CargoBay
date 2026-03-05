@@ -128,6 +128,11 @@ cratebay mount add --vm myvm --tag code --host-path ~/code --guest-path /mnt/cod
 
 详细用法见 [教程](docs/TUTORIAL.zh.md)。
 
+当前预览版的 AI 交互更新：
+
+- 侧边栏与助手页头部使用专门的 AI 助手图标。
+- 设置页拆分为 `常规` 与 `AI` 两个标签页，避免单页堆叠过长。
+
 ## 开发环境（贡献者）
 
 ```bash
@@ -143,6 +148,9 @@ bash scripts/setup-dev.sh
 
 # 4) 执行 v1.0 发布门禁检查
 ./scripts/release-readiness.sh
+
+# 5) 本地构建并安装 macOS 应用（仅 app，跳过 dmg）
+./scripts/install-local-macos-app.sh --open
 ```
 
 ## Tauri MCP Bridge（本地调试）

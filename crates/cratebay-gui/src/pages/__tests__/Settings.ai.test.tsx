@@ -54,6 +54,10 @@ const defaultProps = {
   t,
 }
 
+const switchToAiTab = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("tab", { name: t("settingsAiTab") }))
+}
+
 describe("Settings AI section", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -91,6 +95,7 @@ describe("Settings AI section", () => {
     })
 
     render(<Settings {...defaultProps} />)
+    await switchToAiTab(user)
     await screen.findByRole("button", { name: t("aiTestConnection") })
 
     await user.click(screen.getByRole("button", { name: t("aiTestConnection") }))
@@ -138,6 +143,7 @@ describe("Settings AI section", () => {
     })
 
     render(<Settings {...defaultProps} />)
+    await switchToAiTab(user)
     await screen.findByRole("button", { name: t("agentCliRun") })
 
     await user.click(screen.getByRole("button", { name: t("agentCliRun") }))
@@ -165,6 +171,7 @@ describe("Settings AI section", () => {
     })
 
     render(<Settings {...defaultProps} />)
+    await switchToAiTab(user)
     const skillLabel = await screen.findByText(/OpenClaw CLI Plan/)
     await user.click(skillLabel)
 
@@ -185,5 +192,24 @@ describe("Settings AI section", () => {
         })
       )
     )
+  })
+
+  it("splits general and ai settings into separate tabs", async () => {
+    const user = userEvent.setup()
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "load_ai_settings") return baseAiSettings
+      if (command === "agent_cli_list_presets") return []
+      if (command === "ai_secret_exists") return true
+      return null
+    })
+
+    render(<Settings {...defaultProps} />)
+
+    expect(screen.getByRole("button", { name: t("checkUpdates") })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: t("aiTestConnection") })).not.toBeInTheDocument()
+
+    await switchToAiTab(user)
+    expect(screen.getByRole("button", { name: t("aiTestConnection") })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: t("checkUpdates") })).not.toBeInTheDocument()
   })
 })

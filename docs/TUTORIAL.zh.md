@@ -92,6 +92,12 @@ cd crates/cratebay-gui
 npm run tauri build
 ```
 
+如仅需本地安装 macOS `.app`（不打包 `.dmg`）：
+
+```bash
+./scripts/install-local-macos-app.sh --open
+```
+
 输出目录：`crates/cratebay-gui/src-tauri/target/release/bundle/`
 
 - macOS：`.dmg` / `.app`
@@ -204,12 +210,12 @@ Docker 存储卷管理：
 
 ### Settings（设置）
 
-| 设置项 | 选项 |
-|---------|---------|
-| **Theme** | Dark（默认）/ Light |
-| **Language** | English, 中文 |
+设置页拆分为两个标签页：
 
-偏好会保存在 `localStorage` 中并持久化。
+- **常规**：主题、语言、更新检查
+- **AI**：模型配置、密钥引用、MCP 策略、Skills 注册表预览、Agent/CLI 桥接
+
+其中 GUI 偏好保存在 `localStorage`，AI 配置持久化在 `ai-settings.json`。
 
 ---
 

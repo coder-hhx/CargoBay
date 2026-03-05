@@ -41,6 +41,11 @@ Settings > AI Settings now shows a **Skills Registry (Preview)** block:
 
 Runtime orchestration (chain execution, retries, guardrails, dependency graph) is not shipped yet.
 
+Settings UX is now separated into two tabs:
+
+- `General`: theme, language, updates
+- `AI`: provider profiles, MCP policy, skills registry, Agent/CLI bridge
+
 ## Next Implementation Steps
 
 1. Add executor adapters for direct OpenClaw Gateway tools (in addition to CLI preset mode).

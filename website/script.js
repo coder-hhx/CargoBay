@@ -57,10 +57,10 @@
         'Built-in K3s integration with pod, service, and deployment dashboards. Manage namespaces and workloads effortlessly.',
       feat7Title: 'AI Assistant',
       feat7Desc:
-        'Built-in assistant turns natural language into step-by-step plans, enforces confirmation on risky actions, and keeps audit trails.',
+        'Built-in assistant turns natural language into step-by-step plans, uses a dedicated AI workflow, enforces confirmation on risky actions, and keeps audit trails.',
       feat8Title: 'Agent / CLI Bridge',
       feat8Desc:
-        'Run Codex, Claude, Gemini, Qwen and OpenClaw workflows with allowlist, dry-run, timeout control, and command audit.',
+        'Run Codex, Claude, Gemini, Qwen and OpenClaw workflows with allowlist, dry-run, timeout control, command audit, and tabbed AI settings.',
 
       // Demo
       demoLabel: 'Interface',
@@ -196,9 +196,9 @@
       feat6Title: 'Kubernetes (K3s)',
       feat6Desc: '内置 K3s 集成，提供 Pod、Service 和 Deployment 仪表盘。轻松管理命名空间和工作负载。',
       feat7Title: 'AI 助手',
-      feat7Desc: '内嵌助手把自然语言目标拆成可执行步骤，对高风险动作强制确认，并保留审计记录。',
+      feat7Desc: '内嵌助手把自然语言目标拆成可执行步骤，使用专门的 AI 交互入口，对高风险动作强制确认，并保留审计记录。',
       feat8Title: 'Agent / CLI 桥接',
-      feat8Desc: '支持 Codex、Claude、Gemini、Qwen、OpenClaw 工作流，提供白名单、dry-run、超时与审计控制。',
+      feat8Desc: '支持 Codex、Claude、Gemini、Qwen、OpenClaw 工作流，提供白名单、dry-run、超时、审计控制与 AI 设置标签页。',
       demoLabel: '界面',
       demoTitle: '为速度和清晰度而生。',
       demoDesc: '基于 Tauri 和 React 构建的简洁响应式 GUI。每次交互都瞬间完成。',
