@@ -102,7 +102,15 @@ export interface ImageInspectInfo {
   layers: number
 }
 
-export type NavPage = "dashboard" | "containers" | "vms" | "images" | "volumes" | "kubernetes" | "settings"
+export type NavPage =
+  | "dashboard"
+  | "containers"
+  | "vms"
+  | "images"
+  | "volumes"
+  | "kubernetes"
+  | "assistant"
+  | "settings"
 export type Theme = "dark" | "light" | "system"
 export type ModalKind = "" | "text" | "package"
 
@@ -119,6 +127,10 @@ export interface AiProviderProfile {
 export interface AiSecurityPolicy {
   destructive_action_confirmation: boolean
   mcp_remote_enabled: boolean
+  mcp_allowed_actions: string[]
+  mcp_auth_token_ref: string
+  mcp_audit_enabled: boolean
+  cli_command_allowlist: string[]
 }
 
 export interface AiSettings {
@@ -130,6 +142,78 @@ export interface AiSettings {
 export interface AiProfileValidationResult {
   ok: boolean
   message: string
+}
+
+export interface AiChatMessage {
+  role: "system" | "user" | "assistant"
+  content: string
+}
+
+export interface AiUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+}
+
+export interface AiToolCall {
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export interface AiChatResponse {
+  request_id: string
+  provider_id: string
+  model: string
+  text: string
+  usage?: AiUsage
+  tool_calls: AiToolCall[]
+  error_type?: string
+}
+
+export interface AiConnectionTestResult {
+  ok: boolean
+  request_id: string
+  message: string
+  error_type?: string
+  latency_ms: number
+}
+
+export interface AssistantPlanStep {
+  id: string
+  title: string
+  command: string
+  args: Record<string, unknown>
+  risk_level: "read" | "write" | "destructive"
+  requires_confirmation: boolean
+  explain: string
+}
+
+export interface AssistantPlanResult {
+  request_id: string
+  strategy: string
+  notes: string
+  fallback_used: boolean
+  steps: AssistantPlanStep[]
+}
+
+export interface AgentCliPreset {
+  id: string
+  name: string
+  description: string
+  command: string
+  args_template: string[]
+  timeout_sec: number
+  dangerous: boolean
+}
+
+export interface AgentCliRunResult {
+  ok: boolean
+  request_id: string
+  command_line: string
+  exit_code: number
+  stdout: string
+  stderr: string
+  duration_ms: number
 }
 
 export interface ContainerGroup {

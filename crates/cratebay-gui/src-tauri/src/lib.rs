@@ -9,11 +9,15 @@ use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 use bollard::Docker;
 use futures_util::stream::TryStreamExt;
+use keyring::Entry;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
@@ -2407,6 +2411,13 @@ fn refresh_tray_menu(app: &tauri::AppHandle) {
 
 // ── AI settings commands ───────────────────────────────────────────
 
+const AI_SECRET_SERVICE: &str = "com.cratebay.app.ai";
+static AI_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiProviderProfile {
     id: String,
@@ -2423,6 +2434,14 @@ pub struct AiProviderProfile {
 pub struct AiSecurityPolicy {
     destructive_action_confirmation: bool,
     mcp_remote_enabled: bool,
+    #[serde(default)]
+    mcp_allowed_actions: Vec<String>,
+    #[serde(default)]
+    mcp_auth_token_ref: String,
+    #[serde(default = "default_true")]
+    mcp_audit_enabled: bool,
+    #[serde(default)]
+    cli_command_allowlist: Vec<String>,
 }
 
 impl Default for AiSecurityPolicy {
@@ -2430,6 +2449,20 @@ impl Default for AiSecurityPolicy {
         Self {
             destructive_action_confirmation: true,
             mcp_remote_enabled: false,
+            mcp_allowed_actions: vec![
+                "list_containers".to_string(),
+                "vm_list".to_string(),
+                "k8s_list_pods".to_string(),
+            ],
+            mcp_auth_token_ref: "MCP_AUTH_TOKEN".to_string(),
+            mcp_audit_enabled: true,
+            cli_command_allowlist: vec![
+                "codex".to_string(),
+                "claude".to_string(),
+                "gemini".to_string(),
+                "qwen".to_string(),
+                "aider".to_string(),
+            ],
         }
     }
 }
@@ -2730,6 +2763,1139 @@ fn validate_ai_profile(profile: AiProviderProfile) -> AiProfileValidationResult 
     validate_ai_profile_inner(&profile)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsage {
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiToolCall {
+    name: String,
+    arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiChatResponse {
+    request_id: String,
+    provider_id: String,
+    model: String,
+    text: String,
+    #[serde(default)]
+    usage: Option<AiUsage>,
+    #[serde(default)]
+    tool_calls: Vec<AiToolCall>,
+    #[serde(default)]
+    error_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConnectionTestResult {
+    ok: bool,
+    request_id: String,
+    message: String,
+    #[serde(default)]
+    error_type: Option<String>,
+    latency_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantPlanStep {
+    id: String,
+    title: String,
+    command: String,
+    args: serde_json::Value,
+    risk_level: String,
+    requires_confirmation: bool,
+    explain: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantPlanResult {
+    request_id: String,
+    strategy: String,
+    notes: String,
+    fallback_used: bool,
+    steps: Vec<AssistantPlanStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpAccessCheckResult {
+    allowed: bool,
+    request_id: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCliPreset {
+    id: String,
+    name: String,
+    description: String,
+    command: String,
+    args_template: Vec<String>,
+    timeout_sec: u64,
+    dangerous: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCliRunResult {
+    ok: bool,
+    request_id: String,
+    command_line: String,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    duration_ms: u128,
+}
+
+fn next_ai_request_id() -> String {
+    let seq = AI_REQUEST_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("ai-{}-{}", chrono::Utc::now().timestamp_millis(), seq)
+}
+
+fn redact_sensitive(mut text: String) -> String {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("authorization") {
+        text = text.replace("Authorization", "Authorization[redacted]");
+        text = text.replace("authorization", "authorization[redacted]");
+    }
+    if lower.contains("bearer ") {
+        text = text.replace("Bearer ", "Bearer [redacted]");
+        text = text.replace("bearer ", "bearer [redacted]");
+    }
+    if lower.contains("api_key") {
+        text = text.replace("api_key", "api_key[redacted]");
+    }
+    text
+}
+
+fn ai_audit_log(action: &str, level: &str, request_id: &str, details: &str) {
+    let path = cratebay_core::config_dir()
+        .join("audit")
+        .join("ai-actions.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let sanitized = cratebay_core::validation::sanitize_log_string(details);
+        let redacted = redact_sensitive(sanitized);
+        let _ = writeln!(
+            file,
+            "{} request_id={} action={} level={} {}",
+            chrono::Utc::now().to_rfc3339(),
+            request_id,
+            action,
+            level,
+            redacted
+        );
+    }
+}
+
+fn secret_entry(key_ref: &str) -> Result<Entry, String> {
+    Entry::new(AI_SECRET_SERVICE, key_ref)
+        .map_err(|e| format!("Failed to create secret entry: {e}"))
+}
+
+fn secret_set(key_ref: &str, value: &str) -> Result<(), String> {
+    let entry = secret_entry(key_ref)?;
+    entry
+        .set_password(value)
+        .map_err(|e| format!("Failed to save secret '{}': {}", key_ref, e))
+}
+
+fn secret_get(key_ref: &str) -> Result<Option<String>, String> {
+    let entry = secret_entry(key_ref)?;
+    match entry.get_password() {
+        Ok(v) => {
+            if v.trim().is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(v))
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("NoEntry") || msg.contains("No entry") {
+                Ok(None)
+            } else {
+                Err(format!("Failed to read secret '{}': {}", key_ref, e))
+            }
+        }
+    }
+}
+
+fn secret_delete(key_ref: &str) -> Result<(), String> {
+    let entry = secret_entry(key_ref)?;
+    match entry.delete_password() {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("NoEntry") || msg.contains("No entry") {
+                Ok(())
+            } else {
+                Err(format!("Failed to delete secret '{}': {}", key_ref, e))
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn ai_secret_set(api_key_ref: String, api_key: String) -> Result<(), String> {
+    if api_key_ref.trim().is_empty() {
+        return Err("api_key_ref is required".to_string());
+    }
+    if api_key.trim().is_empty() {
+        return Err("api_key is required".to_string());
+    }
+    let request_id = next_ai_request_id();
+    let out = secret_set(api_key_ref.trim(), api_key.trim());
+    let status = if out.is_ok() { "ok" } else { "error" };
+    ai_audit_log(
+        "ai_secret_set",
+        "write",
+        &request_id,
+        &format!("key_ref={} status={}", api_key_ref.trim(), status),
+    );
+    out
+}
+
+#[tauri::command]
+fn ai_secret_delete(api_key_ref: String) -> Result<(), String> {
+    if api_key_ref.trim().is_empty() {
+        return Err("api_key_ref is required".to_string());
+    }
+    let request_id = next_ai_request_id();
+    let out = secret_delete(api_key_ref.trim());
+    let status = if out.is_ok() { "ok" } else { "error" };
+    ai_audit_log(
+        "ai_secret_delete",
+        "write",
+        &request_id,
+        &format!("key_ref={} status={}", api_key_ref.trim(), status),
+    );
+    out
+}
+
+#[tauri::command]
+fn ai_secret_exists(api_key_ref: String) -> Result<bool, String> {
+    if api_key_ref.trim().is_empty() {
+        return Err("api_key_ref is required".to_string());
+    }
+    let exists = secret_get(api_key_ref.trim())?.is_some();
+    Ok(exists)
+}
+
+fn resolve_ai_profile(
+    settings: &AiSettings,
+    profile_id: Option<&str>,
+) -> Result<AiProviderProfile, String> {
+    if let Some(pid) = profile_id {
+        return settings
+            .profiles
+            .iter()
+            .find(|p| p.id == pid)
+            .cloned()
+            .ok_or_else(|| format!("Profile not found: {}", pid));
+    }
+    settings
+        .profiles
+        .iter()
+        .find(|p| p.id == settings.active_profile_id)
+        .cloned()
+        .ok_or_else(|| "Active AI profile not found".to_string())
+}
+
+fn classify_provider_error(status: reqwest::StatusCode) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        "auth_error".to_string()
+    } else if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        "rate_limit".to_string()
+    } else if status.is_client_error() {
+        "invalid_request".to_string()
+    } else if status.is_server_error() {
+        "provider_unavailable".to_string()
+    } else {
+        "unknown_error".to_string()
+    }
+}
+
+fn normalized_base_url(base_url: &str) -> String {
+    base_url.trim_end_matches('/').to_string()
+}
+
+fn join_endpoint(base_url: &str, suffix: &str) -> String {
+    format!(
+        "{}/{}",
+        normalized_base_url(base_url),
+        suffix.trim_start_matches('/')
+    )
+}
+
+fn parse_openai_text(content: &serde_json::Value) -> String {
+    if let Some(s) = content.as_str() {
+        return s.to_string();
+    }
+    if let Some(parts) = content.as_array() {
+        let mut out = String::new();
+        for item in parts {
+            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                out.push_str(text);
+            }
+        }
+        return out;
+    }
+    String::new()
+}
+
+fn parse_openai_tool_calls(value: &serde_json::Value) -> Vec<AiToolCall> {
+    value
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let function = item.get("function")?;
+                    let name = function.get("name")?.as_str()?.to_string();
+                    let args_value = function
+                        .get("arguments")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                        .unwrap_or_else(|| serde_json::json!({}));
+                    Some(AiToolCall {
+                        name,
+                        arguments: args_value,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_usage(value: &serde_json::Value) -> Option<AiUsage> {
+    let prompt_tokens = value.get("prompt_tokens").and_then(|v| v.as_u64());
+    let completion_tokens = value.get("completion_tokens").and_then(|v| v.as_u64());
+    let total_tokens = value.get("total_tokens").and_then(|v| v.as_u64());
+    if prompt_tokens.is_none() && completion_tokens.is_none() && total_tokens.is_none() {
+        None
+    } else {
+        Some(AiUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        })
+    }
+}
+
+async fn call_anthropic(
+    client: &reqwest::Client,
+    profile: &AiProviderProfile,
+    messages: &[AiChatMessage],
+    timeout_ms: u64,
+    api_key: &str,
+    request_id: &str,
+) -> Result<AiChatResponse, String> {
+    let url = join_endpoint(&profile.base_url, "/messages");
+    let body = serde_json::json!({
+        "model": profile.model,
+        "max_tokens": 512u32,
+        "messages": messages.iter().map(|m| {
+            serde_json::json!({
+                "role": if m.role == "assistant" { "assistant" } else { "user" },
+                "content": m.content
+            })
+        }).collect::<Vec<_>>()
+    });
+
+    let mut req = client
+        .post(url)
+        .timeout(Duration::from_millis(timeout_ms))
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&body);
+
+    for (k, v) in &profile.headers {
+        req = req.header(k, v);
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        if e.is_timeout() {
+            "network_error: request timeout".to_string()
+        } else {
+            format!("network_error: {}", e)
+        }
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "{}: HTTP {} {}",
+            classify_provider_error(status),
+            status,
+            text
+        ));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("provider_unavailable: invalid JSON response: {}", e))?;
+
+    let text = json
+        .get("content")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.get("text").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+
+    Ok(AiChatResponse {
+        request_id: request_id.to_string(),
+        provider_id: profile.provider_id.clone(),
+        model: profile.model.clone(),
+        text,
+        usage: json.get("usage").and_then(parse_usage),
+        tool_calls: vec![],
+        error_type: None,
+    })
+}
+
+async fn call_openai_compatible(
+    client: &reqwest::Client,
+    profile: &AiProviderProfile,
+    messages: &[AiChatMessage],
+    timeout_ms: u64,
+    api_key: Option<&str>,
+    request_id: &str,
+) -> Result<AiChatResponse, String> {
+    let url = join_endpoint(&profile.base_url, "/chat/completions");
+    let body = serde_json::json!({
+        "model": profile.model,
+        "stream": false,
+        "messages": messages.iter().map(|m| {
+            serde_json::json!({
+                "role": m.role,
+                "content": m.content
+            })
+        }).collect::<Vec<_>>()
+    });
+
+    let mut req = client
+        .post(url)
+        .timeout(Duration::from_millis(timeout_ms))
+        .json(&body);
+
+    if let Some(key) = api_key {
+        if !key.trim().is_empty() {
+            req = req.bearer_auth(key);
+        }
+    }
+    for (k, v) in &profile.headers {
+        req = req.header(k, v);
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        if e.is_timeout() {
+            "network_error: request timeout".to_string()
+        } else {
+            format!("network_error: {}", e)
+        }
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "{}: HTTP {} {}",
+            classify_provider_error(status),
+            status,
+            text
+        ));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("provider_unavailable: invalid JSON response: {}", e))?;
+
+    let choice = json
+        .get("choices")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let message = choice
+        .get("message")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let text = message
+        .get("content")
+        .map(parse_openai_text)
+        .unwrap_or_default();
+    let tool_calls = message
+        .get("tool_calls")
+        .map(parse_openai_tool_calls)
+        .unwrap_or_default();
+
+    Ok(AiChatResponse {
+        request_id: request_id.to_string(),
+        provider_id: profile.provider_id.clone(),
+        model: profile.model.clone(),
+        text,
+        usage: json.get("usage").and_then(parse_usage),
+        tool_calls,
+        error_type: None,
+    })
+}
+
+async fn ai_chat_inner(
+    profile: &AiProviderProfile,
+    messages: &[AiChatMessage],
+    timeout_ms: u64,
+    request_id: &str,
+) -> Result<AiChatResponse, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("CrateBay-AI/1.0.0")
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let api_key = if profile.api_key_ref.trim().is_empty() {
+        None
+    } else {
+        secret_get(profile.api_key_ref.trim())?
+    };
+
+    if profile.provider_id != "ollama" && profile.provider_id != "custom" {
+        let local_endpoint =
+            profile.base_url.contains("127.0.0.1") || profile.base_url.contains("localhost");
+        if !local_endpoint && api_key.as_deref().unwrap_or("").trim().is_empty() {
+            return Err(format!(
+                "auth_error: API key not found in secure store for key ref '{}'",
+                profile.api_key_ref
+            ));
+        }
+    }
+
+    if profile.provider_id == "anthropic" {
+        let key = api_key.unwrap_or_default();
+        if key.trim().is_empty() {
+            return Err("auth_error: anthropic profile requires API key".to_string());
+        }
+        call_anthropic(&client, profile, messages, timeout_ms, &key, request_id).await
+    } else {
+        call_openai_compatible(
+            &client,
+            profile,
+            messages,
+            timeout_ms,
+            api_key.as_deref(),
+            request_id,
+        )
+        .await
+    }
+}
+
+#[tauri::command]
+async fn ai_chat(
+    profile_id: Option<String>,
+    messages: Vec<AiChatMessage>,
+    timeout_ms: Option<u64>,
+) -> Result<AiChatResponse, String> {
+    if messages.is_empty() {
+        return Err("messages cannot be empty".to_string());
+    }
+    let settings = load_ai_settings()?;
+    let profile = resolve_ai_profile(&settings, profile_id.as_deref())?;
+    let request_id = next_ai_request_id();
+    let out = ai_chat_inner(
+        &profile,
+        &messages,
+        timeout_ms.unwrap_or(30_000),
+        &request_id,
+    )
+    .await;
+    let level = if out.is_ok() { "read" } else { "error" };
+    ai_audit_log(
+        "ai_chat",
+        level,
+        &request_id,
+        &format!(
+            "provider={} profile={} messages={}",
+            profile.provider_id,
+            profile.id,
+            messages.len()
+        ),
+    );
+    out
+}
+
+#[tauri::command]
+async fn ai_test_connection(
+    profile_id: Option<String>,
+    timeout_ms: Option<u64>,
+) -> Result<AiConnectionTestResult, String> {
+    let settings = load_ai_settings()?;
+    let profile = resolve_ai_profile(&settings, profile_id.as_deref())?;
+    let request_id = next_ai_request_id();
+    let started = std::time::Instant::now();
+    let messages = vec![AiChatMessage {
+        role: "user".to_string(),
+        content: "Reply with the single word PONG.".to_string(),
+    }];
+
+    let out = ai_chat_inner(
+        &profile,
+        &messages,
+        timeout_ms.unwrap_or(20_000),
+        &request_id,
+    )
+    .await;
+    let latency_ms = started.elapsed().as_millis();
+
+    match out {
+        Ok(resp) => {
+            ai_audit_log(
+                "ai_test_connection",
+                "read",
+                &request_id,
+                &format!(
+                    "provider={} profile={} ok=true",
+                    profile.provider_id, profile.id
+                ),
+            );
+            Ok(AiConnectionTestResult {
+                ok: true,
+                request_id: resp.request_id,
+                message: if resp.text.trim().is_empty() {
+                    "Connection succeeded but provider returned empty text".to_string()
+                } else {
+                    format!("Connection succeeded: {}", resp.text.trim())
+                },
+                error_type: None,
+                latency_ms,
+            })
+        }
+        Err(err) => {
+            let error_type = err.split(':').next().map(|s| s.trim().to_string());
+            ai_audit_log(
+                "ai_test_connection",
+                "error",
+                &request_id,
+                &format!(
+                    "provider={} profile={} ok=false error={}",
+                    profile.provider_id, profile.id, err
+                ),
+            );
+            Ok(AiConnectionTestResult {
+                ok: false,
+                request_id,
+                message: err,
+                error_type,
+                latency_ms,
+            })
+        }
+    }
+}
+
+fn infer_assistant_steps(prompt: &str, require_confirm: bool) -> Vec<AssistantPlanStep> {
+    let mut steps: Vec<AssistantPlanStep> = Vec::new();
+    let lower = prompt.to_ascii_lowercase();
+
+    if lower.contains("container") || prompt.contains("容器") {
+        if lower.contains("stop") || prompt.contains("停止") {
+            steps.push(AssistantPlanStep {
+                id: "step-1".to_string(),
+                title: "Stop container".to_string(),
+                command: "stop_container".to_string(),
+                args: serde_json::json!({ "id": "<container-id>" }),
+                risk_level: "write".to_string(),
+                requires_confirmation: require_confirm,
+                explain: "Stops a running container.".to_string(),
+            });
+        } else if lower.contains("delete")
+            || lower.contains("remove")
+            || prompt.contains("删除")
+            || prompt.contains("移除")
+        {
+            steps.push(AssistantPlanStep {
+                id: "step-1".to_string(),
+                title: "Remove container".to_string(),
+                command: "remove_container".to_string(),
+                args: serde_json::json!({ "id": "<container-id>" }),
+                risk_level: "destructive".to_string(),
+                requires_confirmation: true,
+                explain: "Removes a container after stopping it.".to_string(),
+            });
+        } else if lower.contains("start") || prompt.contains("启动") {
+            steps.push(AssistantPlanStep {
+                id: "step-1".to_string(),
+                title: "Start container".to_string(),
+                command: "start_container".to_string(),
+                args: serde_json::json!({ "id": "<container-id>" }),
+                risk_level: "write".to_string(),
+                requires_confirmation: require_confirm,
+                explain: "Starts a stopped container.".to_string(),
+            });
+        } else {
+            steps.push(AssistantPlanStep {
+                id: "step-1".to_string(),
+                title: "List containers".to_string(),
+                command: "list_containers".to_string(),
+                args: serde_json::json!({}),
+                risk_level: "read".to_string(),
+                requires_confirmation: false,
+                explain: "Lists all containers as context before any action.".to_string(),
+            });
+        }
+    }
+
+    if lower.contains("vm") || prompt.contains("虚拟机") {
+        if lower.contains("stop") || prompt.contains("停止") {
+            steps.push(AssistantPlanStep {
+                id: format!("step-{}", steps.len() + 1),
+                title: "Stop VM".to_string(),
+                command: "vm_stop".to_string(),
+                args: serde_json::json!({ "id": "<vm-id>" }),
+                risk_level: "write".to_string(),
+                requires_confirmation: require_confirm,
+                explain: "Stops a running VM.".to_string(),
+            });
+        } else if lower.contains("delete")
+            || lower.contains("remove")
+            || prompt.contains("删除")
+            || prompt.contains("移除")
+        {
+            steps.push(AssistantPlanStep {
+                id: format!("step-{}", steps.len() + 1),
+                title: "Delete VM".to_string(),
+                command: "vm_delete".to_string(),
+                args: serde_json::json!({ "id": "<vm-id>" }),
+                risk_level: "destructive".to_string(),
+                requires_confirmation: true,
+                explain: "Deletes VM metadata and local state.".to_string(),
+            });
+        } else if lower.contains("start") || prompt.contains("启动") {
+            steps.push(AssistantPlanStep {
+                id: format!("step-{}", steps.len() + 1),
+                title: "Start VM".to_string(),
+                command: "vm_start".to_string(),
+                args: serde_json::json!({ "id": "<vm-id>" }),
+                risk_level: "write".to_string(),
+                requires_confirmation: require_confirm,
+                explain: "Starts a VM.".to_string(),
+            });
+        } else {
+            steps.push(AssistantPlanStep {
+                id: format!("step-{}", steps.len() + 1),
+                title: "List VMs".to_string(),
+                command: "vm_list".to_string(),
+                args: serde_json::json!({}),
+                risk_level: "read".to_string(),
+                requires_confirmation: false,
+                explain: "Lists VMs and current state.".to_string(),
+            });
+        }
+    }
+
+    if lower.contains("k8s")
+        || lower.contains("kubernetes")
+        || prompt.contains("集群")
+        || prompt.contains("pod")
+    {
+        steps.push(AssistantPlanStep {
+            id: format!("step-{}", steps.len() + 1),
+            title: "List Kubernetes pods".to_string(),
+            command: "k8s_list_pods".to_string(),
+            args: serde_json::json!({ "namespace": serde_json::Value::Null }),
+            risk_level: "read".to_string(),
+            requires_confirmation: false,
+            explain: "Queries pod status for diagnosis.".to_string(),
+        });
+    }
+
+    if steps.is_empty() {
+        steps.push(AssistantPlanStep {
+            id: "step-1".to_string(),
+            title: "List containers".to_string(),
+            command: "list_containers".to_string(),
+            args: serde_json::json!({}),
+            risk_level: "read".to_string(),
+            requires_confirmation: false,
+            explain: "Fallback baseline step when intent is ambiguous.".to_string(),
+        });
+        steps.push(AssistantPlanStep {
+            id: "step-2".to_string(),
+            title: "List VMs".to_string(),
+            command: "vm_list".to_string(),
+            args: serde_json::json!({}),
+            risk_level: "read".to_string(),
+            requires_confirmation: false,
+            explain: "Collects VM context before deciding next operation.".to_string(),
+        });
+    }
+
+    steps
+}
+
+#[tauri::command]
+async fn ai_generate_plan(
+    prompt: String,
+    profile_id: Option<String>,
+    prefer_model: Option<bool>,
+) -> Result<AssistantPlanResult, String> {
+    if prompt.trim().is_empty() {
+        return Err("Prompt cannot be empty".to_string());
+    }
+
+    let request_id = next_ai_request_id();
+    let settings = load_ai_settings()?;
+    let require_confirm = settings.security_policy.destructive_action_confirmation;
+    let steps = infer_assistant_steps(prompt.trim(), require_confirm);
+
+    let mut notes = "Plan generated from built-in action rules.".to_string();
+    let mut strategy = "heuristic".to_string();
+    let mut fallback_used = true;
+
+    if prefer_model.unwrap_or(true) {
+        if let Ok(profile) = resolve_ai_profile(&settings, profile_id.as_deref()) {
+            let hint_messages = vec![
+                AiChatMessage {
+                    role: "system".to_string(),
+                    content: "You are an infra assistant. Summarize action intent in one sentence."
+                        .to_string(),
+                },
+                AiChatMessage {
+                    role: "user".to_string(),
+                    content: prompt.clone(),
+                },
+            ];
+            if let Ok(summary) = ai_chat_inner(&profile, &hint_messages, 12_000, &request_id).await
+            {
+                if !summary.text.trim().is_empty() {
+                    notes = summary.text.trim().to_string();
+                    strategy = "llm+heuristic".to_string();
+                    fallback_used = false;
+                }
+            }
+        }
+    }
+
+    ai_audit_log(
+        "ai_generate_plan",
+        "read",
+        &request_id,
+        &format!("prompt_len={} steps={}", prompt.len(), steps.len()),
+    );
+
+    Ok(AssistantPlanResult {
+        request_id,
+        strategy,
+        notes,
+        fallback_used,
+        steps,
+    })
+}
+
+#[tauri::command]
+fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCheckResult, String> {
+    let settings = load_ai_settings()?;
+    let policy = settings.security_policy;
+    let request_id = next_ai_request_id();
+
+    if !policy.mcp_remote_enabled {
+        let msg = "MCP remote is disabled by policy".to_string();
+        if policy.mcp_audit_enabled {
+            ai_audit_log("mcp_check_access", "deny", &request_id, &msg);
+        }
+        return Ok(McpAccessCheckResult {
+            allowed: false,
+            request_id,
+            message: msg,
+        });
+    }
+
+    if !policy.mcp_allowed_actions.is_empty()
+        && !policy
+            .mcp_allowed_actions
+            .iter()
+            .any(|item| item == &action)
+    {
+        let msg = format!("Action '{}' is not in MCP whitelist", action);
+        if policy.mcp_audit_enabled {
+            ai_audit_log("mcp_check_access", "deny", &request_id, &msg);
+        }
+        return Ok(McpAccessCheckResult {
+            allowed: false,
+            request_id,
+            message: msg,
+        });
+    }
+
+    if !policy.mcp_auth_token_ref.trim().is_empty() {
+        let expected = secret_get(policy.mcp_auth_token_ref.trim())?;
+        if let Some(expected_token) = expected {
+            if token.as_deref().unwrap_or("") != expected_token {
+                let msg = "MCP token verification failed".to_string();
+                if policy.mcp_audit_enabled {
+                    ai_audit_log("mcp_check_access", "deny", &request_id, &msg);
+                }
+                return Ok(McpAccessCheckResult {
+                    allowed: false,
+                    request_id,
+                    message: msg,
+                });
+            }
+        }
+    }
+
+    if policy.mcp_audit_enabled {
+        ai_audit_log(
+            "mcp_check_access",
+            "allow",
+            &request_id,
+            &format!("action={} allowed=true", action),
+        );
+    }
+
+    Ok(McpAccessCheckResult {
+        allowed: true,
+        request_id,
+        message: "MCP access granted".to_string(),
+    })
+}
+
+fn default_agent_cli_presets() -> Vec<AgentCliPreset> {
+    vec![
+        AgentCliPreset {
+            id: "codex".to_string(),
+            name: "OpenAI Codex CLI".to_string(),
+            description: "Run codex in non-interactive mode".to_string(),
+            command: "codex".to_string(),
+            args_template: vec!["exec".to_string(), "{{prompt}}".to_string()],
+            timeout_sec: 180,
+            dangerous: false,
+        },
+        AgentCliPreset {
+            id: "claude".to_string(),
+            name: "Claude Code CLI".to_string(),
+            description: "Invoke claude with prompt text".to_string(),
+            command: "claude".to_string(),
+            args_template: vec!["--print".to_string(), "{{prompt}}".to_string()],
+            timeout_sec: 180,
+            dangerous: false,
+        },
+        AgentCliPreset {
+            id: "gemini".to_string(),
+            name: "Gemini CLI".to_string(),
+            description: "Invoke gemini cli prompt mode".to_string(),
+            command: "gemini".to_string(),
+            args_template: vec!["--prompt".to_string(), "{{prompt}}".to_string()],
+            timeout_sec: 180,
+            dangerous: false,
+        },
+        AgentCliPreset {
+            id: "qwen".to_string(),
+            name: "Qwen CLI".to_string(),
+            description: "Invoke qwen command line client".to_string(),
+            command: "qwen".to_string(),
+            args_template: vec!["--prompt".to_string(), "{{prompt}}".to_string()],
+            timeout_sec: 180,
+            dangerous: false,
+        },
+    ]
+}
+
+#[tauri::command]
+fn agent_cli_list_presets() -> Vec<AgentCliPreset> {
+    default_agent_cli_presets()
+}
+
+fn build_command_line(command: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        command.to_string()
+    } else {
+        format!("{} {}", command, args.join(" "))
+    }
+}
+
+fn is_command_allowed(allowlist: &[String], command: &str) -> bool {
+    if allowlist.is_empty() {
+        return true;
+    }
+    let command_name = std::path::Path::new(command)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(command);
+    allowlist.iter().any(|item| item == command_name)
+}
+
+#[tauri::command]
+async fn agent_cli_run(
+    preset_id: Option<String>,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    prompt: Option<String>,
+    dry_run: bool,
+    timeout_sec: Option<u64>,
+) -> Result<AgentCliRunResult, String> {
+    let settings = load_ai_settings()?;
+    let request_id = next_ai_request_id();
+
+    let presets = default_agent_cli_presets();
+    let (resolved_command, resolved_args, preset_timeout, dangerous) =
+        if let Some(preset_id) = preset_id {
+            let preset = presets
+                .into_iter()
+                .find(|item| item.id == preset_id)
+                .ok_or_else(|| format!("Unknown preset: {}", preset_id))?;
+            let prompt_text = prompt.unwrap_or_default();
+            let args = preset
+                .args_template
+                .iter()
+                .map(|arg| arg.replace("{{prompt}}", &prompt_text))
+                .collect::<Vec<_>>();
+            (preset.command, args, preset.timeout_sec, preset.dangerous)
+        } else {
+            let cmd =
+                command.ok_or_else(|| "command is required when preset_id is empty".to_string())?;
+            (cmd, args.unwrap_or_default(), 180, false)
+        };
+
+    if !is_command_allowed(
+        &settings.security_policy.cli_command_allowlist,
+        &resolved_command,
+    ) {
+        let detail = format!("command '{}' blocked by CLI allowlist", resolved_command);
+        ai_audit_log("agent_cli_run", "deny", &request_id, &detail);
+        return Err(detail);
+    }
+
+    if dangerous && settings.security_policy.destructive_action_confirmation {
+        ai_audit_log(
+            "agent_cli_run",
+            "deny",
+            &request_id,
+            "dangerous preset blocked by destructive_action_confirmation",
+        );
+        return Err(
+            "Dangerous preset blocked by policy (disable confirmation policy to proceed)"
+                .to_string(),
+        );
+    }
+
+    let command_line = build_command_line(&resolved_command, &resolved_args);
+    if dry_run {
+        ai_audit_log(
+            "agent_cli_run",
+            "read",
+            &request_id,
+            &format!("dry_run=true command={}", command_line),
+        );
+        return Ok(AgentCliRunResult {
+            ok: true,
+            request_id,
+            command_line,
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+        });
+    }
+
+    let timeout = timeout_sec.unwrap_or(preset_timeout).max(1);
+    let start = std::time::Instant::now();
+
+    let mut command_builder = tokio::process::Command::new(&resolved_command);
+    command_builder
+        .args(&resolved_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let child = command_builder
+        .spawn()
+        .map_err(|e| format!("Failed to spawn command '{}': {}", resolved_command, e))?;
+
+    let output = match tokio::time::timeout(Duration::from_secs(timeout), child.wait_with_output())
+        .await
+    {
+        Ok(v) => v.map_err(|e| format!("Failed to wait command '{}': {}", resolved_command, e))?,
+        Err(_) => {
+            ai_audit_log(
+                "agent_cli_run",
+                "error",
+                &request_id,
+                &format!("command timeout={}s command={}", timeout, command_line),
+            );
+            return Err(format!("Command timed out after {} seconds", timeout));
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    let ok = output.status.success();
+    ai_audit_log(
+        "agent_cli_run",
+        if ok { "write" } else { "error" },
+        &request_id,
+        &format!(
+            "command={} exit_code={} duration_ms={}",
+            command_line, exit_code, duration_ms
+        ),
+    );
+
+    Ok(AgentCliRunResult {
+        ok,
+        request_id,
+        command_line,
+        exit_code,
+        stdout,
+        stderr,
+        duration_ms,
+    })
+}
+
+#[cfg(test)]
+mod ai_tests {
+    use super::{infer_assistant_steps, redact_sensitive};
+
+    #[test]
+    fn infer_plan_marks_destructive_actions() {
+        let steps = infer_assistant_steps("delete container web", true);
+        assert!(!steps.is_empty());
+        assert_eq!(steps[0].command, "remove_container");
+        assert_eq!(steps[0].risk_level, "destructive");
+        assert!(steps[0].requires_confirmation);
+    }
+
+    #[test]
+    fn infer_plan_fallback_has_two_read_steps() {
+        let steps = infer_assistant_steps("show me infra context", true);
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].risk_level, "read");
+        assert_eq!(steps[1].risk_level, "read");
+    }
+
+    #[test]
+    fn redact_sensitive_rewrites_auth_markers() {
+        let input = "Authorization: Bearer sk-test-abc";
+        let output = redact_sensitive(input.to_string());
+        assert!(output.contains("Authorization[redacted]"));
+        assert!(output.contains("Bearer [redacted]"));
+    }
+}
+
 // ── Auto-update ────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -2992,6 +4158,15 @@ pub fn run() {
             load_ai_settings,
             save_ai_settings,
             validate_ai_profile,
+            ai_secret_set,
+            ai_secret_delete,
+            ai_secret_exists,
+            ai_chat,
+            ai_test_connection,
+            ai_generate_plan,
+            mcp_check_access,
+            agent_cli_list_presets,
+            agent_cli_run,
             check_update,
             open_release_page,
             set_window_theme
