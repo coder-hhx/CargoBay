@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { invoke } from "@tauri-apps/api/core"
+import { isDockerRuntimeUnavailableError } from "@/lib/dockerRuntime"
 import type { VolumeInfo } from "../types"
 
 const volumeNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
@@ -101,6 +102,7 @@ export function useVolumes() {
   return {
     volumes,
     error,
+    runtimeMissing: isDockerRuntimeUnavailableError(error),
     setError,
     loading,
     fetchVolumes,

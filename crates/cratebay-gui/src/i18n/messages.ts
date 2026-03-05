@@ -27,6 +27,7 @@ export const messages: Record<string, Record<string, string>> = {
     close: "Close",
     clear: "Clear",
     refresh: "Refresh",
+    dockerOneClickSetup: "Install Docker CLI & Repair Runtime",
     done: "Done",
     working: "Working...",
     // Containers
@@ -369,6 +370,7 @@ export const messages: Record<string, Record<string, string>> = {
     close: "关闭",
     clear: "清空",
     refresh: "刷新",
+    dockerOneClickSetup: "一键安装 Docker CLI 并修复 Runtime",
     done: "完成",
     working: "处理中...",
     loading: "加载中...",

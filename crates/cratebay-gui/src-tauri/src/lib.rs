@@ -136,7 +136,7 @@ fn connect_docker() -> Result<Docker, String> {
             return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
         }
-        Err("No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into())
+        Err("No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime.".into())
     }
 
     #[cfg(windows)]
@@ -151,13 +151,115 @@ fn connect_docker() -> Result<Docker, String> {
                 return Ok(d);
             }
         }
-        Err("No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into())
+        Err(
+            "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                .into(),
+        )
     }
 
     #[cfg(not(any(unix, windows)))]
     {
         Docker::connect_with_local_defaults()
             .map_err(|e| format!("Failed to connect to Docker: {}", e))
+    }
+}
+
+fn runtime_setup_path() -> String {
+    let mut items = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        if !items.iter().any(|item| item == extra) {
+            items.push(extra.to_string());
+        }
+    }
+    items.join(":")
+}
+
+fn runtime_setup_command_exists(command: &str) -> bool {
+    let output = Command::new("which")
+        .arg(command)
+        .env("PATH", runtime_setup_path())
+        .output();
+    matches!(output, Ok(out) if out.status.success())
+}
+
+fn runtime_setup_run(command: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(command)
+        .args(args)
+        .env("PATH", runtime_setup_path())
+        .output()
+        .map_err(|e| format!("Failed to run command '{}': {}", command, e))
+}
+
+fn truncate_message(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut count = 0usize;
+    for ch in text.chars() {
+        if count >= max_chars {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    out
+}
+
+fn runtime_setup_output_summary(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let base = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "no command output".to_string()
+    };
+    truncate_message(&base.replace('\n', " "), 320)
+}
+
+#[cfg(target_os = "macos")]
+fn docker_runtime_quick_setup_macos() -> Result<String, String> {
+    if connect_docker().is_ok() {
+        return Ok("Docker runtime is already available.".to_string());
+    }
+
+    if !runtime_setup_command_exists("docker") {
+        if !runtime_setup_command_exists("brew") {
+            return Err(
+                "Docker CLI is missing and Homebrew is not installed. Install Homebrew from https://brew.sh, then run `brew install docker`."
+                    .to_string(),
+            );
+        }
+        let install = runtime_setup_run("brew", &["install", "docker"])?;
+        if !install.status.success() {
+            return Err(format!(
+                "Failed to install Docker CLI via Homebrew: {}",
+                runtime_setup_output_summary(&install)
+            ));
+        }
+    } else {
+        let version = runtime_setup_run("docker", &["version"]);
+        if let Ok(output) = version {
+            if !output.status.success() {
+                warn!(
+                    "docker version check failed during runtime setup: {}",
+                    runtime_setup_output_summary(&output)
+                );
+            }
+        }
+    }
+
+    if connect_docker().is_ok() {
+        Ok("Docker runtime is reachable. Containers and Volumes are ready.".to_string())
+    } else {
+        Err(
+            "Docker CLI is installed, but no Docker-compatible daemon socket is reachable. Start your runtime or set DOCKER_HOST, then refresh."
+                .to_string(),
+        )
     }
 }
 
@@ -2966,6 +3068,15 @@ pub struct McpAccessCheckResult {
     allowed: bool,
     request_id: String,
     message: String,
+    risk_level: String,
+    requires_confirmation: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DockerRuntimeSetupResult {
+    ok: bool,
+    request_id: String,
+    message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3005,24 +3116,98 @@ struct AssistantCommandPolicy {
     always_confirm: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct McpActionPolicy {
+    risk_level: &'static str,
+    requires_confirmation: bool,
+}
+
 fn assistant_command_policy(command: &str) -> Option<AssistantCommandPolicy> {
     match command {
         "list_containers" | "vm_list" | "k8s_list_pods" => Some(AssistantCommandPolicy {
             risk_level: "read",
             always_confirm: false,
         }),
-        "start_container" | "stop_container" | "vm_start" | "vm_stop" => {
-            Some(AssistantCommandPolicy {
-                risk_level: "write",
-                always_confirm: false,
-            })
-        }
+        "start_container"
+        | "stop_container"
+        | "vm_start"
+        | "vm_stop"
+        | "docker_runtime_quick_setup" => Some(AssistantCommandPolicy {
+            risk_level: "write",
+            always_confirm: false,
+        }),
         "remove_container" | "vm_delete" => Some(AssistantCommandPolicy {
             risk_level: "destructive",
             always_confirm: true,
         }),
         _ => None,
     }
+}
+
+fn mcp_action_has_keyword(action_lower: &str, keyword: &str) -> bool {
+    action_lower == keyword
+        || action_lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|segment| segment == keyword)
+        || action_lower.contains(keyword)
+}
+
+fn mcp_action_policy(action: &str) -> McpActionPolicy {
+    let action_lower = action.trim().to_ascii_lowercase();
+    const DESTRUCTIVE_KEYWORDS: &[&str] = &[
+        "delete",
+        "remove",
+        "destroy",
+        "drop",
+        "wipe",
+        "prune",
+        "terminate",
+        "kill",
+        "uninstall",
+        "purge",
+    ];
+    const WRITE_KEYWORDS: &[&str] = &[
+        "create", "apply", "update", "patch", "set", "start", "stop", "restart", "scale", "run",
+        "exec", "install",
+    ];
+
+    if DESTRUCTIVE_KEYWORDS
+        .iter()
+        .any(|kw| mcp_action_has_keyword(&action_lower, kw))
+    {
+        return McpActionPolicy {
+            risk_level: "destructive",
+            requires_confirmation: true,
+        };
+    }
+
+    if WRITE_KEYWORDS
+        .iter()
+        .any(|kw| mcp_action_has_keyword(&action_lower, kw))
+    {
+        return McpActionPolicy {
+            risk_level: "write",
+            requires_confirmation: false,
+        };
+    }
+
+    McpActionPolicy {
+        risk_level: "read",
+        requires_confirmation: false,
+    }
+}
+
+fn mcp_confirmation_satisfied(
+    action_policy: McpActionPolicy,
+    destructive_action_confirmation: bool,
+    requires_confirmation: Option<bool>,
+    confirmed: Option<bool>,
+) -> bool {
+    if !destructive_action_confirmation || !action_policy.requires_confirmation {
+        return true;
+    }
+
+    requires_confirmation.unwrap_or(false) && confirmed.unwrap_or(false)
 }
 
 fn assistant_arg_map(
@@ -3609,7 +3794,23 @@ async fn ai_test_connection(
     }
 }
 
+#[cfg(test)]
 fn infer_assistant_steps(prompt: &str, require_confirm: bool) -> Vec<AssistantPlanStep> {
+    infer_assistant_steps_with_runtime(prompt, require_confirm, true)
+}
+
+fn command_needs_docker_runtime(command: &str) -> bool {
+    matches!(
+        command,
+        "list_containers" | "start_container" | "stop_container" | "remove_container"
+    )
+}
+
+fn infer_assistant_steps_with_runtime(
+    prompt: &str,
+    require_confirm: bool,
+    docker_runtime_available: bool,
+) -> Vec<AssistantPlanStep> {
     let mut steps: Vec<AssistantPlanStep> = Vec::new();
     let lower = prompt.to_ascii_lowercase();
 
@@ -3746,6 +3947,31 @@ fn infer_assistant_steps(prompt: &str, require_confirm: bool) -> Vec<AssistantPl
         });
     }
 
+    if !docker_runtime_available
+        && steps
+            .iter()
+            .any(|step| command_needs_docker_runtime(step.command.as_str()))
+    {
+        steps.insert(
+            0,
+            AssistantPlanStep {
+                id: "step-1".to_string(),
+                title: "Repair container runtime".to_string(),
+                command: "docker_runtime_quick_setup".to_string(),
+                args: serde_json::json!({}),
+                risk_level: "write".to_string(),
+                requires_confirmation: false,
+                explain:
+                    "Auto-analyzes Docker runtime prerequisites and attempts a local repair flow."
+                        .to_string(),
+            },
+        );
+    }
+
+    for (index, step) in steps.iter_mut().enumerate() {
+        step.id = format!("step-{}", index + 1);
+    }
+
     steps
 }
 
@@ -3762,7 +3988,12 @@ async fn ai_generate_plan(
     let request_id = next_ai_request_id();
     let settings = load_ai_settings()?;
     let require_confirm = settings.security_policy.destructive_action_confirmation;
-    let steps = infer_assistant_steps(prompt.trim(), require_confirm);
+    let docker_runtime_available = connect_docker().is_ok();
+    let steps = infer_assistant_steps_with_runtime(
+        prompt.trim(),
+        require_confirm,
+        docker_runtime_available,
+    );
 
     let mut notes = "Plan generated from built-in action rules.".to_string();
     let mut strategy = "heuristic".to_string();
@@ -3901,6 +4132,10 @@ async fn assistant_execute_step(
             let pods = k8s_list_pods(namespace).await?;
             serde_json::to_value(pods).map_err(|e| e.to_string())?
         }
+        "docker_runtime_quick_setup" => {
+            let result = docker_runtime_quick_setup().await?;
+            serde_json::to_value(result).map_err(|e| e.to_string())?
+        }
         _ => unreachable!("assistant command policy should reject unknown commands"),
     };
 
@@ -3927,10 +4162,18 @@ async fn assistant_execute_step(
 }
 
 #[tauri::command]
-fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCheckResult, String> {
+fn mcp_check_access(
+    action: String,
+    token: Option<String>,
+    requires_confirmation: Option<bool>,
+    confirmed: Option<bool>,
+) -> Result<McpAccessCheckResult, String> {
     let settings = load_ai_settings()?;
     let policy = settings.security_policy;
     let request_id = next_ai_request_id();
+    let action_policy = mcp_action_policy(&action);
+    let confirmation_required =
+        action_policy.requires_confirmation && policy.destructive_action_confirmation;
 
     if !policy.mcp_remote_enabled {
         let msg = "MCP remote is disabled by policy".to_string();
@@ -3941,6 +4184,8 @@ fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCh
             allowed: false,
             request_id,
             message: msg,
+            risk_level: action_policy.risk_level.to_string(),
+            requires_confirmation: confirmation_required,
         });
     }
 
@@ -3958,6 +4203,8 @@ fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCh
             allowed: false,
             request_id,
             message: msg,
+            risk_level: action_policy.risk_level.to_string(),
+            requires_confirmation: confirmation_required,
         });
     }
 
@@ -3973,9 +4220,33 @@ fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCh
                     allowed: false,
                     request_id,
                     message: msg,
+                    risk_level: action_policy.risk_level.to_string(),
+                    requires_confirmation: confirmation_required,
                 });
             }
         }
+    }
+
+    if !mcp_confirmation_satisfied(
+        action_policy,
+        policy.destructive_action_confirmation,
+        requires_confirmation,
+        confirmed,
+    ) {
+        let msg = format!(
+            "MCP action '{}' (risk={}) requires explicit confirmation",
+            action, action_policy.risk_level
+        );
+        if policy.mcp_audit_enabled {
+            ai_audit_log("mcp_check_access", "deny", &request_id, &msg);
+        }
+        return Ok(McpAccessCheckResult {
+            allowed: false,
+            request_id,
+            message: msg,
+            risk_level: action_policy.risk_level.to_string(),
+            requires_confirmation: confirmation_required,
+        });
     }
 
     if policy.mcp_audit_enabled {
@@ -3983,7 +4254,13 @@ fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCh
             "mcp_check_access",
             "allow",
             &request_id,
-            &format!("action={} allowed=true", action),
+            &format!(
+                "action={} allowed=true risk={} confirm_required={} confirmed={}",
+                action,
+                action_policy.risk_level,
+                confirmation_required,
+                confirmed.unwrap_or(false)
+            ),
         );
     }
 
@@ -3991,6 +4268,49 @@ fn mcp_check_access(action: String, token: Option<String>) -> Result<McpAccessCh
         allowed: true,
         request_id,
         message: "MCP access granted".to_string(),
+        risk_level: action_policy.risk_level.to_string(),
+        requires_confirmation: confirmation_required,
+    })
+}
+
+#[tauri::command]
+async fn docker_runtime_quick_setup() -> Result<DockerRuntimeSetupResult, String> {
+    let request_id = next_ai_request_id();
+    if connect_docker().is_ok() {
+        return Ok(DockerRuntimeSetupResult {
+            ok: true,
+            request_id,
+            message: "Docker runtime is already available.".to_string(),
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    let setup_result = tokio::task::spawn_blocking(docker_runtime_quick_setup_macos)
+        .await
+        .map_err(|e| format!("Runtime setup task failed: {}", e))?;
+
+    #[cfg(not(target_os = "macos"))]
+    let setup_result: Result<String, String> = Err(
+        "One-click runtime setup currently supports macOS Docker CLI bootstrap only. Install Docker CLI and expose a Docker-compatible socket."
+            .to_string(),
+    );
+
+    let (ok, message) = match setup_result {
+        Ok(msg) => (true, msg),
+        Err(msg) => (false, msg),
+    };
+
+    ai_audit_log(
+        "docker_runtime_quick_setup",
+        if ok { "write" } else { "error" },
+        &request_id,
+        &format!("ok={} message={}", ok, message),
+    );
+
+    Ok(DockerRuntimeSetupResult {
+        ok,
+        request_id,
+        message,
     })
 }
 
@@ -4203,7 +4523,8 @@ async fn agent_cli_run(
 mod ai_tests {
     use super::{
         assistant_arg_optional_string, assistant_arg_string, assistant_command_policy,
-        default_ai_settings, infer_assistant_steps, is_command_allowed, normalize_ai_settings,
+        default_ai_settings, infer_assistant_steps, infer_assistant_steps_with_runtime,
+        is_command_allowed, mcp_action_policy, mcp_confirmation_satisfied, normalize_ai_settings,
         redact_sensitive,
     };
 
@@ -4237,6 +4558,11 @@ mod ai_tests {
         let destructive = assistant_command_policy("vm_delete").expect("policy should exist");
         assert_eq!(destructive.risk_level, "destructive");
         assert!(destructive.always_confirm);
+
+        let repair =
+            assistant_command_policy("docker_runtime_quick_setup").expect("policy should exist");
+        assert_eq!(repair.risk_level, "write");
+        assert!(!repair.always_confirm);
 
         let read = assistant_command_policy("list_containers").expect("policy should exist");
         assert_eq!(read.risk_level, "read");
@@ -4504,6 +4830,62 @@ mod ai_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn infer_plan_injects_runtime_repair_when_docker_is_unavailable() {
+        let steps = infer_assistant_steps_with_runtime("show container status", true, false);
+        assert!(!steps.is_empty());
+        assert_eq!(steps[0].command, "docker_runtime_quick_setup");
+        assert_eq!(steps[0].risk_level, "write");
+        assert!(!steps[0].requires_confirmation);
+        assert!(
+            steps.iter().any(|step| step.command == "list_containers"),
+            "container read step should be preserved after prepending repair step"
+        );
+    }
+
+    #[test]
+    fn infer_plan_skips_runtime_repair_when_runtime_is_available() {
+        let steps = infer_assistant_steps_with_runtime("show container status", true, true);
+        assert!(!steps.is_empty());
+        assert_ne!(steps[0].command, "docker_runtime_quick_setup");
+    }
+
+    #[test]
+    fn mcp_policy_classifies_risk_levels() {
+        let destructive = mcp_action_policy("k8s.delete_pod");
+        assert_eq!(destructive.risk_level, "destructive");
+        assert!(destructive.requires_confirmation);
+
+        let write = mcp_action_policy("vm.restart");
+        assert_eq!(write.risk_level, "write");
+        assert!(!write.requires_confirmation);
+
+        let read = mcp_action_policy("k8s.list_pods");
+        assert_eq!(read.risk_level, "read");
+        assert!(!read.requires_confirmation);
+    }
+
+    #[test]
+    fn mcp_destructive_confirmation_needs_explicit_ack() {
+        let destructive = mcp_action_policy("container.remove");
+        assert!(!mcp_confirmation_satisfied(destructive, true, None, None));
+        assert!(!mcp_confirmation_satisfied(
+            destructive,
+            true,
+            Some(true),
+            Some(false)
+        ));
+        assert!(mcp_confirmation_satisfied(
+            destructive,
+            true,
+            Some(true),
+            Some(true)
+        ));
+
+        let read = mcp_action_policy("k8s.list_pods");
+        assert!(mcp_confirmation_satisfied(read, true, None, None));
     }
 }
 
@@ -4777,6 +5159,7 @@ pub fn run() {
             ai_generate_plan,
             assistant_execute_step,
             mcp_check_access,
+            docker_runtime_quick_setup,
             agent_cli_list_presets,
             agent_cli_run,
             check_update,

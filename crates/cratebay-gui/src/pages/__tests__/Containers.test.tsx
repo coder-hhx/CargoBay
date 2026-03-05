@@ -80,6 +80,23 @@ describe("Containers", () => {
     expect(onFetch).toHaveBeenCalled()
   })
 
+  it("switches error action to one-click setup when runtime is missing", async () => {
+    const user = userEvent.setup()
+    const onSetupRuntime = vi.fn()
+    render(
+      <Containers
+        {...defaultProps}
+        error="No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
+        runtimeMissing={true}
+        onSetupRuntime={onSetupRuntime}
+      />
+    )
+
+    const setupBtn = screen.getByText(t("dockerOneClickSetup"))
+    await user.click(setupBtn)
+    expect(onSetupRuntime).toHaveBeenCalled()
+  })
+
   it("shows empty state when no containers exist", () => {
     render(<Containers {...defaultProps} />)
 

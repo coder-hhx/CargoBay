@@ -386,7 +386,7 @@ fn connect_docker() -> Result<Docker, String> {
             return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
         }
-        Err("No Docker socket found. Set DOCKER_HOST or install Docker/Colima/OrbStack.".into())
+        Err("No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime.".into())
     }
 
     #[cfg(windows)]
@@ -401,7 +401,10 @@ fn connect_docker() -> Result<Docker, String> {
                 return Ok(d);
             }
         }
-        Err("No Docker named pipe found. Set DOCKER_HOST or install Docker Desktop.".into())
+        Err(
+            "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                .into(),
+        )
     }
 
     #[cfg(not(any(unix, windows)))]

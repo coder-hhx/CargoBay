@@ -6,10 +6,11 @@ interface ErrorBannerProps {
   title: string
   message: string
   actionLabel?: string
+  actionDisabled?: boolean
   onAction?: () => void
 }
 
-export function ErrorBanner({ title, message, actionLabel, onAction }: ErrorBannerProps) {
+export function ErrorBanner({ title, message, actionLabel, actionDisabled, onAction }: ErrorBannerProps) {
   return (
     <Alert variant="destructive">
       <div className="flex items-start gap-3">
@@ -29,6 +30,7 @@ export function ErrorBanner({ title, message, actionLabel, onAction }: ErrorBann
             size="sm"
             className="border-destructive/30 text-destructive hover:bg-destructive/10"
             onClick={onAction}
+            disabled={actionDisabled}
           >
             <span className="mr-1 [&_svg]:size-4 [&_svg]:fill-none [&_svg]:stroke-current [&_svg]:[stroke-width:2] [&_svg]:[stroke-linecap:round] [&_svg]:[stroke-linejoin:round]">
               {I.refresh}

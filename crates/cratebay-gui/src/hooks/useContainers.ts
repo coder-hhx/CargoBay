@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
+import { isDockerRuntimeUnavailableError } from "@/lib/dockerRuntime"
 import type { ContainerInfo, ContainerGroup } from "../types"
 
 function containerGroupCandidates(name: string): string[] {
@@ -131,6 +132,7 @@ export function useContainers() {
 
   const running = containers.filter(c => c.state === "running")
   const groups = groupContainersByNamePrefix(containers)
+  const runtimeMissing = isDockerRuntimeUnavailableError(error)
 
   return {
     containers,
@@ -142,6 +144,7 @@ export function useContainers() {
     connected,
     acting,
     expandedGroups,
+    runtimeMissing,
     fetchContainers,
     containerAction,
     toggleGroup,

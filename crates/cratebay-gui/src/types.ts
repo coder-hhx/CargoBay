@@ -190,6 +190,12 @@ export interface AiConnectionTestResult {
   latency_ms: number
 }
 
+export interface DockerRuntimeSetupResult {
+  ok: boolean
+  request_id: string
+  message: string
+}
+
 export interface AssistantPlanStep {
   id: string
   title: string

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { messages } from "./i18n/messages"
@@ -25,7 +25,7 @@ import { Volumes } from "./pages/Volumes"
 import { Settings } from "./pages/Settings"
 import { Kubernetes } from "./pages/Kubernetes"
 import { Assistant } from "./pages/Assistant"
-import type { NavPage, Theme, VmInfoDto, LocalImageInfo } from "./types"
+import type { DockerRuntimeSetupResult, NavPage, Theme, VmInfoDto, LocalImageInfo } from "./types"
 
 function App() {
   const [activePage, setActivePage] = useState<NavPage>("dashboard")
@@ -69,16 +69,40 @@ function App() {
   const images = useImageSearch()
   const vmHook = useVms()
   const volumeHook = useVolumes()
+  const [dockerRuntimeSetupRunning, setDockerRuntimeSetupRunning] = useState(false)
+  const fetchContainers = containers.fetchContainers
+  const fetchVolumes = volumeHook.fetchVolumes
+
+  const setupDockerRuntime = useCallback(async () => {
+    if (dockerRuntimeSetupRunning) return
+    setDockerRuntimeSetupRunning(true)
+    try {
+      const result = await invoke<DockerRuntimeSetupResult>("docker_runtime_quick_setup")
+      showToast(result.message)
+    } catch (e) {
+      showToast(String(e))
+    } finally {
+      setDockerRuntimeSetupRunning(false)
+      await Promise.allSettled([fetchContainers(), fetchVolumes()])
+    }
+  }, [dockerRuntimeSetupRunning, fetchContainers, fetchVolumes, showToast])
 
   // Window controls (Windows: right-side buttons; macOS: left-side traffic lights)
   const isWindows = navigator.userAgent.includes("Windows")
-  const appWindow = getCurrentWindow()
+  const appWindow = useMemo(() => {
+    try {
+      return getCurrentWindow()
+    } catch {
+      return null
+    }
+  }, [])
   const [maximized, setMaximized] = useState(false)
 
   // Restore saved window size/position on startup
   const MIN_WIDTH = 1100
   const MIN_HEIGHT = 650
   useEffect(() => {
+    if (!appWindow) return
     const restore = async () => {
       try {
         const saved = localStorage.getItem("windowState")
@@ -104,6 +128,7 @@ function App() {
 
   // Save window size/position on resize, track maximized state, enforce min size
   useEffect(() => {
+    if (!appWindow) return
     let saveTimer: ReturnType<typeof setTimeout> | null = null
     const unlisten = appWindow.onResized(async () => {
       const isMax = await appWindow.isMaximized()
@@ -154,9 +179,15 @@ function App() {
     }
   }, [appWindow])
 
-  const handleMinimize = useCallback(() => appWindow.minimize(), [appWindow])
-  const handleMaximize = useCallback(() => appWindow.toggleMaximize(), [appWindow])
-  const handleClose = useCallback(() => appWindow.close(), [appWindow])
+  const handleMinimize = useCallback(() => {
+    appWindow?.minimize().catch(() => {})
+  }, [appWindow])
+  const handleMaximize = useCallback(() => {
+    appWindow?.toggleMaximize().catch(() => {})
+  }, [appWindow])
+  const handleClose = useCallback(() => {
+    appWindow?.close().catch(() => {})
+  }, [appWindow])
 
   // Installed (local) Docker images count for Dashboard
   const [installedImagesCount, setInstalledImagesCount] = useState(0)
@@ -218,6 +249,8 @@ function App() {
             groups={containers.groups}
             loading={containers.loading}
             error={containers.error}
+            runtimeMissing={containers.runtimeMissing}
+            settingUpRuntime={dockerRuntimeSetupRunning}
             acting={containers.acting}
             expandedGroups={containers.expandedGroups}
             onContainerAction={containers.containerAction}
@@ -225,6 +258,7 @@ function App() {
             onOpenTextModal={modal.openTextModal}
             onOpenPackageModal={modal.openPackageModal}
             onFetch={containers.fetchContainers}
+            onSetupRuntime={setupDockerRuntime}
             onRun={async (image: string, name: string, cpus: number | "", mem: number | "", pull: boolean, env?: string[]) => {
               const result = await images.doRunDirect(image, name, cpus, mem, pull, containers.fetchContainers, env)
               if (result) showToast(t("containerCreated"))
@@ -267,7 +301,10 @@ function App() {
             volumes={volumeHook.volumes}
             loading={volumeHook.loading}
             error={volumeHook.error}
+            runtimeMissing={volumeHook.runtimeMissing}
+            settingUpRuntime={dockerRuntimeSetupRunning}
             onFetch={volumeHook.fetchVolumes}
+            onSetupRuntime={setupDockerRuntime}
             onCreate={volumeHook.createVolume}
             onInspect={volumeHook.inspectVolume}
             onRemove={volumeHook.removeVolume}

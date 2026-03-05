@@ -47,6 +47,8 @@ interface ContainersProps {
   groups: ContainerGroup[]
   loading: boolean
   error: string
+  runtimeMissing?: boolean
+  settingUpRuntime?: boolean
   acting: string
   expandedGroups: Record<string, boolean>
   onContainerAction: (cmd: string, id: string) => void
@@ -54,6 +56,7 @@ interface ContainersProps {
   onOpenTextModal: (title: string, body: string, copyText?: string) => void
   onOpenPackageModal: (container: string, defaultTag: string) => void
   onFetch: () => void
+  onSetupRuntime?: () => void
   onRun: (image: string, name: string, cpus: number | "", mem: number | "", pull: boolean, env?: string[]) => Promise<RunContainerResult | null>
   t: (key: string) => string
 }
@@ -72,9 +75,9 @@ function Spinner({ className }: { className?: string }) {
 }
 
 export function Containers({
-  groups, loading, error, acting, expandedGroups,
+  groups, loading, error, runtimeMissing, settingUpRuntime, acting, expandedGroups,
   onContainerAction, onToggleGroup,
-  onOpenTextModal, onOpenPackageModal, onFetch, onRun, t,
+  onOpenTextModal, onOpenPackageModal, onFetch, onSetupRuntime, onRun, t,
 }: ContainersProps) {
   const [showRunModal, setShowRunModal] = useState(false)
   const [runImage, setRunImage] = useState("")
@@ -402,12 +405,14 @@ export function Containers({
     )
   }
   if (error) {
+    const setupMode = Boolean(runtimeMissing && onSetupRuntime)
     return (
       <ErrorBanner
         title={t("connectionError")}
         message={error}
-        actionLabel={t("refresh")}
-        onAction={onFetch}
+        actionLabel={setupMode ? t("dockerOneClickSetup") : t("refresh")}
+        actionDisabled={Boolean(setupMode && settingUpRuntime)}
+        onAction={setupMode ? onSetupRuntime : onFetch}
       />
     )
   }

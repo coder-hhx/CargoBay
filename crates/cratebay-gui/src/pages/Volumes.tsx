@@ -39,7 +39,10 @@ interface VolumesProps {
   volumes: VolumeInfo[]
   loading: boolean
   error: string
+  runtimeMissing?: boolean
+  settingUpRuntime?: boolean
   onFetch: () => void
+  onSetupRuntime?: () => void
   onCreate: (name: string, driver: string) => Promise<VolumeInfo>
   onInspect: (name: string) => Promise<VolumeInfo>
   onRemove: (name: string) => Promise<void>
@@ -52,7 +55,10 @@ export function Volumes({
   volumes,
   loading,
   error,
+  runtimeMissing,
+  settingUpRuntime,
   onFetch,
+  onSetupRuntime,
   onCreate,
   onInspect,
   onRemove,
@@ -152,12 +158,14 @@ export function Volumes({
   }
 
   if (error) {
+    const setupMode = Boolean(runtimeMissing && onSetupRuntime)
     return (
       <ErrorBanner
         title={t("connectionError")}
         message={error}
-        actionLabel={t("refresh")}
-        onAction={onFetch}
+        actionLabel={setupMode ? t("dockerOneClickSetup") : t("refresh")}
+        actionDisabled={Boolean(setupMode && settingUpRuntime)}
+        onAction={setupMode ? onSetupRuntime : onFetch}
       />
     )
   }
