@@ -44,7 +44,7 @@ source ~/.cargo/env
 
 ```bash
 # macOS
-brew install node@22
+brew install node@24
 
 # or via nvm
 nvm install 24
@@ -97,6 +97,14 @@ Output: `crates/cratebay-gui/src-tauri/target/release/bundle/`
 - macOS: `.dmg` and `.app`
 - Windows: `.msi` and `.exe`
 - Linux: `.deb`, `.rpm`, `.AppImage`
+
+### Pre-GA Release Gate
+
+```bash
+./scripts/release-readiness.sh
+```
+
+Checklist reference: `docs/RELEASE_SMOKE_CHECKLIST.md`
 
 ### CLI Only
 

@@ -140,6 +140,9 @@ bash scripts/setup-dev.sh
 
 # 3) 推送前执行本地 CI
 ./scripts/ci-local.sh
+
+# 4) 执行 v1.0 发布门禁检查
+./scripts/release-readiness.sh
 ```
 
 ## Tauri MCP Bridge（本地调试）

@@ -44,7 +44,7 @@ source ~/.cargo/env
 
 ```bash
 # macOS
-brew install node@22
+brew install node@24
 
 # or via nvm
 nvm install 24
@@ -97,6 +97,14 @@ npm run tauri build
 - macOS：`.dmg` / `.app`
 - Windows：`.msi` / `.exe`
 - Linux：`.deb` / `.rpm` / `.AppImage`
+
+### GA 前发布门禁
+
+```bash
+./scripts/release-readiness.sh
+```
+
+检查清单：`docs/RELEASE_SMOKE_CHECKLIST.md`
 
 ### 仅构建 CLI
 

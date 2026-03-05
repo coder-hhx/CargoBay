@@ -140,6 +140,9 @@ bash scripts/setup-dev.sh
 
 # 3) Run local CI before pushing
 ./scripts/ci-local.sh
+
+# 4) Run v1.0 release gate checks
+./scripts/release-readiness.sh
 ```
 
 ## Tauri MCP Bridge (Local Debug)

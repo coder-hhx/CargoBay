@@ -4154,6 +4154,220 @@ mod ai_tests {
         assert!(is_command_allowed(&allowlist, "/usr/local/bin/openclaw"));
         assert!(!is_command_allowed(&allowlist, "/usr/local/bin/bash"));
     }
+
+    #[derive(Clone, Copy)]
+    struct CoreScenario {
+        name: &'static str,
+        prompt: &'static str,
+        expected_command: &'static str,
+        expected_risk: &'static str,
+        expected_confirm: bool,
+    }
+
+    #[test]
+    fn assistant_core_scenarios_success_rate() {
+        let scenarios = vec![
+            CoreScenario {
+                name: "container_delete",
+                prompt: "delete container web",
+                expected_command: "remove_container",
+                expected_risk: "destructive",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "container_remove",
+                prompt: "remove container api",
+                expected_command: "remove_container",
+                expected_risk: "destructive",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "container_stop",
+                prompt: "stop container gateway",
+                expected_command: "stop_container",
+                expected_risk: "write",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "container_start",
+                prompt: "start container worker",
+                expected_command: "start_container",
+                expected_risk: "write",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "container_list",
+                prompt: "show container status overview",
+                expected_command: "list_containers",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "container_k8s_dual",
+                prompt: "container and kubernetes pod diagnosis",
+                expected_command: "k8s_list_pods",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "vm_delete",
+                prompt: "delete vm dev",
+                expected_command: "vm_delete",
+                expected_risk: "destructive",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "vm_remove",
+                prompt: "remove vm qa",
+                expected_command: "vm_delete",
+                expected_risk: "destructive",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "vm_stop",
+                prompt: "stop vm alpha",
+                expected_command: "vm_stop",
+                expected_risk: "write",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "vm_start",
+                prompt: "start vm alpha",
+                expected_command: "vm_start",
+                expected_risk: "write",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "vm_list",
+                prompt: "show vm status overview",
+                expected_command: "vm_list",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "vm_k8s_dual",
+                prompt: "vm and pod health check",
+                expected_command: "k8s_list_pods",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "k8s_pods_status",
+                prompt: "kubernetes pods status",
+                expected_command: "k8s_list_pods",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "k8s_pods_crashloop",
+                prompt: "k8s pod crashloop check",
+                expected_command: "k8s_list_pods",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "fallback_infra_context",
+                prompt: "show me infra context",
+                expected_command: "list_containers",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "fallback_general_diagnostics",
+                prompt: "need full diagnostics",
+                expected_command: "list_containers",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "delete_container_and_vm",
+                prompt: "delete container and vm now",
+                expected_command: "vm_delete",
+                expected_risk: "destructive",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "start_container_and_vm",
+                prompt: "start container and vm together",
+                expected_command: "vm_start",
+                expected_risk: "write",
+                expected_confirm: true,
+            },
+            CoreScenario {
+                name: "container_logs_and_pod",
+                prompt: "container logs and pod status",
+                expected_command: "list_containers",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+            CoreScenario {
+                name: "pod_investigation",
+                prompt: "pod issue investigation",
+                expected_command: "k8s_list_pods",
+                expected_risk: "read",
+                expected_confirm: false,
+            },
+        ];
+
+        let mut passed = 0usize;
+        for scenario in &scenarios {
+            let steps = infer_assistant_steps(scenario.prompt, true);
+            let matched = steps
+                .iter()
+                .find(|s| s.command == scenario.expected_command)
+                .map(|s| {
+                    s.risk_level == scenario.expected_risk
+                        && s.requires_confirmation == scenario.expected_confirm
+                })
+                .unwrap_or(false);
+            if matched {
+                passed += 1;
+            } else {
+                eprintln!(
+                    "scenario failed: {} prompt='{}' expected command={} risk={} confirm={} actual={:?}",
+                    scenario.name,
+                    scenario.prompt,
+                    scenario.expected_command,
+                    scenario.expected_risk,
+                    scenario.expected_confirm,
+                    steps
+                );
+            }
+        }
+
+        let total = scenarios.len();
+        let success_rate = passed as f64 / total as f64;
+        assert!(
+            success_rate >= 0.95,
+            "assistant core scenarios below threshold: passed={} total={} rate={:.2}",
+            passed,
+            total,
+            success_rate
+        );
+    }
+
+    #[test]
+    fn destructive_steps_always_require_confirmation() {
+        let prompts = vec![
+            "delete container web",
+            "remove container api",
+            "delete vm dev",
+            "remove vm qa",
+            "delete container and vm now",
+        ];
+        for prompt in prompts {
+            let steps = infer_assistant_steps(prompt, true);
+            for step in steps {
+                if step.risk_level == "destructive" {
+                    assert!(
+                        step.requires_confirmation,
+                        "destructive step without confirmation: prompt='{}' command='{}'",
+                        prompt, step.command
+                    );
+                }
+            }
+        }
+    }
 }
 
 // ── Auto-update ────────────────────────────────────────────────────
