@@ -19,6 +19,27 @@ function applyInitialThemeClass() {
 
 applyInitialThemeClass()
 
+async function setupMcpBridgeListeners() {
+  // MCP bridge is only enabled in debug builds on Rust side.
+  if (!import.meta.env.DEV) return
+
+  const runtime = window as unknown as { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown }
+  if (!runtime.__TAURI__ && !runtime.__TAURI_INTERNALS__) return
+
+  try {
+    const { setupPluginListeners, cleanupPluginListeners } = await import('tauri-plugin-mcp')
+    await setupPluginListeners()
+
+    window.addEventListener('beforeunload', () => {
+      cleanupPluginListeners().catch(() => {})
+    })
+  } catch (err) {
+    console.warn('MCP bridge listener setup failed:', err)
+  }
+}
+
+void setupMcpBridgeListeners()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

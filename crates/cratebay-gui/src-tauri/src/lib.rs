@@ -2532,7 +2532,22 @@ pub fn run() {
     // Enable MCP debug plugin only in debug builds
     #[cfg(debug_assertions)]
     {
-        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+        let mcp_bind = std::env::var("CRATEBAY_MCP_BIND").unwrap_or_else(|_| "127.0.0.1".into());
+        let mcp_port = std::env::var("CRATEBAY_MCP_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(9223);
+
+        info!(
+            "Debug build detected: enabling MCP bridge at {}:{}",
+            mcp_bind, mcp_port
+        );
+        builder = builder.plugin(
+            tauri_plugin_mcp_bridge::Builder::new()
+                .bind_address(&mcp_bind)
+                .base_port(mcp_port)
+                .build(),
+        );
     }
 
     builder
