@@ -213,6 +213,9 @@ h1 {
 }
 
 .btn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -225,13 +228,14 @@ h1 {
   text-decoration: none;
   font-weight: 800;
   letter-spacing: -0.01em;
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  background-clip: padding-box;
+  transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
 .btn:hover {
   transform: translateY(-1px);
   background: rgba(148, 163, 184, 0.12);
-  box-shadow: 0 16px 36px rgba(2, 8, 23, 0.22);
+  box-shadow: 0 14px 28px rgba(2, 8, 23, 0.24);
 }
 
 .btn-primary {
@@ -239,9 +243,8 @@ h1 {
   background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
   color: #fff;
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
-    0 18px 36px rgba(34, 211, 238, 0.16),
-    0 12px 28px rgba(124, 58, 237, 0.22);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 12px 26px rgba(2, 8, 23, 0.26);
 }
 
 .hero-actions .btn-primary {
