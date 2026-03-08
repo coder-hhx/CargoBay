@@ -190,7 +190,12 @@ async fn wait_for_container_removed(container_name: &str, timeout: Duration) {
 async fn desktop_shell_renders_and_navigates() {
     let client = connect_client().await;
 
-    wait_for_css(&client, "[data-testid='nav-dashboard']", Duration::from_secs(30)).await;
+    wait_for_css(
+        &client,
+        "[data-testid='nav-dashboard']",
+        Duration::from_secs(30),
+    )
+    .await;
 
     click_css(&client, "[data-testid='nav-ai']").await;
     wait_for_css(&client, "[role='tab']", Duration::from_secs(15)).await;
@@ -208,7 +213,10 @@ async fn desktop_shell_renders_and_navigates() {
         settings_page.contains("General"),
         "settings general tab should render"
     );
-    assert!(settings_page.contains("AI"), "settings AI tab should render");
+    assert!(
+        settings_page.contains("AI"),
+        "settings AI tab should render"
+    );
 
     client.close().await.expect("close webdriver session");
 }
@@ -243,9 +251,19 @@ async fn desktop_shell_runs_container_lifecycle() {
 
     let client = connect_client().await;
 
-    wait_for_css(&client, "[data-testid='nav-dashboard']", Duration::from_secs(30)).await;
+    wait_for_css(
+        &client,
+        "[data-testid='nav-dashboard']",
+        Duration::from_secs(30),
+    )
+    .await;
     click_css(&client, "[data-testid='nav-containers']").await;
-    wait_for_css(&client, "[data-testid='containers-run']", Duration::from_secs(15)).await;
+    wait_for_css(
+        &client,
+        "[data-testid='containers-run']",
+        Duration::from_secs(15),
+    )
+    .await;
 
     click_css(&client, "[data-testid='containers-run']").await;
     wait_for_css(
@@ -348,7 +366,6 @@ async fn desktop_shell_runs_container_lifecycle() {
     client.close().await.expect("close webdriver session");
 }
 
-
 #[tokio::test]
 #[ignore = "requires Linux desktop automation runtime"]
 async fn desktop_shell_runs_mcp_lifecycle() {
@@ -359,40 +376,78 @@ async fn desktop_shell_runs_mcp_lifecycle() {
     let mcp_id = format!("desktop-mcp-{}-{}", std::process::id(), suffix);
     let mcp_name = format!("Desktop MCP {suffix}");
     let ready_marker = format!("MCP_DESKTOP_READY_{suffix}");
-    let workdir = env::var("CRATEBAY_DESKTOP_E2E_WORKDIR")
-        .unwrap_or_else(|_| env::current_dir().expect("current dir").display().to_string());
+    let workdir = env::var("CRATEBAY_DESKTOP_E2E_WORKDIR").unwrap_or_else(|_| {
+        env::current_dir()
+            .expect("current dir")
+            .display()
+            .to_string()
+    });
     let row_selector = format!("[data-testid='mcp-row-{mcp_id}']");
     let toggle_selector = format!("[data-testid='mcp-toggle-{mcp_id}']");
     let status_selector = format!("[data-testid='mcp-status-{mcp_id}']");
 
     let client = connect_client().await;
 
-    wait_for_css(&client, "[data-testid='nav-dashboard']", Duration::from_secs(30)).await;
+    wait_for_css(
+        &client,
+        "[data-testid='nav-dashboard']",
+        Duration::from_secs(30),
+    )
+    .await;
     click_css(&client, "[data-testid='nav-ai']").await;
-    wait_for_css(&client, "[data-testid='aihub-tab-mcp']", Duration::from_secs(20)).await;
+    wait_for_css(
+        &client,
+        "[data-testid='aihub-tab-mcp']",
+        Duration::from_secs(20),
+    )
+    .await;
     click_css(&client, "[data-testid='aihub-tab-mcp']").await;
 
     click_css(&client, "[data-testid='mcp-add-server']").await;
-    wait_for_css(&client, "[data-testid='mcp-input-id']", Duration::from_secs(15)).await;
+    wait_for_css(
+        &client,
+        "[data-testid='mcp-input-id']",
+        Duration::from_secs(15),
+    )
+    .await;
     clear_and_type_css(&client, "[data-testid='mcp-input-id']", &mcp_id).await;
     clear_and_type_css(&client, "[data-testid='mcp-input-name']", &mcp_name).await;
     clear_and_type_css(&client, "[data-testid='mcp-input-command']", "/bin/sh").await;
     clear_and_type_css(
         &client,
         "[data-testid='mcp-input-args']",
-        &format!("-lc
-echo {ready_marker}; while true; do sleep 1; done"),
+        &format!(
+            "-lc
+echo {ready_marker}; while true; do sleep 1; done"
+        ),
     )
     .await;
     clear_and_type_css(&client, "[data-testid='mcp-input-working-dir']", &workdir).await;
-    clear_and_type_css(&client, "[data-testid='mcp-input-notes']", "desktop runtime smoke").await;
+    clear_and_type_css(
+        &client,
+        "[data-testid='mcp-input-notes']",
+        "desktop runtime smoke",
+    )
+    .await;
 
     click_css(&client, "[data-testid='mcp-save-registry']").await;
     wait_for_css(&client, &row_selector, Duration::from_secs(30)).await;
-    wait_for_css_text(&client, &status_selector, "Stopped", Duration::from_secs(20)).await;
+    wait_for_css_text(
+        &client,
+        &status_selector,
+        "Stopped",
+        Duration::from_secs(20),
+    )
+    .await;
 
     click_css(&client, &toggle_selector).await;
-    wait_for_css_text(&client, &status_selector, "Running", Duration::from_secs(30)).await;
+    wait_for_css_text(
+        &client,
+        &status_selector,
+        "Running",
+        Duration::from_secs(30),
+    )
+    .await;
     wait_for_css_text(
         &client,
         "[data-testid='mcp-selected-status']",

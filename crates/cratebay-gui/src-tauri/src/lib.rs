@@ -2752,7 +2752,10 @@ fn query_nvidia_gpu_status() -> Result<GpuStatusDto, String> {
         if trimmed.is_empty() {
             continue;
         }
-        let cols = trimmed.split(',').map(|item| item.trim()).collect::<Vec<_>>();
+        let cols = trimmed
+            .split(',')
+            .map(|item| item.trim())
+            .collect::<Vec<_>>();
         if cols.len() < 7 {
             continue;
         }
@@ -2829,7 +2832,10 @@ fn query_nvidia_gpu_inventory() -> Result<Vec<NvidiaGpuInventory>, String> {
         if trimmed.is_empty() {
             continue;
         }
-        let cols = trimmed.split(',').map(|item| item.trim()).collect::<Vec<_>>();
+        let cols = trimmed
+            .split(',')
+            .map(|item| item.trim())
+            .collect::<Vec<_>>();
         if cols.len() < 3 {
             continue;
         }
@@ -2853,8 +2859,13 @@ fn query_nvidia_compute_processes() -> Result<Vec<NvidiaGpuProcessSample>, Strin
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}
-{}", stdout.trim(), stderr.trim()).to_lowercase();
+    let combined = format!(
+        "{}
+{}",
+        stdout.trim(),
+        stderr.trim()
+    )
+    .to_lowercase();
     if combined.contains("no running compute processes found") {
         return Ok(Vec::new());
     }
@@ -2874,7 +2885,10 @@ fn query_nvidia_compute_processes() -> Result<Vec<NvidiaGpuProcessSample>, Strin
         if trimmed.is_empty() {
             continue;
         }
-        let cols = trimmed.split(',').map(|item| item.trim()).collect::<Vec<_>>();
+        let cols = trimmed
+            .split(',')
+            .map(|item| item.trim())
+            .collect::<Vec<_>>();
         if cols.len() < 4 {
             continue;
         }
@@ -2936,14 +2950,20 @@ fn query_macos_gpu_status() -> Result<GpuStatusDto, String> {
             .get("sppci_model")
             .and_then(|entry| entry.as_str())
             .or_else(|| obj.get("_name").and_then(|entry| entry.as_str()))
-            .or_else(|| obj.get("spdisplays_vendor").and_then(|entry| entry.as_str()))
+            .or_else(|| {
+                obj.get("spdisplays_vendor")
+                    .and_then(|entry| entry.as_str())
+            })
             .unwrap_or("GPU")
             .trim()
             .to_string();
         let memory_total_human = obj
             .get("spdisplays_vram")
             .and_then(|entry| entry.as_str())
-            .or_else(|| obj.get("spdisplays_vram_shared").and_then(|entry| entry.as_str()))
+            .or_else(|| {
+                obj.get("spdisplays_vram_shared")
+                    .and_then(|entry| entry.as_str())
+            })
             .map(|entry| entry.trim().to_string());
         devices.push(GpuDeviceDto {
             index: index as u32,
@@ -3933,12 +3953,12 @@ async fn sandbox_runtime_usage(id: String) -> Result<SandboxRuntimeUsageDto, Str
             )
         } else if !runtime_setup_command_exists("nvidia-smi") {
             (
-                false,
-                "nvidia-smi was not found. Install NVIDIA tooling to attribute GPU usage to a sandbox."
-                    .to_string(),
-                Vec::new(),
-                0,
-            )
+            false,
+            "nvidia-smi was not found. Install NVIDIA tooling to attribute GPU usage to a sandbox."
+                .to_string(),
+            Vec::new(),
+            0,
+        )
         } else {
             let sandbox_id = id.clone();
             let sandbox_short_id = sandbox_short_id(&id);
@@ -7943,10 +7963,10 @@ mod ai_runtime_tests {
         agent_cli_run, ai_profile, ai_test_connection, default_ai_settings, load_ai_settings,
         mcp_export_client_config, mcp_list_servers_inner, mcp_server_logs_inner,
         mcp_start_server_inner, mcp_stop_server_inner, ollama_delete_model, ollama_list_models,
-        ollama_pull_model, ollama_status, ollama_storage_info, sandbox_audit_list,
-        sandbox_create, sandbox_delete, sandbox_exec, sandbox_inspect, sandbox_list,
-        sandbox_start, sandbox_stop, save_ai_settings, secret_delete, secret_set, AppState,
-        McpServerEntry, SandboxCreateRequest,
+        ollama_pull_model, ollama_status, ollama_storage_info, sandbox_audit_list, sandbox_create,
+        sandbox_delete, sandbox_exec, sandbox_inspect, sandbox_list, sandbox_start, sandbox_stop,
+        save_ai_settings, secret_delete, secret_set, AppState, McpServerEntry,
+        SandboxCreateRequest,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -8039,7 +8059,10 @@ mod ai_runtime_tests {
         std::fs::create_dir_all(&log_dir).expect("create log dir");
         std::fs::create_dir_all(&secret_dir).expect("create secret dir");
         (
-            EnvGuard::set("CRATEBAY_CONFIG_DIR", config_dir.to_str().expect("config dir")),
+            EnvGuard::set(
+                "CRATEBAY_CONFIG_DIR",
+                config_dir.to_str().expect("config dir"),
+            ),
             EnvGuard::set("CRATEBAY_DATA_DIR", data_dir.to_str().expect("data dir")),
             EnvGuard::set("CRATEBAY_LOG_DIR", log_dir.to_str().expect("log dir")),
             EnvGuard::set(
@@ -8525,15 +8548,23 @@ exec "$target" "$@"
         .await
         .expect("run Codex CLI canary");
 
-        let combined = format!("{}
-{}", result.stdout, result.stderr).to_ascii_uppercase();
+        let combined = format!(
+            "{}
+{}",
+            result.stdout, result.stderr
+        )
+        .to_ascii_uppercase();
         assert!(result.ok, "Codex CLI canary failed: {:?}", result);
         assert!(
             result.command_line.starts_with("codex exec "),
             "Codex preset command should use preset form: {}",
             result.command_line
         );
-        assert!(combined.contains("PONG"), "Codex CLI output should contain PONG: {}", combined);
+        assert!(
+            combined.contains("PONG"),
+            "Codex CLI output should contain PONG: {}",
+            combined
+        );
     }
 
     #[tokio::test]
@@ -8560,15 +8591,23 @@ exec "$target" "$@"
         .await
         .expect("run Claude CLI canary");
 
-        let combined = format!("{}
-{}", result.stdout, result.stderr).to_ascii_uppercase();
+        let combined = format!(
+            "{}
+{}",
+            result.stdout, result.stderr
+        )
+        .to_ascii_uppercase();
         assert!(result.ok, "Claude CLI canary failed: {:?}", result);
         assert!(
             result.command_line.starts_with("claude --print "),
             "Claude preset command should use preset form: {}",
             result.command_line
         );
-        assert!(combined.contains("PONG"), "Claude CLI output should contain PONG: {}", combined);
+        assert!(
+            combined.contains("PONG"),
+            "Claude CLI output should contain PONG: {}",
+            combined
+        );
     }
 
     #[tokio::test]
@@ -8586,7 +8625,10 @@ exec "$target" "$@"
             .map(|value| EnvGuard::set("OLLAMA_MODELS", value));
 
         let status = ollama_status().await.expect("ollama daemon status");
-        assert!(status.installed, "Ollama daemon canary expects installed=true");
+        assert!(
+            status.installed,
+            "Ollama daemon canary expects installed=true"
+        );
         assert!(status.running, "Ollama daemon canary expects running=true");
 
         let models = ollama_list_models().await.expect("ollama daemon models");
@@ -8595,15 +8637,26 @@ exec "$target" "$@"
                 models.iter().any(|item| item.name == expected_model),
                 "expected Ollama model '{}' to be present; got {:?}",
                 expected_model,
-                models.iter().map(|item| item.name.clone()).collect::<Vec<_>>()
+                models
+                    .iter()
+                    .map(|item| item.name.clone())
+                    .collect::<Vec<_>>()
             );
         } else {
-            assert!(!models.is_empty(), "Ollama daemon canary expects at least one model");
+            assert!(
+                !models.is_empty(),
+                "Ollama daemon canary expects at least one model"
+            );
         }
 
-        let storage = ollama_storage_info().await.expect("ollama daemon storage info");
+        let storage = ollama_storage_info()
+            .await
+            .expect("ollama daemon storage info");
         assert!(storage.exists, "Ollama storage should exist");
-        assert!(storage.model_count >= 1, "Ollama storage should report at least one model");
+        assert!(
+            storage.model_count >= 1,
+            "Ollama storage should report at least one model"
+        );
 
         if let Ok(model) = std::env::var("CRATEBAY_CANARY_OLLAMA_PULL_MODEL") {
             let pull = ollama_pull_model(model.clone())
@@ -8613,7 +8666,11 @@ exec "$target" "$@"
             let delete = ollama_delete_model(model.clone())
                 .await
                 .expect("delete Ollama canary model");
-            assert!(delete.ok, "Ollama delete should succeed: {}", delete.message);
+            assert!(
+                delete.ok,
+                "Ollama delete should succeed: {}",
+                delete.message
+            );
         }
     }
 
