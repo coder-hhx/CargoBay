@@ -11,6 +11,8 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { commandNeedsConfirmation } from "@/lib/aiSkills"
+import { formatSandboxError } from "@/lib/sandboxErrors"
 import { cn } from "@/lib/utils"
 import { iconStroke, cardActionDanger, cardActionOutline, cardActionSecondary } from "@/lib/styles"
 import { Assistant } from "./Assistant"
@@ -84,7 +86,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
   const [sandboxCommand, setSandboxCommand] = useState("")
   const [sandboxEnvLines, setSandboxEnvLines] = useState("")
   const [sandboxExecCommand, setSandboxExecCommand] = useState("")
-  const [sandboxExecOutput, setSandboxExecOutput] = useState("")
+  const [sandboxExecResult, setSandboxExecResult] = useState<SandboxExecResultDto | null>(null)
   const [mcpServers, setMcpServers] = useState<McpServerStatusDto[]>([])
   const [mcpDrafts, setMcpDrafts] = useState<McpServerEntry[]>([])
   const [mcpSelectedId, setMcpSelectedId] = useState("")
@@ -95,6 +97,8 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
   const [mcpError, setMcpError] = useState("")
   const [mcpActingId, setMcpActingId] = useState("")
   const [openSandboxStatus, setOpenSandboxStatus] = useState<OpenSandboxStatusDto | null>(null)
+
+  const sandboxErrorMessage = useCallback((error: unknown) => formatSandboxError(String(error), t), [t])
 
   const refreshOllama = useCallback(async () => {
     setOllamaLoading(true)
@@ -142,7 +146,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
         prev && templates.some((it) => it.id === prev) ? prev : (templates[0]?.id ?? "")
       )
     } catch (e) {
-      setSandboxError(String(e))
+      setSandboxError(sandboxErrorMessage(e))
     } finally {
       setSandboxLoading(false)
     }
@@ -260,7 +264,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
         const runtimeUsage = await invoke<SandboxRuntimeUsageDto>("sandbox_runtime_usage", { id })
         setSandboxRuntimeUsage(runtimeUsage)
       } catch (e) {
-        setSandboxRuntimeError(String(e))
+        setSandboxRuntimeError(sandboxErrorMessage(e))
       }
       return inspect
     } finally {
@@ -346,7 +350,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
       setSandboxEnvLines("")
       await refreshSandboxes()
     } catch (e) {
-      setSandboxError(String(e))
+      setSandboxError(sandboxErrorMessage(e))
     } finally {
       setSandboxCreating(false)
     }
@@ -386,14 +390,15 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
           setSandboxInspect(null)
           setSandboxRuntimeUsage(null)
           setSandboxRuntimeError("")
+          setSandboxExecResult(null)
         }
         await refreshSandboxes()
       }
     } catch (e) {
       if (action === "inspect") {
-        setSandboxInspectError(String(e))
+        setSandboxInspectError(sandboxErrorMessage(e))
       } else {
-        setSandboxError(String(e))
+        setSandboxError(sandboxErrorMessage(e))
       }
     } finally {
       setSandboxActingId("")
@@ -401,6 +406,13 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
   }
 
   const handleCleanupExpiredSandboxes = async () => {
+    if (commandNeedsConfirmation("sandbox_cleanup_expired")) {
+      const confirmed = window.confirm(
+        `${t("assistantConfirmAction")}\n${t("sandboxCleanupExpired")}\nsandbox_cleanup_expired`
+      )
+      if (!confirmed) return
+    }
+
     setSandboxError("")
     setSandboxNotice("")
     setSandboxActingId("cleanup")
@@ -411,7 +423,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
       }
       await refreshSandboxes()
     } catch (e) {
-      setSandboxError(String(e))
+      setSandboxError(sandboxErrorMessage(e))
     } finally {
       setSandboxActingId("")
     }
@@ -423,19 +435,27 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
       setSandboxInspectError(t("sandboxExecTitle"))
       return
     }
-    if (!sandboxExecCommand.trim()) {
+    const execCommand = sandboxExecCommand.trim()
+    if (!execCommand) {
       return
+    }
+    if (commandNeedsConfirmation("sandbox_exec")) {
+      const confirmed = window.confirm(
+        `${t("assistantConfirmAction")}\n${t("sandboxExecTitle")}\n${execCommand}`
+      )
+      if (!confirmed) return
     }
     setSandboxActingId(`exec:${targetId}`)
     setSandboxInspectError("")
+    setSandboxExecResult(null)
     try {
       const result = await invoke<SandboxExecResultDto>("sandbox_exec", {
         id: targetId,
-        command: sandboxExecCommand.trim(),
+        command: execCommand,
       })
-      setSandboxExecOutput(result.output || "")
+      setSandboxExecResult(result)
     } catch (e) {
-      setSandboxInspectError(String(e))
+      setSandboxInspectError(sandboxErrorMessage(e))
     } finally {
       setSandboxActingId("")
     }
@@ -1286,10 +1306,32 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
                   {sandboxActingId.startsWith("exec:") ? t("working") : t("sandboxExecRun")}
                 </Button>
               </div>
-              {sandboxExecOutput && (
-                <div className="rounded-lg border border-border/50 bg-muted/25 px-3 py-2 text-xs">
-                  <div className="mb-1 text-muted-foreground">{t("sandboxExecOutput")}</div>
-                  <pre className="whitespace-pre-wrap break-all font-mono text-foreground">{sandboxExecOutput}</pre>
+              {sandboxExecResult && (
+                <div className="space-y-2 rounded-lg border border-border/50 bg-muted/25 px-3 py-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    <span>{t("sandboxExecExitCode")}: {sandboxExecResult.exit_code ?? "-"}</span>
+                    <Badge variant={sandboxExecResult.ok ? "secondary" : "outline"}>
+                      {sandboxExecResult.ok ? t("running") : t("error")}
+                    </Badge>
+                  </div>
+                  {!!sandboxExecResult.stdout && (
+                    <div>
+                      <div className="mb-1 text-muted-foreground">{t("sandboxExecStdout")}</div>
+                      <pre className="whitespace-pre-wrap break-all font-mono text-foreground">{sandboxExecResult.stdout}</pre>
+                    </div>
+                  )}
+                  {!!sandboxExecResult.stderr && (
+                    <div>
+                      <div className="mb-1 text-muted-foreground">{t("sandboxExecStderr")}</div>
+                      <pre className="whitespace-pre-wrap break-all font-mono text-foreground">{sandboxExecResult.stderr}</pre>
+                    </div>
+                  )}
+                  {!sandboxExecResult.stdout && !sandboxExecResult.stderr && !!sandboxExecResult.output && (
+                    <div>
+                      <div className="mb-1 text-muted-foreground">{t("sandboxExecOutput")}</div>
+                      <pre className="whitespace-pre-wrap break-all font-mono text-foreground">{sandboxExecResult.output}</pre>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>

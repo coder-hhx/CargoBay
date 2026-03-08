@@ -516,4 +516,7 @@ export interface SandboxCleanupResultDto {
 export interface SandboxExecResultDto {
   ok: boolean
   output: string
+  stdout: string
+  stderr: string
+  exit_code?: number | null
 }

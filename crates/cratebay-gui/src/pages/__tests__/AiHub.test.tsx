@@ -401,6 +401,7 @@ describe("AiHub", () => {
 
   it("shows OpenSandbox status, sandbox GPU runtime usage, and cleanup entry", async () => {
     const user = userEvent.setup()
+    vi.spyOn(window, "confirm").mockReturnValue(true)
 
     let sandboxes: SandboxInfoDto[] = [
       {

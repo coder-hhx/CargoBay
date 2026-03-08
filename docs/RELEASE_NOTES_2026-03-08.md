@@ -30,6 +30,9 @@ This update refocuses CrateBay around an AI-first local workflow.
 
 - Continued the managed sandbox path as the core local runtime primitive for agents.
 - Added runtime usage reporting for CPU, memory, and GPU-related workload attribution.
+- Added stricter confirmation coverage for sandbox exec and cleanup flows, aligned with backend command policy.
+- Added structured sandbox exec results with explicit stdout / stderr / exit code reporting in the desktop UI.
+- Added categorized sandbox error handling for runtime, permission, resource, template, validation, and not-found cases.
 - Preserved create / start / stop / inspect / exec / cleanup flows.
 
 ### Provider canaries

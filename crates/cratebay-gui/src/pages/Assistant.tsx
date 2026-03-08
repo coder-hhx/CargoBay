@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { I } from "../icons"
+import { formatSandboxError } from "@/lib/sandboxErrors"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -79,7 +80,7 @@ export function Assistant({ t }: AssistantProps) {
       } catch (e) {
         if (!active) return
         setSkills([])
-        setSkillsError(String(e))
+        setSkillsError(formatSandboxError(String(e), t))
       } finally {
         if (active) {
           setSkillsLoading(false)
@@ -111,7 +112,7 @@ export function Assistant({ t }: AssistantProps) {
       }
       setStepArgsMap(nextArgs)
     } catch (e) {
-      setPlanError(String(e))
+      setPlanError(formatSandboxError(String(e), t))
     } finally {
       setGenerating(false)
     }
@@ -129,7 +130,7 @@ export function Assistant({ t }: AssistantProps) {
     } catch (e) {
       setStepResultMap((prev) => ({
         ...prev,
-        [step.id]: `Invalid args JSON: ${String(e)}`,
+        [step.id]: `Invalid args JSON: ${formatSandboxError(String(e), t)}`,
       }))
       return
     }
@@ -160,7 +161,7 @@ export function Assistant({ t }: AssistantProps) {
     } catch (e) {
       setStepResultMap((prev) => ({
         ...prev,
-        [step.id]: String(e),
+        [step.id]: formatSandboxError(String(e), t),
       }))
     } finally {
       setExecutingStepId("")
@@ -211,7 +212,7 @@ export function Assistant({ t }: AssistantProps) {
     } catch (e) {
       setSkillErrorMap((prev) => ({
         ...prev,
-        [skill.id]: String(e),
+        [skill.id]: formatSandboxError(String(e), t),
       }))
     } finally {
       setRunningSkillId("")

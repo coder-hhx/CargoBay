@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { langNames } from "../i18n/messages"
 import { I } from "../icons"
+import { formatSandboxError } from "@/lib/sandboxErrors"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -129,7 +130,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
           listToLines(settings.security_policy.cli_command_allowlist ?? [])
         )
       } catch (e) {
-        setAiError(String(e))
+        setAiError(formatSandboxError(String(e), t))
       } finally {
         setAiLoading(false)
       }
@@ -197,7 +198,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
       const info = await invoke<UpdateInfo>("check_update")
       setUpdateInfo(info)
     } catch (e) {
-      setUpdateError(String(e))
+      setUpdateError(formatSandboxError(String(e), t))
     } finally {
       setChecking(false)
     }
@@ -303,7 +304,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
       setAiSettings(saved)
       setAiMessage(t("aiSettingsSaved"))
     } catch (e) {
-      setAiError(String(e))
+      setAiError(formatSandboxError(String(e), t))
     } finally {
       setAiSaving(false)
     }
@@ -327,7 +328,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
         setAiError(result.message || t("aiValidationFailed"))
       }
     } catch (e) {
-      setAiError(String(e))
+      setAiError(formatSandboxError(String(e), t))
     } finally {
       setAiValidating(false)
     }
@@ -354,7 +355,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
       setSecretExists(true)
       setAiMessage(t("aiSecretSaved"))
     } catch (e) {
-      setAiError(String(e))
+      setAiError(formatSandboxError(String(e), t))
     } finally {
       setSecretUpdating(false)
     }
@@ -373,7 +374,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
       setSecretExists(false)
       setAiMessage(t("aiSecretDeleted"))
     } catch (e) {
-      setAiError(String(e))
+      setAiError(formatSandboxError(String(e), t))
     } finally {
       setSecretUpdating(false)
     }
@@ -396,7 +397,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
         setAiError(result.message || t("aiConnectionFailed"))
       }
     } catch (e) {
-      setAiError(String(e))
+      setAiError(formatSandboxError(String(e), t))
     } finally {
       setConnectionTesting(false)
     }
@@ -419,7 +420,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
       })
       setAgentResult(result)
     } catch (e) {
-      setAgentError(String(e))
+      setAgentError(formatSandboxError(String(e), t))
     } finally {
       setAgentRunning(false)
     }
@@ -467,7 +468,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
         [skill.id]: formatSkillExecutionOutput(result, t("done")),
       }))
     } catch (e) {
-      setSkillErrorMap((prev) => ({ ...prev, [skill.id]: String(e) }))
+      setSkillErrorMap((prev) => ({ ...prev, [skill.id]: formatSandboxError(String(e), t) }))
     } finally {
       setSkillRunningId("")
     }
