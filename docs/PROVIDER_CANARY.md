@@ -43,6 +43,8 @@ This script runs the ignored tests under:
 and writes artifacts to:
 - `dist/provider-canary/`
 
+Tip: `./scripts/release-readiness.sh` will also run this smoke (and the Ollama daemon smoke) when configured; when not configured, they safely skip.
+
 ### Ollama daemon canary
 
 ```bash
@@ -69,4 +71,3 @@ See:
 Notes:
 - These jobs are intended for **self-hosted** Linux runners with explicit labels.
 - Secrets are provided via GitHub Actions secrets/vars and should be locked down.
-

@@ -38,6 +38,8 @@ run_check "Local CI gate (Rust + frontend + Playwright E2E)" ./scripts/ci-local.
 run_check "Tauri GUI check" cargo check -p cratebay-gui
 run_check "Tauri GUI tests" cargo test -p cratebay-gui
 run_check "AI runtime smoke (Ollama + MCP + sandbox when Docker is available)" ./scripts/ai-runtime-smoke.sh
+run_check "Controlled provider canary (OpenAI/Anthropic + CLI bridges; optional)" ./scripts/provider-canary-smoke.sh
+run_check "Ollama daemon canary (optional)" ./scripts/ollama-daemon-smoke.sh
 run_check "Docker runtime smoke (real CLI + daemon)"   bash -lc 'if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then ./scripts/docker-runtime-smoke.sh; else echo "SKIP: Docker daemon is not available on this machine."; fi'
 run_check "AI core scenario gate (>=95%)" \
   cargo test -p cratebay-gui ai_tests::assistant_core_scenarios_success_rate

@@ -40,7 +40,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 - `crates/cratebay-gui/src-tauri/tests/desktop_smoke.rs` plus `scripts/run-desktop-e2e-linux.sh` cover the real Tauri shell on Linux CI.
 - `scripts/docker-runtime-smoke.sh` validates the real Docker daemon through CrateBay CLI flows: image search, container run/start/stop/remove, env inspection, image pack, and volume lifecycle.
 - `scripts/ai-runtime-smoke.sh` validates AI Hub runtime paths: Ollama-compatible canary, MCP process lifecycle, and Docker-backed sandbox lifecycle.
-- `scripts/ci-local.sh` and `scripts/release-readiness.sh` now include these runtime smokes as release gates.
+- `scripts/ci-local.sh` and `scripts/release-readiness.sh` include these runtime smokes as release gates; `release-readiness` also runs controlled provider canaries when configured (and safely skips when not).
 - `scripts/provider-canary-smoke.sh`, `scripts/ollama-daemon-smoke.sh`, and `.github/workflows/provider-canary.yml` now wire controlled provider probes onto dedicated runners without persisting secrets into the app keychain.
 
 ## What Still Needs To Reach v1.0 Confidence

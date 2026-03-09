@@ -46,6 +46,8 @@ export CRATEBAY_CANARY_CLAUDE_TIMEOUT_SEC="60"
 产物输出到：
 - `dist/provider-canary/`
 
+提示：`./scripts/release-readiness.sh` 也会在你配置了凭据/二进制时自动跑这些 canary（以及 Ollama daemon smoke）；未配置时会安全跳过。
+
 ### Ollama daemon canary
 
 ```bash
@@ -72,4 +74,3 @@ export CRATEBAY_CANARY_OLLAMA_PULL_MODEL="tiny-model:latest"
 说明：
 - 该 workflow 预期运行在 **self-hosted Linux runner** 上，并使用明确的 labels 做隔离。
 - secrets/vars 通过 GitHub Actions 注入，务必限制权限与可见范围。
-
