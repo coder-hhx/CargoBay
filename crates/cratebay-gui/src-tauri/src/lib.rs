@@ -7060,6 +7060,56 @@ mod ai_runtime_tests {
         std::env::var(key).unwrap_or_else(|_| panic!("required env var missing: {}", key))
     }
 
+    #[cfg(unix)]
+    fn is_executable(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    fn is_executable(path: &Path) -> bool {
+        path.is_file()
+    }
+
+    fn resolve_executable_path(target: &str) -> Option<PathBuf> {
+        let trimmed = target.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let candidate = PathBuf::from(trimmed);
+        if candidate.is_file() && is_executable(&candidate) {
+            return Some(candidate);
+        }
+
+        if trimmed.contains('/') || trimmed.contains('\\') {
+            return None;
+        }
+
+        let path_env = std::env::var_os("PATH").unwrap_or_default();
+        for dir in std::env::split_paths(&path_env) {
+            let candidate = dir.join(trimmed);
+            if candidate.is_file() && is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+
+        None
+    }
+
+    fn normalize_canary_bin_env(env_key: &str) -> EnvGuard {
+        let raw = require_env(env_key);
+        let resolved = resolve_executable_path(&raw).unwrap_or_else(|| {
+            panic!(
+                "{} must be an executable path or available in PATH; got: {}",
+                env_key, raw
+            )
+        });
+        EnvGuard::set(env_key, resolved.to_string_lossy())
+    }
+
     fn configure_canary_dirs(tmp: &TempDir) -> (EnvGuard, EnvGuard, EnvGuard, EnvGuard) {
         let config_dir = tmp.path.join("config");
         let data_dir = tmp.path.join("data");
@@ -7542,7 +7592,7 @@ exec "$target" "$@"
     #[ignore = "requires real Codex CLI bridge"]
     async fn codex_cli_bridge_canary() {
         let _lock = env_lock();
-        let _target = require_env("CRATEBAY_CANARY_CODEX_BIN");
+        let _target = normalize_canary_bin_env("CRATEBAY_CANARY_CODEX_BIN");
         let tmp = TempDir::new("cratebay-codex-cli-canary");
         let (_config, _data, _log, _secret_dir) = configure_canary_dirs(&tmp);
         let bin_dir = tmp.path.join("bin");
@@ -7585,7 +7635,7 @@ exec "$target" "$@"
     #[ignore = "requires real Claude CLI bridge"]
     async fn claude_cli_bridge_canary() {
         let _lock = env_lock();
-        let _target = require_env("CRATEBAY_CANARY_CLAUDE_BIN");
+        let _target = normalize_canary_bin_env("CRATEBAY_CANARY_CLAUDE_BIN");
         let tmp = TempDir::new("cratebay-claude-cli-canary");
         let (_config, _data, _log, _secret_dir) = configure_canary_dirs(&tmp);
         let bin_dir = tmp.path.join("bin");
@@ -7630,6 +7680,19 @@ exec "$target" "$@"
         let _lock = env_lock();
         let tmp = TempDir::new("cratebay-ollama-daemon-canary");
         let (_config, _data, _log, _secret_dir) = configure_canary_dirs(&tmp);
+
+        let _ollama_bin = if std::env::var_os("CRATEBAY_CANARY_OLLAMA_BIN").is_some() {
+            Some(normalize_canary_bin_env("CRATEBAY_CANARY_OLLAMA_BIN"))
+        } else {
+            None
+        };
+        let _ollama_path = if _ollama_bin.is_some() {
+            let bin_dir = tmp.path.join("bin");
+            write_forwarder_binary(&bin_dir, "ollama", "CRATEBAY_CANARY_OLLAMA_BIN");
+            Some(EnvGuard::set("PATH", prepend_path(&bin_dir)))
+        } else {
+            None
+        };
 
         let _base = std::env::var("CRATEBAY_CANARY_OLLAMA_BASE_URL")
             .ok()

@@ -139,6 +139,12 @@ npx playwright test
 # Controlled provider canaries
 ./scripts/provider-canary-smoke.sh
 ./scripts/ollama-daemon-smoke.sh
+#
+# Detailed runbook
+# docs/PROVIDER_CANARY.md
+#
+# 中文版本
+# docs/PROVIDER_CANARY.zh.md
 
 # Full local gate
 ./scripts/ci-local.sh
