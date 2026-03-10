@@ -148,7 +148,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
     } finally {
       setSandboxLoading(false)
     }
-  }, [])
+  }, [sandboxErrorMessage])
 
   const refreshMcp = useCallback(async () => {
     setMcpLoading(true)
@@ -266,7 +266,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
     } finally {
       setSandboxRuntimeLoading(false)
     }
-  }, [])
+  }, [sandboxErrorMessage])
 
   useEffect(() => {
     if (!selectedSandboxTemplate) return

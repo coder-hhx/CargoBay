@@ -148,7 +148,7 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
 
     loadAiSettings()
     loadAgentPresets()
-  }, [])
+  }, [t])
 
   useEffect(() => {
     if (!activeProfile) {

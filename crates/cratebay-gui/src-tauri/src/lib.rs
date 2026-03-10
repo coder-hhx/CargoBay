@@ -4145,24 +4145,131 @@ fn mcp_export_client_config(client: String) -> Result<String, String> {
         return Err(format!("Unsupported MCP client '{}'", client));
     }
     let settings = load_ai_settings()?;
-    let mut servers = serde_json::Map::new();
-    for server in settings.mcp_servers.into_iter().filter(|item| item.enabled) {
-        let env_map = mcp_env_map(&server.env);
-        servers.insert(
-            server.id.clone(),
-            serde_json::json!({
-                "command": server.command,
-                "args": server.args,
-                "cwd": if server.working_dir.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(server.working_dir) },
-                "env": env_map,
-            }),
+    let mut enabled = settings
+        .mcp_servers
+        .into_iter()
+        .filter(|item| item.enabled)
+        .collect::<Vec<_>>();
+    enabled.sort_by(|a, b| a.id.cmp(&b.id));
+
+    match normalized_client.as_str() {
+        "claude" | "cursor" => {
+            let mut servers = serde_json::Map::new();
+            for server in enabled {
+                let mut entry = serde_json::Map::new();
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(server.command),
+                );
+                entry.insert(
+                    "args".to_string(),
+                    serde_json::to_value(server.args).map_err(|e| e.to_string())?,
+                );
+
+                let env_map = mcp_env_map(&server.env);
+                entry.insert(
+                    "env".to_string(),
+                    serde_json::to_value(env_map).map_err(|e| e.to_string())?,
+                );
+                if !server.working_dir.trim().is_empty() {
+                    entry.insert(
+                        "cwd".to_string(),
+                        serde_json::Value::String(server.working_dir.trim().to_string()),
+                    );
+                }
+
+                servers.insert(server.id, serde_json::Value::Object(entry));
+            }
+
+            serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": servers }))
+                .map_err(|e| format!("Failed to encode MCP export config: {}", e))
+        }
+        "codex" => export_codex_mcp_config(&enabled),
+        _ => unreachable!("client validated"),
+    }
+}
+
+fn export_codex_mcp_config(servers: &[McpServerEntry]) -> Result<String, String> {
+    if servers.is_empty() {
+        return Ok(
+            "# No enabled MCP servers in CrateBay.\n# Add one in AI Hub → MCP, then export again.\n"
+                .to_string(),
         );
     }
-    serde_json::to_string_pretty(&serde_json::json!({
-        "client": normalized_client,
-        "mcpServers": servers,
-    }))
-    .map_err(|e| format!("Failed to encode MCP export config: {}", e))
+
+    fn toml_quote(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('"');
+        for ch in value.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                _ => out.push(ch),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    fn toml_key_segment(key: &str) -> String {
+        let is_bare = !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if is_bare {
+            key.to_string()
+        } else {
+            toml_quote(key)
+        }
+    }
+
+    fn toml_string_array(values: &[String]) -> String {
+        let items = values
+            .iter()
+            .map(|value| toml_quote(value))
+            .collect::<Vec<_>>();
+        format!("[{}]", items.join(", "))
+    }
+
+    let mut out = String::new();
+    out.push_str("# Add to ~/.codex/config.toml\n");
+    out.push_str("# Docs: docs/MCP_SERVER.md\n\n");
+
+    for server in servers {
+        let id_key = toml_key_segment(&server.id);
+        out.push_str(&format!("[mcp_servers.{}]\n", id_key));
+        out.push_str(&format!("command = {}\n", toml_quote(&server.command)));
+        out.push_str(&format!("args = {}\n", toml_string_array(&server.args)));
+
+        if !server.working_dir.trim().is_empty() {
+            out.push_str(&format!(
+                "cwd = {}\n",
+                toml_quote(server.working_dir.trim())
+            ));
+        }
+
+        let env_map = mcp_env_map(&server.env);
+        if !env_map.is_empty() {
+            out.push('\n');
+            out.push_str(&format!("[mcp_servers.{}.env]\n", id_key));
+            let mut env_items = env_map.into_iter().collect::<Vec<_>>();
+            env_items.sort_by(|a, b| a.0.cmp(&b.0));
+            for (key, value) in env_items {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml_key_segment(&key),
+                    toml_quote(&value)
+                ));
+            }
+        }
+
+        out.push('\n');
+    }
+
+    Ok(out.trim_end().to_string() + "\n")
 }
 
 #[tauri::command]
@@ -7806,8 +7913,11 @@ exec "$target" "$@"
 
         let exported =
             mcp_export_client_config("codex".to_string()).expect("export codex MCP config");
-        assert!(exported.contains("\"local-smoke\""));
-        assert!(exported.contains("\"/bin/sh\""));
+        assert!(
+            exported.contains("[mcp_servers.local-smoke]")
+                || exported.contains("[mcp_servers.\"local-smoke\"]")
+        );
+        assert!(exported.contains("command = \"/bin/sh\""));
 
         let loaded = load_ai_settings().expect("reload AI settings");
         assert_eq!(loaded.mcp_servers.len(), 1);

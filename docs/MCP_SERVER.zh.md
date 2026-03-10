@@ -62,6 +62,15 @@ export CRATEBAY_MCP_WORKSPACE_ROOT="/你的/绝对/路径"
 
 ## 客户端配置说明
 
+### 从 CrateBay GUI 导出配置
+
+CrateBay 支持为常见 MCP 客户端生成可直接复制粘贴的配置片段。
+
+在桌面应用里打开 **AI Hub → MCP → 导出配置**，选择你的客户端并复制输出：
+
+- **Claude Desktop / Cursor**：JSON 配置片段（`mcpServers`）
+- **Codex**：写入 `~/.codex/config.toml` 的 TOML 片段
+
 ### Claude Desktop（macOS / Windows）
 
 编辑 Claude Desktop 配置并重启应用。
