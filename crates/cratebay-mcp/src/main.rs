@@ -279,42 +279,44 @@ fn detect_docker_socket() -> Option<String> {
 
 fn connect_docker() -> Result<Docker> {
     if std::env::var("DOCKER_HOST").is_ok() {
-        return Docker::connect_with_local_defaults()
-            .map_err(|e| anyhow!("Failed to connect via DOCKER_HOST: {}", e));
-    }
-
-    #[cfg(unix)]
-    {
-        if let Some(sock) = detect_docker_socket() {
-            return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
-                .map_err(|e| anyhow!("Failed to connect to Docker at {}: {}", sock, e));
-        }
-        return Err(anyhow!(
-            "No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
-        ));
-    }
-
-    #[cfg(windows)]
-    {
-        let candidates = [
-            r"//./pipe/docker_engine",
-            r"//./pipe/dockerDesktopLinuxEngine",
-        ];
-        for pipe in &candidates {
-            if let Ok(d) = Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION)
-            {
-                return Ok(d);
+        Docker::connect_with_local_defaults()
+            .map_err(|e| anyhow!("Failed to connect via DOCKER_HOST: {}", e))
+    } else {
+        #[cfg(unix)]
+        {
+            if let Some(sock) = detect_docker_socket() {
+                Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
+                    .map_err(|e| anyhow!("Failed to connect to Docker at {}: {}", sock, e))
+            } else {
+                Err(anyhow!(
+                    "No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                ))
             }
         }
-        return Err(anyhow!(
-            "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
-        ));
-    }
 
-    #[cfg(not(any(unix, windows)))]
-    {
-        Docker::connect_with_local_defaults()
-            .map_err(|e| anyhow!("Failed to connect to Docker: {}", e))
+        #[cfg(windows)]
+        {
+            let candidates = [
+                r"//./pipe/docker_engine",
+                r"//./pipe/dockerDesktopLinuxEngine",
+            ];
+            candidates
+                .iter()
+                .find_map(|pipe| {
+                    Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION).ok()
+                })
+                .ok_or_else(|| {
+                    anyhow!(
+                        "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                    )
+                })
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            Docker::connect_with_local_defaults()
+                .map_err(|e| anyhow!("Failed to connect to Docker: {}", e))
+        }
     }
 }
 
@@ -1071,20 +1073,18 @@ async fn sandbox_create(
     labels.insert(SANDBOX_LABEL_CPU_CORES.to_string(), cpu_cores.to_string());
     labels.insert(SANDBOX_LABEL_MEMORY_MB.to_string(), memory_mb.to_string());
 
-    let mut host_config = HostConfig::default();
-    host_config.nano_cpus = Some((cpu_cores as i64) * 1_000_000_000);
-    host_config.memory = Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024));
-
-    let root = ctx.workspace_root.clone();
-    if !args.mounts.is_empty() && root.is_none() {
+    let mounts = args.mounts;
+    if !mounts.is_empty() && ctx.workspace_root.is_none() {
         return Err(anyhow!(
             "mounts require CRATEBAY_MCP_WORKSPACE_ROOT (to safely constrain host paths)"
         ));
     }
 
-    if !args.mounts.is_empty() {
+    let binds = if mounts.is_empty() {
+        None
+    } else {
         let mut binds = Vec::new();
-        for mount in args.mounts {
+        for mount in mounts {
             let host = resolve_workspace_path_for_read(ctx, &mount.host_path)?;
             let container_path = mount.container_path.trim().to_string();
             cratebay_core::validation::validate_mount_path(&container_path)
@@ -1095,8 +1095,15 @@ async fn sandbox_create(
             let mode = if mount.read_only { "ro" } else { "rw" };
             binds.push(format!("{}:{}:{}", host_str, container_path, mode));
         }
-        host_config.binds = Some(binds);
-    }
+        Some(binds)
+    };
+
+    let host_config = HostConfig {
+        nano_cpus: Some((cpu_cores as i64) * 1_000_000_000),
+        memory: Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024)),
+        binds,
+        ..Default::default()
+    };
 
     let config = Config::<String> {
         image: Some(image.clone()),
