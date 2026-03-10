@@ -65,8 +65,14 @@ async fn connect_client() -> Client {
         env::var("TAURI_DRIVER_URL").unwrap_or_else(|_| "http://127.0.0.1:4444".to_string());
 
     let mut caps = fantoccini::wd::Capabilities::new();
-    caps.insert("browserName".into(), json!("tauri"));
-    caps.insert("app".into(), json!(app));
+    caps.insert(
+        "tauri:options".into(),
+        json!({
+            "application": app,
+            "args": [],
+        }),
+    );
+    caps.insert("browserName".into(), json!("webkitgtk"));
 
     let mut builder = ClientBuilder::rustls().expect("rustls client builder");
     builder.capabilities(caps);
