@@ -72,7 +72,7 @@ async fn connect_client() -> Client {
             "args": [],
         }),
     );
-    caps.insert("browserName".into(), json!("webkitgtk"));
+    caps.insert("browserName".into(), json!("wry"));
 
     let mut builder = ClientBuilder::rustls().expect("rustls client builder");
     builder.capabilities(caps);
