@@ -7259,6 +7259,7 @@ async fn set_window_theme(window: tauri::WebviewWindow, theme: String) -> Result
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod ai_runtime_tests {
     use super::{
         agent_cli_run, ai_profile, ai_test_connection, default_ai_settings, load_ai_settings,

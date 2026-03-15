@@ -414,8 +414,8 @@ mod tests {
         };
         let json = serde_json::to_string(&status).unwrap();
         let deserialized: K3sStatus = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.installed, true);
-        assert_eq!(deserialized.running, true);
+        assert!(deserialized.installed);
+        assert!(deserialized.running);
         assert_eq!(deserialized.version, "v1.31.4+k3s1");
         assert_eq!(deserialized.node_count, 3);
     }

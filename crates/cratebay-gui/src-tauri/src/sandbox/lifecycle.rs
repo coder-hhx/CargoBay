@@ -160,7 +160,7 @@ pub(crate) async fn sandbox_require_managed(
     let inspect = docker
         .inspect_container(id, None::<InspectContainerOptions>)
         .await
-        .map_err(|e| sandbox_docker_error("inspect sandbox", &id, &e))?;
+        .map_err(|e| sandbox_docker_error("inspect sandbox", id, &e))?;
 
     let labels = inspect
         .config
@@ -315,9 +315,11 @@ pub(crate) async fn sandbox_create(
     labels.insert(SANDBOX_LABEL_CPU_CORES.to_string(), cpu_cores.to_string());
     labels.insert(SANDBOX_LABEL_MEMORY_MB.to_string(), memory_mb.to_string());
 
-    let mut host_config = HostConfig::default();
-    host_config.nano_cpus = Some((cpu_cores as i64) * 1_000_000_000);
-    host_config.memory = Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024));
+    let host_config = HostConfig {
+        nano_cpus: Some((cpu_cores as i64) * 1_000_000_000),
+        memory: Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024)),
+        ..Default::default()
+    };
 
     let config = Config::<String> {
         image: Some(image.clone()),

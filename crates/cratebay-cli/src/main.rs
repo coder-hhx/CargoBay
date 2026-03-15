@@ -1142,7 +1142,6 @@ async fn handle_runtime(cmd: RuntimeCommands) {
         match cmd {
             RuntimeCommands::Env => {
                 println!("export DOCKER_HOST={}", socket_url);
-                return;
             }
             RuntimeCommands::Status => {
                 let image_id = cratebay_core::runtime::runtime_os_image_id();
@@ -1206,8 +1205,6 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                         }
                     }
                 }
-
-                return;
             }
             RuntimeCommands::Start => {
                 let hv = cratebay_core::create_hypervisor();
@@ -1245,8 +1242,6 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                         std::process::exit(1);
                     }
                 }
-
-                return;
             }
             RuntimeCommands::Stop => {
                 let hv = cratebay_core::create_hypervisor();

@@ -104,10 +104,9 @@ fn runtime_images_dir_from_root(root: &Path) -> Option<PathBuf> {
     if root
         .file_name()
         .is_some_and(|n| n == DEFAULT_RUNTIME_ASSETS_SUBDIR)
+        && root.is_dir()
     {
-        if root.is_dir() {
-            return Some(root.to_path_buf());
-        }
+        return Some(root.to_path_buf());
     }
 
     let dir = root.join(DEFAULT_RUNTIME_ASSETS_SUBDIR);
@@ -175,57 +174,6 @@ fn runtime_images_dir() -> Option<PathBuf> {
 
     let root = runtime_assets_root_dir_from_current_exe()?;
     runtime_images_dir_from_root(&root)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_assets_root_prefers_resources_next_to_exe_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe_dir = dir.path().join("bin");
-        std::fs::create_dir_all(&exe_dir).unwrap();
-        std::fs::create_dir_all(exe_dir.join("resources")).unwrap();
-
-        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
-        assert_eq!(root, exe_dir.join("resources"));
-    }
-
-    #[test]
-    fn runtime_assets_root_falls_back_to_parent_resources_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe_dir = dir.path().join("bin");
-        std::fs::create_dir_all(&exe_dir).unwrap();
-        std::fs::create_dir_all(dir.path().join("resources")).unwrap();
-
-        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
-        assert_eq!(root, dir.path().join("resources"));
-    }
-
-    #[test]
-    fn runtime_assets_root_falls_back_to_exe_dir_when_no_resources() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe_dir = dir.path().join("bin");
-        std::fs::create_dir_all(&exe_dir).unwrap();
-
-        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
-        assert_eq!(root, exe_dir);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn runtime_assets_root_detects_macos_app_bundle_resources() {
-        let dir = tempfile::tempdir().unwrap();
-        let contents_dir = dir.path().join("CrateBay.app").join("Contents");
-        let macos_dir = contents_dir.join("MacOS");
-        let resources_dir = contents_dir.join("Resources");
-        std::fs::create_dir_all(&macos_dir).unwrap();
-        std::fs::create_dir_all(&resources_dir).unwrap();
-
-        let root = runtime_assets_root_dir_from_exe_dir(&macos_dir).unwrap();
-        assert_eq!(root, resources_dir);
-    }
 }
 
 fn runtime_image_assets_dir(image_id: &str) -> Option<PathBuf> {
@@ -652,4 +600,55 @@ pub fn stop_runtime_wsl() -> Result<(), HypervisorError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_assets_root_prefers_resources_next_to_exe_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(exe_dir.join("resources")).unwrap();
+
+        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
+        assert_eq!(root, exe_dir.join("resources"));
+    }
+
+    #[test]
+    fn runtime_assets_root_falls_back_to_parent_resources_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(dir.path().join("resources")).unwrap();
+
+        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
+        assert_eq!(root, dir.path().join("resources"));
+    }
+
+    #[test]
+    fn runtime_assets_root_falls_back_to_exe_dir_when_no_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+
+        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
+        assert_eq!(root, exe_dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn runtime_assets_root_detects_macos_app_bundle_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let contents_dir = dir.path().join("CrateBay.app").join("Contents");
+        let macos_dir = contents_dir.join("MacOS");
+        let resources_dir = contents_dir.join("Resources");
+        std::fs::create_dir_all(&macos_dir).unwrap();
+        std::fs::create_dir_all(&resources_dir).unwrap();
+
+        let root = runtime_assets_root_dir_from_exe_dir(&macos_dir).unwrap();
+        assert_eq!(root, resources_dir);
+    }
 }

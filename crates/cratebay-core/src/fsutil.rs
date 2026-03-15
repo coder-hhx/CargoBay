@@ -11,10 +11,8 @@ pub fn copy_file_fast(src: &Path, dest: &Path) -> std::io::Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        if !dest.exists() {
-            if try_clonefile(src, dest).is_ok() {
-                return Ok(());
-            }
+        if !dest.exists() && try_clonefile(src, dest).is_ok() {
+            return Ok(());
         }
     }
 
