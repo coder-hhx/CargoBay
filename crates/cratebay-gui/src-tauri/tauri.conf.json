@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CrateBay",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "identifier": "com.cratebay.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -39,6 +39,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "runtime-images/README.md",
+      "runtime-images/*/*",
+      "runtime-wsl/README.md",
+      "runtime-wsl/*/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

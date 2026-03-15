@@ -240,7 +240,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
   )
 
   const runningSandboxCount = useMemo(
-    () => sandboxes.filter((s) => s.state === "running").length,
+    () => sandboxes.filter((s) => s.lifecycle_state === "running").length,
     [sandboxes]
   )
 
@@ -426,7 +426,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
   }
 
   const handleSandboxExec = async () => {
-    const targetId = sandboxInspect?.id ?? sandboxes.find((item) => item.state === "running")?.id
+    const targetId = sandboxInspect?.id ?? sandboxes.find((item) => item.lifecycle_state === "running")?.id
     if (!targetId) {
       setSandboxInspectError(t("sandboxExecTitle"))
       return
@@ -1083,10 +1083,23 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
                             {item.template_id}
                           </TableCell>
                           <TableCell>
-                            {item.state === "running" ? (
+                            {item.lifecycle_state === "running" ? (
                               <Badge className="rounded-full gap-2 px-3 py-1 text-[11px] font-medium border border-brand-green/20 bg-brand-green/10 text-brand-green">
                                 <span className="size-1.5 rounded-full bg-brand-green shadow-[0_0_10px_hsl(var(--brand-green)/0.6)]" />
                                 {t("running")}
+                              </Badge>
+                            ) : item.lifecycle_state === "creating" ? (
+                              <Badge
+                                variant="secondary"
+                                className="rounded-full gap-2 px-3 py-1 text-[11px] font-medium border border-border/60 bg-popover/40 text-muted-foreground"
+                              >
+                                <span className="size-1.5 rounded-full bg-primary" />
+                                {t("creating")}
+                              </Badge>
+                            ) : item.lifecycle_state === "expired" ? (
+                              <Badge className="rounded-full gap-2 px-3 py-1 text-[11px] font-medium border border-destructive/30 bg-destructive/10 text-destructive">
+                                <span className="size-1.5 rounded-full bg-destructive" />
+                                {t("sandboxExpired")}
                               </Badge>
                             ) : (
                               <Badge
@@ -1118,7 +1131,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
                               >
                                 {t("inspect")}
                               </Button>
-                              {item.state === "running" ? (
+                              {item.lifecycle_state === "running" ? (
                                 <Button
                                   type="button"
                                   variant="outline"

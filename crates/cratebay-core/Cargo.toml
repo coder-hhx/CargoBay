@@ -1,6 +1,6 @@
 [package]
 name = "cratebay-core"
-version = "0.8.0"
+version = "1.0.0"
 edition = "2021"
 description = "Core library: hypervisor abstraction, VM management"
 
@@ -9,6 +9,7 @@ default = []
 download = ["reqwest", "sha2", "futures-util"]
 
 [dependencies]
+base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 tonic = "0.12"

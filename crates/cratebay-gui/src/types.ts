@@ -184,6 +184,7 @@ export interface OpenSandboxStatusDto extends OpenSandboxConfigDto {
 }
 
 export interface AiSettings {
+  schema_version?: number
   profiles: AiProviderProfile[]
   active_profile_id: string
   skills: AiSkillDefinition[]
@@ -438,6 +439,7 @@ export interface SandboxInfoDto {
   image: string
   state: string
   status: string
+  lifecycle_state: string
   template_id: string
   owner: string
   created_at: string

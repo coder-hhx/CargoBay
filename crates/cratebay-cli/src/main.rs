@@ -1,19 +1,26 @@
+use bollard::auth::DockerCredentials;
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
     RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
-use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions, TagImageOptions};
+use bollard::image::{
+    CommitContainerOptions, CreateImageOptions, ImportImageOptions, ListImagesOptions,
+    PushImageOptions, RemoveImageOptions, TagImageOptions,
+};
 use bollard::service::HostConfig;
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
 use bollard::Docker;
 use clap::{CommandFactory, Parser, Subcommand};
 use futures_util::stream::TryStreamExt;
-use reqwest::header::WWW_AUTHENTICATE;
+use futures_util::StreamExt;
+use reqwest::header::{ACCEPT, WWW_AUTHENTICATE};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tonic::transport::Channel;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
 use cratebay_core::proto;
 use cratebay_core::proto::vm_service_client::VmServiceClient;
@@ -22,7 +29,7 @@ use cratebay_core::validation;
 #[derive(Parser)]
 #[command(
     name = "cratebay",
-    version = "0.1.0",
+    version,
     about = "Free, open-source desktop for containers and Linux VMs"
 )]
 struct Cli {
@@ -36,6 +43,11 @@ enum Commands {
     Vm {
         #[command(subcommand)]
         command: VmCommands,
+    },
+    /// Built-in Docker-compatible runtime (CrateBay Runtime)
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommands,
     },
     /// Docker container management
     Docker {
@@ -147,6 +159,18 @@ enum PortCommands {
         #[arg(long)]
         host: u16,
     },
+}
+
+#[derive(Subcommand)]
+enum RuntimeCommands {
+    /// Start CrateBay Runtime (downloads the runtime OS image if needed)
+    Start,
+    /// Stop CrateBay Runtime
+    Stop,
+    /// Show CrateBay Runtime status
+    Status,
+    /// Print environment variables for terminal usage (DOCKER_HOST)
+    Env,
 }
 
 #[derive(Subcommand)]
@@ -339,6 +363,9 @@ fn detect_docker_socket() -> Option<String> {
     {
         let home = std::env::var("HOME").unwrap_or_default();
         let candidates = [
+            cratebay_core::runtime::host_docker_socket_path()
+                .to_string_lossy()
+                .into_owned(),
             format!("{}/.colima/default/docker.sock", home),
             format!("{}/.orbstack/run/docker.sock", home),
             "/var/run/docker.sock".to_string(),
@@ -401,6 +428,11 @@ fn connect_docker() -> Result<Docker, String> {
                 return Ok(d);
             }
         }
+        if let Ok(host) = cratebay_core::runtime::ensure_runtime_wsl_running() {
+            std::env::set_var("DOCKER_HOST", &host);
+            return Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+                .map_err(|e| format!("Failed to connect to CrateBay Runtime at {}: {}", host, e));
+        }
         Err(
             "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
                 .into(),
@@ -420,6 +452,7 @@ async fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Vm { command } => handle_vm(command).await,
+        Commands::Runtime { command } => handle_runtime(command).await,
         Commands::Docker { command } => {
             if let Err(e) = handle_docker(command).await {
                 eprintln!("Error: {}", e);
@@ -1100,6 +1133,236 @@ async fn handle_port(
     }
 }
 
+async fn handle_runtime(cmd: RuntimeCommands) {
+    #[cfg(target_os = "macos")]
+    {
+        let socket_path = cratebay_core::runtime::host_docker_socket_path();
+        let socket_url = format!("unix://{}", socket_path.to_string_lossy());
+
+        match cmd {
+            RuntimeCommands::Env => {
+                println!("export DOCKER_HOST={}", socket_url);
+                return;
+            }
+            RuntimeCommands::Status => {
+                let image_id = cratebay_core::runtime::runtime_os_image_id();
+                println!(
+                    "Runtime image: {} ({})",
+                    image_id,
+                    if cratebay_core::runtime::runtime_image_ready() {
+                        "ready"
+                    } else {
+                        "not downloaded"
+                    }
+                );
+
+                let hv = cratebay_core::create_hypervisor();
+                let vms = match hv.list_vms() {
+                    Ok(vms) => vms,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                if let Some(vm) = vms
+                    .iter()
+                    .find(|vm| vm.name == cratebay_core::runtime::runtime_vm_name())
+                {
+                    println!("Runtime VM: {} ({:?})", vm.id, vm.state);
+                } else {
+                    println!("Runtime VM: not created");
+                }
+
+                println!(
+                    "Docker socket: {} ({})",
+                    socket_path.display(),
+                    if socket_path.exists() {
+                        "present"
+                    } else {
+                        "missing"
+                    }
+                );
+
+                if socket_path.exists() {
+                    match Docker::connect_with_socket(
+                        socket_path
+                            .to_str()
+                            .unwrap_or_default(),
+                        120,
+                        bollard::API_DEFAULT_VERSION,
+                    ) {
+                        Ok(docker) => match docker.version().await {
+                            Ok(v) => {
+                                println!(
+                                    "Docker engine: {}",
+                                    v.version.unwrap_or_else(|| "unknown".into())
+                                );
+                            }
+                            Err(e) => {
+                                println!("Docker engine: not responding ({})", e);
+                            }
+                        },
+                        Err(e) => {
+                            println!("Docker engine: failed to connect ({})", e);
+                        }
+                    }
+                }
+
+                return;
+            }
+            RuntimeCommands::Start => {
+                let hv = cratebay_core::create_hypervisor();
+                let vm_id = match cratebay_core::runtime::ensure_runtime_vm_running(hv.as_ref()) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                println!("CrateBay Runtime VM: {}", vm_id);
+                println!("Docker socket: {}", socket_path.display());
+                println!("DOCKER_HOST: {}", socket_url);
+
+                match Docker::connect_with_socket(
+                    socket_path
+                        .to_str()
+                        .unwrap_or_default(),
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                ) {
+                    Ok(docker) => match docker.version().await {
+                        Ok(v) => {
+                            println!(
+                                "Docker engine: {}",
+                                v.version.unwrap_or_else(|| "unknown".into())
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Docker engine check failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Docker engine connect failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+
+                return;
+            }
+            RuntimeCommands::Stop => {
+                let hv = cratebay_core::create_hypervisor();
+                let vms = match hv.list_vms() {
+                    Ok(vms) => vms,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                let Some(vm) = vms
+                    .into_iter()
+                    .find(|vm| vm.name == cratebay_core::runtime::runtime_vm_name())
+                else {
+                    println!("CrateBay Runtime VM not found.");
+                    return;
+                };
+
+                if let Err(e) = hv.stop_vm(&vm.id) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Stopped CrateBay Runtime VM {}", vm.id);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let host = match &cmd {
+            RuntimeCommands::Stop => String::new(),
+            _ => match cratebay_core::runtime::ensure_runtime_wsl_running() {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            },
+        };
+
+        match cmd {
+            RuntimeCommands::Env => {
+                println!("PowerShell: $env:DOCKER_HOST=\"{}\"", host);
+                println!("CMD      : set DOCKER_HOST={}", host);
+                return;
+            }
+            RuntimeCommands::Status => {
+                println!("Runtime: CrateBay Runtime (WSL2)");
+                println!("DOCKER_HOST: {}", host);
+
+                match Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION) {
+                    Ok(docker) => match docker.version().await {
+                        Ok(v) => {
+                            println!(
+                                "Docker engine: {}",
+                                v.version.unwrap_or_else(|| "unknown".into())
+                            );
+                        }
+                        Err(e) => {
+                            println!("Docker engine: not responding ({})", e);
+                        }
+                    },
+                    Err(e) => {
+                        println!("Docker engine: failed to connect ({})", e);
+                    }
+                }
+                return;
+            }
+            RuntimeCommands::Start => {
+                println!("Runtime: CrateBay Runtime (WSL2)");
+                println!("DOCKER_HOST: {}", host);
+
+                match Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION) {
+                    Ok(docker) => match docker.version().await {
+                        Ok(v) => {
+                            println!(
+                                "Docker engine: {}",
+                                v.version.unwrap_or_else(|| "unknown".into())
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Docker engine check failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Docker engine connect failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+
+                return;
+            }
+            RuntimeCommands::Stop => {
+                if let Err(e) = cratebay_core::runtime::stop_runtime_wsl() {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Stopped CrateBay Runtime (WSL2).");
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = cmd;
+        eprintln!("CrateBay Runtime is not implemented on this platform yet.");
+        std::process::exit(1);
+    }
+}
+
 async fn handle_mount(cmd: MountCommands) {
     let addr = grpc_addr();
     let mut client = connect_vm_service_autostart(&addr).await;
@@ -1331,6 +1594,19 @@ struct DockerHubRepo {
 }
 
 #[derive(Deserialize)]
+struct DockerHubV1SearchResponse {
+    results: Vec<DockerHubV1Repo>,
+}
+
+#[derive(Deserialize)]
+struct DockerHubV1Repo {
+    name: String,
+    description: Option<String>,
+    star_count: Option<u64>,
+    is_official: Option<bool>,
+}
+
+#[derive(Deserialize)]
 struct RegistryTagsResponse {
     tags: Option<Vec<String>>,
 }
@@ -1343,7 +1619,11 @@ struct RegistryTokenResponse {
 
 async fn handle_image(cmd: ImageCommands) -> Result<(), String> {
     let client = reqwest::Client::builder()
-        .user_agent("CrateBay/0.1.0 (+https://github.com/coder-hhx/CrateBay)")
+        .user_agent(concat!(
+            "CrateBay/",
+            env!("CARGO_PKG_VERSION"),
+            " (+https://github.com/coder-hhx/CrateBay)"
+        ))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -1558,29 +1838,127 @@ async fn handle_image(cmd: ImageCommands) -> Result<(), String> {
             Ok(())
         }
         ImageCommands::Load { path } => {
-            let out = run_docker_cli(&["load", "-i", &path])?;
-            if out.is_empty() {
+            let docker = connect_docker()?;
+            let archive = PathBuf::from(&path);
+            let file = tokio::fs::File::open(&archive)
+                .await
+                .map_err(|e| format!("Failed to open {}: {}", archive.display(), e))?;
+
+            let read_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let read_error_capture = read_error.clone();
+            let archive_display = archive.display().to_string();
+
+            let byte_stream = FramedRead::new(file, BytesCodec::new()).filter_map(move |result| {
+                let read_error_capture = read_error_capture.clone();
+                let archive_display = archive_display.clone();
+                async move {
+                    match result {
+                        Ok(buf) => Some(buf.freeze()),
+                        Err(e) => {
+                            let mut guard =
+                                read_error_capture.lock().unwrap_or_else(|e| e.into_inner());
+                            *guard = Some(format!(
+                                "Failed to read image archive {}: {}",
+                                archive_display, e
+                            ));
+                            None
+                        }
+                    }
+                }
+            });
+
+            let mut stream =
+                docker.import_image_stream(ImportImageOptions::default(), byte_stream, None);
+            let mut out = String::new();
+            while let Some(progress) = stream.try_next().await.map_err(|e| e.to_string())? {
+                if let Some(error) = progress.error {
+                    return Err(error);
+                }
+                if let Some(line) = progress.stream {
+                    out.push_str(&line);
+                    continue;
+                }
+                if let Some(status) = progress.status {
+                    if let Some(p) = progress.progress {
+                        out.push_str(&format!("{} {}\n", status, p));
+                    } else {
+                        out.push_str(&format!("{}\n", status));
+                    }
+                }
+            }
+
+            if let Some(e) = read_error.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                return Err(e);
+            }
+
+            let trimmed = out.trim();
+            if trimmed.is_empty() {
                 println!("Done.");
             } else {
-                println!("{}", out);
+                println!("{}", trimmed);
             }
             Ok(())
         }
         ImageCommands::Push { reference } => {
-            let out = run_docker_cli(&["push", &reference])?;
-            if out.is_empty() {
+            validation::validate_image_reference(&reference)?;
+            let docker = connect_docker()?;
+
+            let (repo, tag) = split_image_reference(&reference);
+            let auth = cratebay_core::docker_auth::resolve_registry_auth_for_image(&reference)?;
+            let creds = auth.map(|a| DockerCredentials {
+                username: a.username,
+                password: a.password,
+                serveraddress: Some(a.server_address),
+                identitytoken: a.identity_token,
+                ..Default::default()
+            });
+
+            let mut stream =
+                docker.push_image(&repo, Some(PushImageOptions { tag }), creds);
+            let mut out = String::new();
+            while let Some(progress) = stream.try_next().await.map_err(|e| e.to_string())? {
+                if let Some(status) = progress.status {
+                    if let Some(p) = progress.progress {
+                        out.push_str(&format!("{} {}\n", status, p));
+                    } else {
+                        out.push_str(&format!("{}\n", status));
+                    }
+                }
+            }
+
+            let trimmed = out.trim();
+            if trimmed.is_empty() {
                 println!("Done.");
             } else {
-                println!("{}", out);
+                println!("{}", trimmed);
             }
             Ok(())
         }
         ImageCommands::PackContainer { container, tag } => {
-            let out = run_docker_cli(&["commit", &container, &tag])?;
-            if out.is_empty() {
-                println!("Done.");
+            let docker = connect_docker()?;
+            let (repo, image_tag) = split_image_reference(&tag);
+            let opts = CommitContainerOptions {
+                container: container.as_str(),
+                repo: repo.as_str(),
+                tag: image_tag.as_str(),
+                pause: true,
+                ..Default::default()
+            };
+            let result = docker
+                .commit_container(opts, Config::<String>::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let id = result
+                .id
+                .clone()
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| result.expected.clone().filter(|v| !v.trim().is_empty()));
+            if let Some(id) = id {
+                println!("{}", id);
             } else {
-                println!("{}", out);
+                let json = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
+                println!("{}", json);
             }
             Ok(())
         }
@@ -1654,32 +2032,59 @@ async fn search_dockerhub(
     query: &str,
     limit: usize,
 ) -> Result<Vec<ImageSearchItem>, String> {
+    // Docker Hub search endpoints can be flaky / rate-limited / protected.
+    // Try the modern Hub API first, but fall back to the legacy endpoint used
+    // by `docker search` if we can't decode the response.
+    match search_dockerhub_v2(client, query, limit).await {
+        Ok(items) => Ok(items),
+        Err(v2_err) => match search_dockerhub_v1(client, query, limit).await {
+            Ok(items) => Ok(items),
+            Err(v1_err) => Err(format!(
+                "Docker Hub search failed.\n- v2: {}\n- v1: {}",
+                v2_err, v1_err
+            )),
+        },
+    }
+}
+
+async fn search_dockerhub_v2(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<ImageSearchItem>, String> {
     let mut url = reqwest::Url::parse("https://hub.docker.com/v2/search/repositories/")
         .map_err(|e| e.to_string())?;
     url.query_pairs_mut()
         .append_pair("query", query)
         .append_pair("page_size", &limit.to_string());
 
-    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("Docker Hub search failed: HTTP {}", resp.status()));
-    }
+    let resp = client
+        .get(url)
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let status = resp.status();
     let body = resp.bytes().await.map_err(|e| e.to_string())?;
+    let body_text = String::from_utf8_lossy(&body);
+    if !status.is_success() {
+        return Err(format!(
+            "v2 HTTP {} (body: {})",
+            status,
+            truncate_str(body_text.trim(), 200)
+        ));
+    }
+
     let data: DockerHubSearchResponse = serde_json::from_slice(&body).map_err(|e| {
-        let snippet = String::from_utf8_lossy(&body)
-            .trim()
-            .chars()
-            .take(400)
-            .collect::<String>();
+        let snippet = body_text.trim().chars().take(400).collect::<String>();
         format!(
             "Docker Hub search returned unexpected JSON (HTTP {}): {}. Body: {}",
             status, e, snippet
         )
     })?;
-    let mut out = Vec::new();
 
+    let mut out = Vec::new();
     for r in data.results.into_iter().take(limit) {
         let repo_name = r.name.trim().to_string();
         let name = if repo_name.contains('/') {
@@ -1703,7 +2108,56 @@ async fn search_dockerhub(
             official: r.is_official.unwrap_or(false),
         });
     }
+    Ok(out)
+}
 
+async fn search_dockerhub_v1(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<ImageSearchItem>, String> {
+    let mut url =
+        reqwest::Url::parse("https://index.docker.io/v1/search").map_err(|e| e.to_string())?;
+    url.query_pairs_mut()
+        .append_pair("q", query)
+        .append_pair("n", &limit.to_string());
+
+    let resp = client
+        .get(url)
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!(
+            "v1 HTTP {} (body: {})",
+            status,
+            truncate_str(body.trim(), 200)
+        ));
+    }
+
+    let data: DockerHubV1SearchResponse = serde_json::from_str(&body).map_err(|e| {
+        format!(
+            "v1 invalid JSON: {} (body: {})",
+            e,
+            truncate_str(body.trim(), 200)
+        )
+    })?;
+
+    let mut out = Vec::new();
+    for r in data.results.into_iter().take(limit) {
+        out.push(ImageSearchItem {
+            source: "dockerhub",
+            reference: r.name,
+            description: r.description.unwrap_or_default(),
+            stars: r.star_count,
+            pulls: None,
+            official: r.is_official.unwrap_or(false),
+        });
+    }
     Ok(out)
 }
 
@@ -2189,41 +2643,6 @@ fn split_image_reference(reference: &str) -> (String, String) {
     }
 
     (no_digest.to_string(), "latest".to_string())
-}
-
-fn docker_host_for_docker_cli() -> Option<String> {
-    if let Ok(v) = std::env::var("DOCKER_HOST") {
-        return Some(v);
-    }
-    #[cfg(unix)]
-    {
-        detect_docker_socket().map(|sock| format!("unix://{}", sock))
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
-}
-
-fn run_docker_cli(args: &[&str]) -> Result<String, String> {
-    let mut cmd = std::process::Command::new("docker");
-    cmd.args(args);
-    if let Some(host) = docker_host_for_docker_cli() {
-        cmd.env("DOCKER_HOST", host);
-    }
-
-    let out = cmd
-        .output()
-        .map_err(|e| format!("Failed to run docker: {}", e))?;
-    if !out.status.success() {
-        return Err(format!(
-            "docker {} failed (exit {}): {}",
-            args.join(" "),
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 async fn handle_volume(cmd: VolumeCommands) -> Result<(), String> {

@@ -247,7 +247,7 @@ export function Dashboard({
       setOllamaModels([])
     }
 
-    const runningSandboxes = sandboxResult.filter((item) => item.state === "running")
+    const runningSandboxes = sandboxResult.filter((item) => item.lifecycle_state === "running")
     if (runningSandboxes.length === 0) {
       setSandboxGpuSummary({
         activeSandboxCount: 0,
@@ -306,14 +306,14 @@ export function Dashboard({
       ? (totals.totalMemoryUsageMb / totals.totalMemoryLimitMb) * 100
       : 0
   const cpuClamped = Math.min(totals.totalCpuPercent, 100)
-  const runningSandboxCount = sandboxes.filter((item) => item.state === "running").length
+  const runningSandboxCount = sandboxes.filter((item) => item.lifecycle_state === "running").length
   const expiredSandboxCount = sandboxes.filter((item) => item.is_expired).length
   const runningMcpCount = mcpServers.filter((item) => item.running).length
   const providerProfileCount = aiSettings?.profiles.length ?? 0
   const cliAllowlistCount = aiSettings?.security_policy.cli_command_allowlist.length ?? 0
 
   const runningSandboxes = useMemo(
-    () => sandboxes.filter((item) => item.state === "running"),
+    () => sandboxes.filter((item) => item.lifecycle_state === "running"),
     [sandboxes]
   )
 

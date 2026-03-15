@@ -50,6 +50,8 @@ jobs:
 
       - name: Run release-readiness gate
         run: ./scripts/release-readiness.sh
+        env:
+          CRATEBAY_RELEASE_STAGE: ${{ startsWith(github.ref_name, 'v1.') && 'ga' || 'preview' }}
 
   # -----------------------------------------------------------
   # Build release binaries
@@ -176,6 +178,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fetch CrateBay Runtime assets (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
+          bash scripts/fetch-runtime-assets.sh "${arch}"
+
+      - name: Fetch CrateBay Runtime assets (Windows WSL2 only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
+          bash scripts/fetch-wsl-runtime-assets.sh "${arch}"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

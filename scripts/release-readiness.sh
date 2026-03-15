@@ -11,6 +11,15 @@ mkdir -p "$report_dir"
 touch "$report_file"
 
 status=0
+release_stage="${CRATEBAY_RELEASE_STAGE:-ga}"
+
+case "$release_stage" in
+  preview|ga) ;;
+  *)
+    echo "ERROR: Unsupported CRATEBAY_RELEASE_STAGE '$release_stage' (expected preview|ga)"
+    exit 2
+    ;;
+esac
 
 run_check() {
   local name="$1"
@@ -31,7 +40,7 @@ run_check() {
   fi
 }
 
-echo "CrateBay pre-v1 release-readiness gate"
+echo "CrateBay release-readiness gate (stage=$release_stage)"
 echo "Report: $report_file"
 
 run_check "Local CI gate (Rust + frontend + Playwright E2E)" ./scripts/ci-local.sh
@@ -47,10 +56,16 @@ run_check "AI UI smoke tests (Assistant + Settings + AiHub)" \
   bash -lc "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; if [[ -s \"$NVM_DIR/nvm.sh\" ]]; then . \"$NVM_DIR/nvm.sh\"; nvm use 24 >/dev/null 2>&1 || nvm use 22 >/dev/null 2>&1 || nvm use --lts >/dev/null 2>&1 || true; fi; cd \"$repo_root/crates/cratebay-gui\" && npm run test:unit -- src/pages/__tests__/Assistant.test.tsx src/pages/__tests__/Settings.ai.test.tsx src/pages/__tests__/AiHub.test.tsx"
 run_check "Private planning notice presence" \
   bash -c "rg -n 'maintained privately|私有环境维护|private' docs/RELEASE_SMOKE_CHECKLIST.md docs/ROADMAP.md docs/VISION.md docs/VISION.zh.md"
-run_check "Release wording guard (must not claim released)" \
-  bash -c "if rg -n '(已发布|正式发布|已上线|正式上线|is now live|now live|officially released|已经发布)' README.md README.zh.md docs/TUTORIAL.md docs/TUTORIAL.zh.md website/index.html website/script.js; then exit 1; fi"
-run_check "Coming-soon wording guard (required)" \
-  bash -c "rg -n '(coming soon|即将发布|即将提供)' README.md README.zh.md docs/TUTORIAL.md docs/TUTORIAL.zh.md website/index.html website/script.js"
+
+if [[ "$release_stage" == "preview" ]]; then
+  run_check "Release wording guard (must not claim released)" \
+    bash -c "if rg -n -i '(已发布|正式发布|已上线|正式上线|is\\s+now\\s+live|now\\s+live|officially\\s+released|already\\s+released|已经发布)' README.md README.zh.md docs/TUTORIAL.md docs/TUTORIAL.zh.md website/index.html website/script.js; then exit 1; fi"
+  run_check "Coming-soon wording guard (required)" \
+    bash -c "rg -n -i '(coming\\s+soon|即将发布|即将提供|即将推出)' README.md README.zh.md docs/TUTORIAL.md docs/TUTORIAL.zh.md website/index.html website/script.js"
+else
+  run_check "GA wording guard (must not claim coming soon)" \
+    bash -c "if rg -n -i '(coming\\s+soon|即将发布|即将提供|即将推出)' README.md README.zh.md docs/TUTORIAL.md docs/TUTORIAL.zh.md website/index.html website/script.js; then exit 1; fi"
+fi
 
 echo
 if [[ $status -eq 0 ]]; then

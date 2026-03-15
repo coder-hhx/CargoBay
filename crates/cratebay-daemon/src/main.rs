@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hv: Arc<dyn Hypervisor> = Arc::from(cratebay_core::create_hypervisor());
     let service = VmServiceImpl::new(hv);
 
-    info!("CrateBay daemon v0.1.0");
+    info!("CrateBay daemon v{}", env!("CARGO_PKG_VERSION"));
     info!("Config dir: {}", cratebay_core::config_dir().display());
     info!("Log dir: {}", cratebay_core::log_dir().display());
     info!("gRPC listening on {}", addr);

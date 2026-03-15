@@ -38,6 +38,7 @@ pub(crate) struct SandboxInfoDto {
     pub(crate) image: String,
     pub(crate) state: String,
     pub(crate) status: String,
+    pub(crate) lifecycle_state: String,
     pub(crate) template_id: String,
     pub(crate) owner: String,
     pub(crate) created_at: String,
@@ -101,6 +102,31 @@ struct SandboxMeta {
     ttl_hours: u32,
     cpu_cores: u32,
     memory_mb: u64,
+}
+
+fn sandbox_lifecycle_state(state: &str, status: &str, is_expired: bool) -> &'static str {
+    if is_expired {
+        return "expired";
+    }
+
+    let st = state.trim().to_ascii_lowercase();
+    if st == "running" {
+        return "running";
+    }
+    if matches!(st.as_str(), "created" | "restarting") {
+        return "creating";
+    }
+    if matches!(st.as_str(), "removing") {
+        return "deleting";
+    }
+    if matches!(st.as_str(), "paused" | "exited") {
+        return "stopped";
+    }
+    if st == "dead" || status.to_ascii_lowercase().contains("error") {
+        return "error";
+    }
+
+    "stopped"
 }
 
 fn sandbox_meta_from_labels(labels: &HashMap<String, String>) -> SandboxMeta {
@@ -189,13 +215,17 @@ pub(crate) async fn sandbox_list() -> Result<Vec<SandboxInfoDto>, String> {
                 .trim_start_matches('/')
                 .to_string();
             let meta = sandbox_meta_from_labels(&labels);
+            let state = item.state.unwrap_or_default();
+            let status = item.status.unwrap_or_default();
+            let is_expired = sandbox_is_expired(&meta.expires_at);
             Some(SandboxInfoDto {
                 id,
                 short_id,
                 name,
                 image: item.image.unwrap_or_default(),
-                state: item.state.unwrap_or_default(),
-                status: item.status.unwrap_or_default(),
+                state: state.clone(),
+                status: status.clone(),
+                lifecycle_state: sandbox_lifecycle_state(&state, &status, is_expired).to_string(),
                 template_id: meta.template_id,
                 owner: meta.owner,
                 created_at: meta.created_at.clone(),
@@ -203,7 +233,7 @@ pub(crate) async fn sandbox_list() -> Result<Vec<SandboxInfoDto>, String> {
                 ttl_hours: meta.ttl_hours,
                 cpu_cores: meta.cpu_cores,
                 memory_mb: meta.memory_mb,
-                is_expired: sandbox_is_expired(&meta.expires_at),
+                is_expired,
             })
         })
         .collect::<Vec<_>>();

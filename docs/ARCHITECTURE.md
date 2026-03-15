@@ -79,7 +79,7 @@ CrateBay/
 3. **Hypervisor trait 抽象** — 统一 VM 接口，各平台独立实现，新平台只需加一个 backend
 4. **Tauri v2 做 GUI** — 比 Electron 省 60-90% 内存，比原生 GUI 省 3 倍开发成本
 5. **K3s 按需下载** — 不捆绑在安装包内，减小分发体积
-6. **Docker socket 自动检测** — 支持 Colima / OrbStack / Docker Desktop / 原生 Docker，无需手动配置
+6. **Docker 运行时自动检测** — 支持 CrateBay Runtime（macOS 内置 socket / Windows WSL2）以及 Colima / OrbStack / Docker Desktop / 原生 Docker，无需手动配置
 
 ## Proto 定义 (仅 VM)
 

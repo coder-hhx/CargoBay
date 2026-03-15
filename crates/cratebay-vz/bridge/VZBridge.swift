@@ -6,6 +6,7 @@
 
 import Foundation
 import Virtualization
+import Darwin
 
 // MARK: - Internal bookkeeping
 
@@ -186,6 +187,9 @@ public func vz_create_and_start_vm(
     let networkDevice = VZVirtioNetworkDeviceConfiguration()
     networkDevice.attachment = VZNATNetworkDeviceAttachment()
     vzConfig.networkDevices = [networkDevice]
+
+    // --- Virtio socket (vsock) ---
+    vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
 
     // --- Memory balloon (allows guest to report unused memory) ---
     vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
@@ -483,6 +487,8 @@ public func vz_vm_state(_ handle: UnsafeMutableRawPointer?) -> Int32 {
             stateVal = 6
         case .stopping:
             stateVal = 7
+        case .saving, .restoring:
+            stateVal = -1
         @unknown default:
             stateVal = -1
         }
@@ -491,6 +497,76 @@ public func vz_vm_state(_ handle: UnsafeMutableRawPointer?) -> Int32 {
 
     let _ = semaphore.wait(timeout: .now() + 5.0)
     return stateVal
+}
+
+// MARK: - Virtio-vsock connect (host -> guest)
+
+@_cdecl("vz_vsock_connect")
+public func vz_vsock_connect(
+    _ handle: UnsafeMutableRawPointer?,
+    _ port: UInt32,
+    _ outError: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard let instance = lookupVM(handle) else {
+        setError(outError, "Invalid VM handle")
+        return -1
+    }
+
+    let semaphore = DispatchSemaphore(value: 0)
+    var outFd: Int32 = -1
+    var errMsg: String? = nil
+
+    instance.queue.async {
+        guard let socketDevice = instance.vm.socketDevices.compactMap({ $0 as? VZVirtioSocketDevice }).first else {
+            errMsg = "Virtio socket device not configured"
+            semaphore.signal()
+            return
+        }
+
+        socketDevice.connect(toPort: port) { result in
+            switch result {
+            case .success(let connection):
+                let fd = connection.fileDescriptor
+                if fd < 0 {
+                    errMsg = "vsock connect to port \(port) failed: connection closed"
+                    semaphore.signal()
+                    return
+                }
+
+                let dupFd = Darwin.dup(fd)
+                if dupFd < 0 {
+                    errMsg = "vsock connect to port \(port) failed: dup() error"
+                    semaphore.signal()
+                    return
+                }
+
+                outFd = Int32(dupFd)
+                connection.close()
+                semaphore.signal()
+            case .failure(let error):
+                errMsg = "vsock connect to port \(port) failed: \(error.localizedDescription)"
+                semaphore.signal()
+            }
+        }
+    }
+
+    let waitResult = semaphore.wait(timeout: .now() + 10.0)
+    if waitResult == .timedOut {
+        setError(outError, "vsock connect to port \(port) timed out")
+        return -1
+    }
+
+    if let msg = errMsg {
+        setError(outError, msg)
+        return -1
+    }
+
+    if outFd < 0 {
+        setError(outError, "vsock connect to port \(port) failed")
+        return -1
+    }
+
+    return outFd
 }
 
 // MARK: - Console read-back

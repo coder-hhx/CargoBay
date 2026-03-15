@@ -48,6 +48,8 @@ struct Args {
     rosetta: bool,
     /// Shared directories in "tag:host_path[:ro]" format.
     shared_dirs: Vec<String>,
+    /// Vsock forwards in "guest_port:unix_socket_path" format.
+    vsock_forwards: Vec<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -55,7 +57,8 @@ impl Args {
     fn usage() -> &'static str {
         "Usage:\n  cratebay-vz --kernel <path> --disk <path> --cpus <n> --memory-mb <n> \
          [--initrd <path>] [--cmdline <str>] [--ready-file <path>] \
-         [--console-log <path>] [--rosetta] [--share tag:host_path[:ro]]\n"
+         [--console-log <path>] [--rosetta] [--share tag:host_path[:ro]] \
+         [--vsock-forward guest_port:unix_socket_path]\n"
     }
 
     fn parse() -> Result<Self, String> {
@@ -69,6 +72,7 @@ impl Args {
         let mut console_log: Option<std::path::PathBuf> = None;
         let mut rosetta = false;
         let mut shared_dirs: Vec<String> = Vec::new();
+        let mut vsock_forwards: Vec<String> = Vec::new();
 
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -144,6 +148,12 @@ impl Args {
                             .ok_or_else(|| "--share requires a value".to_string())?,
                     );
                 }
+                "--vsock-forward" => {
+                    vsock_forwards.push(
+                        it.next()
+                            .ok_or_else(|| "--vsock-forward requires a value".to_string())?,
+                    );
+                }
                 other => return Err(format!("Unknown argument: {}", other)),
             }
         }
@@ -165,6 +175,7 @@ impl Args {
             console_log,
             rosetta,
             shared_dirs,
+            vsock_forwards,
         })
     }
 }
@@ -261,14 +272,7 @@ fn run(args: Args) -> Result<(), String> {
         shared_dirs,
     };
 
-    let handle = ffi::create_and_start_vm(&config)?;
-
-    // Signal readiness.
-    if let Some(path) = args.ready_file.as_ref() {
-        let _ = std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
-        std::fs::write(path, b"ready\n")
-            .map_err(|e| format!("Failed to write ready file: {}", e))?;
-    }
+    let handle = Arc::new(ffi::create_and_start_vm(&config)?);
 
     tracing::info!(
         "VZ VM started (pid {}, state {:?})",
@@ -295,6 +299,26 @@ fn run(args: Args) -> Result<(), String> {
         );
     }
 
+    // Set up vsock forwards (host unix socket -> guest vsock port).
+    let mut forward_threads = Vec::new();
+    for spec in &args.vsock_forwards {
+        let (guest_port, sock_path) = parse_vsock_forward(spec)?;
+        let thread = start_vsock_forward(
+            handle.clone(),
+            guest_port,
+            sock_path,
+            shutdown_requested.clone(),
+        )?;
+        forward_threads.push(thread);
+    }
+
+    // Signal readiness after forwards are bound.
+    if let Some(path) = args.ready_file.as_ref() {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
+        std::fs::write(path, b"ready\n")
+            .map_err(|e| format!("Failed to write ready file: {}", e))?;
+    }
+
     // Wait for SIGTERM or VM to stop on its own.
     loop {
         if shutdown_requested.load(Ordering::SeqCst) {
@@ -310,12 +334,156 @@ fn run(args: Args) -> Result<(), String> {
         let state = handle.state();
         if state == ffi::VzState::Stopped || state == ffi::VzState::Error {
             tracing::info!("VM entered state {:?}, exiting.", state);
+            shutdown_requested.store(true, Ordering::SeqCst);
             break;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
+    for thread in forward_threads {
+        let _ = thread.join();
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn parse_vsock_forward(spec: &str) -> Result<(u32, std::path::PathBuf), String> {
+    let first_colon = spec.find(':').ok_or_else(|| {
+        format!(
+            "Invalid --vsock-forward '{}', expected 'guest_port:unix_socket_path'",
+            spec
+        )
+    })?;
+    let port_str = &spec[..first_colon];
+    let path_str = &spec[first_colon + 1..];
+
+    let port = port_str
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid vsock guest_port '{}'", port_str))?;
+    if port == 0 {
+        return Err("vsock guest_port must be > 0".to_string());
+    }
+
+    let path = std::path::PathBuf::from(path_str);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        // macOS sockaddr_un.sun_path limit.
+        const MAX_SUN_PATH: usize = 103;
+        let bytes = path.as_os_str().as_bytes();
+        if bytes.len() > MAX_SUN_PATH {
+            return Err(format!(
+                "Unix socket path too long ({} > {}): {}",
+                bytes.len(),
+                MAX_SUN_PATH,
+                path.display()
+            ));
+        }
+    }
+
+    Ok((port, path))
+}
+
+#[cfg(target_os = "macos")]
+fn start_vsock_forward(
+    handle: std::sync::Arc<ffi::VmHandle>,
+    guest_port: u32,
+    sock_path: std::path::PathBuf,
+    shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    use std::io;
+    use std::os::unix::net::UnixListener;
+    use std::time::Duration;
+
+    if let Some(parent) = sock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create socket dir {}: {}", parent.display(), e))?;
+    }
+
+    // Remove any stale socket from previous runs.
+    let _ = std::fs::remove_file(&sock_path);
+
+    let listener = UnixListener::bind(&sock_path)
+        .map_err(|e| format!("Failed to bind unix socket {}: {}", sock_path.display(), e))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to set socket nonblocking: {}", e))?;
+
+    tracing::info!(
+        "vsock forward enabled: {} -> guest vsock:{}",
+        sock_path.display(),
+        guest_port
+    );
+
+    Ok(std::thread::spawn(move || {
+        while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _addr)) => {
+                    let handle = handle.clone();
+                    std::thread::spawn(move || {
+                        let vsock_fd = match handle.vsock_connect(guest_port) {
+                            Ok(fd) => fd,
+                            Err(e) => {
+                                tracing::warn!("vsock connect failed: {}", e);
+                                return;
+                            }
+                        };
+
+                        let vsock: std::fs::File = vsock_fd.into();
+                        if let Err(e) = proxy_bidirectional(stream, vsock) {
+                            tracing::debug!("vsock proxy ended: {}", e);
+                        }
+                    });
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "unix socket accept failed on {}: {}",
+                        sock_path.display(),
+                        e
+                    );
+                    break;
+                }
+            }
+        }
+
+        let _ = std::fs::remove_file(&sock_path);
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn proxy_bidirectional(
+    unix: std::os::unix::net::UnixStream,
+    vsock: std::fs::File,
+) -> Result<(), String> {
+    use std::net::Shutdown;
+    use std::os::fd::AsRawFd;
+
+    let mut unix_r = unix.try_clone().map_err(|e| format!("unix clone: {}", e))?;
+    let mut unix_w = unix;
+
+    let mut vsock_r = vsock
+        .try_clone()
+        .map_err(|e| format!("vsock clone: {}", e))?;
+    let mut vsock_w = vsock;
+
+    let t1 = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut unix_r, &mut vsock_w);
+        let _ = unsafe { libc::shutdown(vsock_w.as_raw_fd(), libc::SHUT_WR) };
+    });
+
+    let t2 = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut vsock_r, &mut unix_w);
+        let _ = unix_w.shutdown(Shutdown::Write);
+    });
+
+    let _ = t1.join();
+    let _ = t2.join();
     Ok(())
 }
 

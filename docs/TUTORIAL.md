@@ -53,11 +53,34 @@ nvm use 24
 
 ### Docker Runtime
 
-CrateBay works with any Docker-compatible runtime:
+CrateBay works with any Docker-compatible runtime.
 
-- **Colima** (recommended, free) — `brew install colima && colima start`
+**macOS (recommended): CrateBay Runtime (built-in)**
+
+- GUI: click **Start Runtime**
+- CLI:
+  - `cratebay runtime start`
+  - `cratebay runtime env` (prints `DOCKER_HOST=unix://...`)
+- The runtime image is bundled with the desktop app (no first-use download).
+- Socket path: `~/.cratebay/run/docker.sock`
+- Implementation details: `docs/RUNTIME.md`
+
+**Windows (recommended): CrateBay Runtime (built-in, WSL2)**
+
+- GUI: click **Start Runtime**
+- CLI:
+  - `cratebay runtime start`
+  - `cratebay runtime env` (prints `DOCKER_HOST=tcp://...`)
+- Requires WSL2 (CrateBay will prompt if it’s disabled; a reboot may be required).
+- Implementation details: `docs/RUNTIME.md`
+
+Other options (all platforms):
+
 - **Docker Desktop** — the standard Docker experience
-- **OrbStack** — CrateBay auto-detects its socket too
+- **OrbStack** (macOS) — CrateBay auto-detects its socket too
+- **Colima** (macOS, free) — `brew install colima && colima start`
+
+> Note: CrateBay talks to the Docker Engine API directly. You do **not** need to install `docker` or `docker compose` to use CrateBay itself. For terminal workflows you can either use `cratebay docker ...`, or point a Docker CLI at the socket via `DOCKER_HOST`.
 
 ---
 
@@ -104,7 +127,7 @@ Output: `crates/cratebay-gui/src-tauri/target/release/bundle/`
 - Windows: `.msi` and `.exe`
 - Linux: `.deb`, `.rpm`, `.AppImage`
 
-### Pre-GA Release Gate
+### Release-readiness Gate
 
 ```bash
 ./scripts/release-readiness.sh
@@ -153,7 +176,7 @@ The default landing page. Shows a card-based overview:
 | Card | Description |
 |------|-------------|
 | **Containers** | Total container count, click to jump to container management |
-| **Virtual Machines** | VM count (preview) |
+| **Virtual Machines** | VM count (experimental) |
 | **Images** | Image search result count (last search) |
 | **System** | Docker connection status |
 
@@ -205,7 +228,7 @@ Docker volume management:
 
 ### Virtual Machines (虚拟机)
 
-Available in current pre-v1 preview builds:
+Experimental (post-v1 track, not release-blocking):
 
 - **Create / start / stop / delete / list** with full lifecycle management
 - **CPU / Memory / Disk** parameters on creation
@@ -221,7 +244,7 @@ Available in current pre-v1 preview builds:
 
 ### Images (镜像)
 
-Also available in current pre-v1 preview builds:
+Images support:
 
 - **Search images** across **Docker Hub** and **Quay**
 - **List tags** for registry-domain references (e.g. `quay.io/org/image`, `ghcr.io/org/image`)
@@ -240,7 +263,7 @@ Settings are split into two tabs:
 
 Preferences are saved in `localStorage` (GUI) and AI settings are persisted to `ai-settings.json`.
 
-Current AI development surface (pre-v1):
+v1.0 AI surface:
 
 - **AI Hub** page with tabs: `Overview / Models / Sandboxes / MCP / Assistant`
 - **Models** tab includes Ollama runtime status, local model list, pull, delete, and storage visibility
@@ -264,7 +287,7 @@ cratebay status
 
 Output:
 ```
-CrateBay v0.x
+CrateBay v1.0.0
 Platform: macOS aarch64 (Virtualization.framework available)
 Rosetta x86_64: available
 Docker: connected (~/.colima/default/docker.sock)
@@ -429,12 +452,13 @@ CrateBay auto-detects Docker sockets in this order:
 
 | Priority | Path | Runtime |
 |----------|------|---------|
-| 1 | `~/.colima/default/docker.sock` | Colima |
-| 2 | `~/.orbstack/run/docker.sock` | OrbStack |
-| 3 | `/var/run/docker.sock` | Docker Desktop / native |
-| 4 | `~/.docker/run/docker.sock` | Docker Desktop (alt) |
+| 1 | `~/.cratebay/run/docker.sock` | CrateBay Runtime |
+| 2 | `~/.colima/default/docker.sock` | Colima |
+| 3 | `~/.orbstack/run/docker.sock` | OrbStack |
+| 4 | `/var/run/docker.sock` | Docker Desktop / native |
+| 5 | `~/.docker/run/docker.sock` | Docker Desktop (alt) |
 
-**Windows:** Also checks `//./pipe/docker_engine` and `//./pipe/dockerDesktopLinuxEngine`.
+**Windows:** Checks `//./pipe/docker_engine` and `//./pipe/dockerDesktopLinuxEngine` first; if missing, CrateBay will start its built-in WSL2 runtime and set `DOCKER_HOST=tcp://...` for the current process.
 
 ### Override
 

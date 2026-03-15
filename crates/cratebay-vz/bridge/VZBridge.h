@@ -110,6 +110,19 @@ bool vz_rosetta_available(void);
 int32_t vz_create_disk_image(const char *path, uint64_t size_bytes,
                               VZErrorString *out_error);
 
+// ---------------------------------------------------------------------------
+// Virtio-vsock utilities
+// ---------------------------------------------------------------------------
+
+/// Connect from host to a guest vsock port.
+///
+/// On success returns a *dup()*'d file descriptor for the connection. The
+/// caller owns the returned FD and must close it.
+///
+/// Returns -1 on failure (with *out_error set).
+int32_t vz_vsock_connect(VZVMHandle handle, uint32_t port,
+                          VZErrorString *out_error);
+
 #ifdef __cplusplus
 }
 #endif

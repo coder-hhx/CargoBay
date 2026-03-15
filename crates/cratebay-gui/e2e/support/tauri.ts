@@ -54,7 +54,7 @@ const mergeState = <T extends Record<string, unknown>>(base: T, patch?: Partial<
 }
 
 export const defaultMockState = (): MockState => ({
-  appVersion: "0.8.0",
+  appVersion: "1.0.0",
   containers: [
     {
       id: "ctr-web",
@@ -384,8 +384,8 @@ export const defaultMockState = (): MockState => ({
   ],
   updates: {
     available: false,
-    current_version: "0.8.0",
-    latest_version: "0.8.0",
+    current_version: "1.0.0",
+    latest_version: "1.0.0",
     release_notes: "",
     download_url: "https://github.com/coder-hhx/CrateBay/releases",
   },
@@ -887,6 +887,7 @@ export async function installTauriMock(page: Page, options: InstallOptions = {})
               image: String(request.image ?? template.image),
               state: "running",
               status: "running",
+              lifecycle_state: "running",
               template_id: String(template.id),
               owner: String(request.owner ?? "tester"),
               created_at: "2026-03-07T00:00:00Z",
@@ -922,6 +923,7 @@ export async function installTauriMock(page: Page, options: InstallOptions = {})
             if (sandbox) {
               sandbox.state = "running"
               sandbox.status = "running"
+              sandbox.lifecycle_state = "running"
             }
             return null
           }
@@ -930,6 +932,7 @@ export async function installTauriMock(page: Page, options: InstallOptions = {})
             if (sandbox) {
               sandbox.state = "stopped"
               sandbox.status = "stopped"
+              sandbox.lifecycle_state = "stopped"
             }
             return null
           }

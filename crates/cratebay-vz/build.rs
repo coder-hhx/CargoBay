@@ -59,6 +59,18 @@ fn macos_build() {
         .join("swift")
         .join("macosx");
 
+    // Ensure clang module cache is writable in sandboxed environments.
+    // `swiftc` uses clang to import the bridging header and will try to write
+    // its module cache under `$HOME/.cache/clang/ModuleCache` by default,
+    // which may not be writable. Override it to a directory under OUT_DIR.
+    let clang_module_cache_dir = out_dir.join("clang-module-cache");
+    std::fs::create_dir_all(&clang_module_cache_dir)
+        .expect("Failed to create clang module cache dir");
+    let clang_module_cache_arg = format!(
+        "-fmodules-cache-path={}",
+        clang_module_cache_dir.display()
+    );
+
     // Import the C header via a bridging header mechanism:
     // Swift can import C declarations directly using -import-objc-header.
     let status = Command::new(&swiftc_path)
@@ -77,6 +89,7 @@ fn macos_build() {
             "-O",
             "-whole-module-optimization",
         ])
+        .args(["-Xcc", &clang_module_cache_arg])
         .status()
         .expect("Failed to invoke swiftc");
 
@@ -113,6 +126,17 @@ fn macos_build() {
         // libswiftCore.dylib at runtime. Without this, `cargo test` fails on
         // Intel macOS with "Library not loaded: @rpath/libswiftCore.dylib".
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", swift_lib_path);
+    }
+
+    // On many machines (especially without full Command Line Tools),
+    // Swift stdlib dylibs are provided by the OS and are resolved via
+    // `/usr/lib/swift` (often from the dyld shared cache). Ensure we always
+    // include this stable rpath so unit tests and debug binaries can run.
+    let system_swift_lib = Path::new("/usr/lib/swift");
+    if system_swift_lib.exists() {
+        let system_swift_lib_path = system_swift_lib.display().to_string();
+        println!("cargo:rustc-link-search=native={}", system_swift_lib_path);
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", system_swift_lib_path);
     }
 
     // Also check the SDK's Swift library path.
