@@ -24,10 +24,10 @@
       summary2Title: "One-click local models",
       summary2Body:
         "Pull, manage, and run local models from the same desktop surface.",
-      summary3Label: "MCP + Tools",
-      summary3Title: "Connect tools fast",
+      summary3Label: "Built-in Runtime",
+      summary3Title: "Install-and-use",
       summary3Body:
-        "Run MCP servers and expose sandboxes as MCP tools for your AI clients.",
+        "A Docker-compatible runtime is built in on macOS (lightweight VM) and Windows (WSL2) — no Docker Desktop / Colima required.",
       sectionKicker: "Why It Hits",
       sectionTitle: "Local AI is hot. The workflow is still broken.",
       sectionBody:
@@ -72,10 +72,10 @@
       summary2Title: "一键本地模型",
       summary2Body:
         "在同一个桌面界面里拉取、管理和运行本地模型。",
-      summary3Label: "MCP + 工具",
-      summary3Title: "快速连通工具链",
+      summary3Label: "内置运行时",
+      summary3Title: "安装即用",
       summary3Body:
-        "把 MCP Server 与沙箱能力统一到一个桌面控制面，并对外提供 MCP tools。",
+        "macOS 内置轻量 VM、Windows 内置 WSL2 的 Docker 兼容运行时，无需再安装 Docker Desktop / Colima。",
       sectionKicker: "为什么它有吸引力",
       sectionTitle: "本地 AI 很火，但真正顺手的工作流还不多。",
       sectionBody:

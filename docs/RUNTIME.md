@@ -6,16 +6,25 @@ CrateBay Runtime is a lightweight Linux VM that provides a Docker-compatible API
 
 - Host VM runner: `cratebay-vz` (spawned by `cratebay-core`)
 - Host Docker socket: `~/.cratebay/run/docker.sock`
-- Transport: **virtio-vsock**
-  - Host side creates the Unix socket and, for each connection, opens a vsock connection to the guest.
-  - Guest side runs `cratebay-guest-agent`, listening on vsock port `6237`, proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
+- Transport: **TCP forwarding over the guest NAT IP**
+  - Host side creates the Unix socket and, for each connection, opens a TCP connection to the guest (NAT IP) on port `6237`.
+  - Guest side runs `cratebay-guest-agent`, listening on TCP `0.0.0.0:6237`, proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
+
+### macOS signing note (required on newer macOS)
+
+On newer macOS versions, Virtualization.framework requires the VM runner process to be code-signed with:
+
+- `com.apple.security.virtualization`
+- `com.apple.security.hypervisor`
+
+Local development builds can use ad-hoc signing (what `scripts/install-local-macos-app.sh` does).
 
 ### Guest requirements (runtime image)
 
 The runtime OS image must include and start on boot:
 
 - Docker Engine (`dockerd`) listening on **Unix socket** `/var/run/docker.sock`
-- `cratebay-guest-agent` listening on **vsock** port `6237`
+- `cratebay-guest-agent` listening on **TCP** `0.0.0.0:6237`
 
 CrateBay exposes the host-side socket via `docker`-compatible clients by setting:
 
@@ -61,7 +70,10 @@ Shipping an install-and-use runtime means the desktop app must include a Linux k
 ## Useful knobs
 
 - `CRATEBAY_DOCKER_SOCKET_PATH`: override host socket path
-- `CRATEBAY_DOCKER_VSOCK_PORT`: override guest vsock port (host + guest must match)
+- `CRATEBAY_DOCKER_PROXY_PORT`: override guest proxy port (host + guest must match)
+- `CRATEBAY_DOCKER_VSOCK_PORT`: legacy name for proxy port
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`: override which OS image id to use
+- `CRATEBAY_RUNTIME_ASSETS_DIR`: override the bundled runtime assets location
+- `CRATEBAY_VZ_RUNNER_PATH`: override the macOS VM runner binary path
 - `CRATEBAY_WSL_DOCKER_PORT`: override the WSL dockerd TCP port (Windows only)
 - `CRATEBAY_WSL_ROOTFS_TAR`: override the WSL rootfs tar path (Windows only)

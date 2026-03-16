@@ -1,0 +1,437 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+arch="${1:-}"
+if [[ -z "$arch" ]]; then
+  echo "Usage: $0 <aarch64|x86_64> [dest_dir]" >&2
+  exit 2
+fi
+
+dest_dir="${2:-crates/cratebay-gui/src-tauri/runtime-images}"
+alpine_version="${CRATEBAY_ALPINE_VERSION:-v3.19}"
+# Alpine netboot kernel+initramfs flavor: `virt` is optimized for VMs and
+# provides a working virtio console (console=hvc0) under Virtualization.framework.
+netboot_flavor="${CRATEBAY_ALPINE_NETBOOT_FLAVOR:-virt}" # virt|lts
+
+case "$arch" in
+  aarch64|x86_64) ;;
+  *)
+    echo "ERROR: invalid arch '$arch' (expected aarch64 or x86_64)" >&2
+    exit 2
+    ;;
+esac
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+target_triple=""
+case "$arch" in
+  x86_64) target_triple="x86_64-unknown-linux-musl" ;;
+  aarch64) target_triple="aarch64-unknown-linux-musl" ;;
+esac
+
+# Ensure Cargo-installed tools are on PATH.
+if [[ -d "$HOME/.cargo/bin" ]]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
+if [[ -f "$HOME/.cargo/env" ]]; then
+  # shellcheck source=/dev/null
+  source "$HOME/.cargo/env"
+fi
+if command -v rustup >/dev/null 2>&1; then
+  rustup_cargo="$(rustup which cargo 2>/dev/null || true)"
+  if [[ -n "$rustup_cargo" ]]; then
+    export PATH="$(dirname "$rustup_cargo"):$PATH"
+  fi
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required." >&2
+  exit 1
+fi
+
+if ! command -v cpio >/dev/null 2>&1; then
+  echo "ERROR: cpio is required." >&2
+  exit 1
+fi
+
+if ! command -v gzip >/dev/null 2>&1; then
+  echo "ERROR: gzip is required." >&2
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "ERROR: curl is required." >&2
+  exit 1
+fi
+
+if ! command -v unsquashfs >/dev/null 2>&1; then
+  echo "ERROR: unsquashfs (squashfs-tools) is required." >&2
+  echo "  Install: brew install squashfs" >&2
+  exit 1
+fi
+
+tmp_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+cargo_cmd=(cargo)
+if command -v rustup >/dev/null 2>&1; then
+  cargo_cmd=(rustup run stable cargo)
+fi
+
+echo "== Build CrateBay guest agent (${target_triple}) =="
+if command -v cargo-zigbuild >/dev/null 2>&1; then
+  "${cargo_cmd[@]}" zigbuild --release -p cratebay-guest-agent --target "$target_triple"
+else
+  echo "ERROR: cargo-zigbuild is required to cross-compile the guest agent." >&2
+  echo "  Install:" >&2
+  echo "    brew install zig" >&2
+  echo "    rustup target add ${target_triple}" >&2
+  echo "    cargo install cargo-zigbuild" >&2
+  exit 1
+fi
+
+guest_agent_bin="$repo_root/target/${target_triple}/release/cratebay-guest-agent"
+if [[ ! -f "$guest_agent_bin" ]]; then
+  echo "ERROR: guest agent binary not found: $guest_agent_bin" >&2
+  exit 1
+fi
+
+cp "$guest_agent_bin" "$tmp_dir/cratebay-guest-agent"
+chmod 0755 "$tmp_dir/cratebay-guest-agent"
+
+echo ""
+echo "== Download Alpine netboot kernel+initramfs (${alpine_version}, ${arch}, ${netboot_flavor}) =="
+release_base="https://dl-cdn.alpinelinux.org/alpine/${alpine_version}/releases/${arch}/netboot"
+curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/vmlinuz" "${release_base}/vmlinuz-${netboot_flavor}"
+curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/initramfs.gz" "${release_base}/initramfs-${netboot_flavor}"
+curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/modloop" "${release_base}/modloop-${netboot_flavor}"
+
+echo ""
+echo "== Unpack initramfs =="
+mkdir -p "$tmp_dir/initrd-root"
+gzip -dc "$tmp_dir/initramfs.gz" | (cd "$tmp_dir/initrd-root" && cpio -idm --quiet)
+
+echo ""
+echo "== Extract kernel modules from modloop (squashfs) =="
+rm -rf "$tmp_dir/modloop-root"
+unsquashfs -d "$tmp_dir/modloop-root" "$tmp_dir/modloop" >/dev/null
+
+mod_ver="$(ls "$tmp_dir/modloop-root/modules" 2>/dev/null | head -n 1 || true)"
+if [[ -z "$mod_ver" ]]; then
+  echo "ERROR: modloop did not contain modules/ directory." >&2
+  exit 1
+fi
+
+rm -rf "$tmp_dir/initrd-root/lib/modules/$mod_ver"
+mkdir -p "$tmp_dir/initrd-root/lib/modules"
+cp -a "$tmp_dir/modloop-root/modules/$mod_ver" "$tmp_dir/initrd-root/lib/modules/"
+
+echo ""
+echo "== Resolve Alpine package dependencies (docker-engine + e2fsprogs) =="
+python3 - "$alpine_version" "$arch" >"$tmp_dir/pkglist.txt" <<'PY'
+import io
+import os
+import re
+import sys
+import tarfile
+import urllib.request
+
+alpine_version = sys.argv[1]
+arch = sys.argv[2]
+
+repos = [
+    ("main", f"https://dl-cdn.alpinelinux.org/alpine/{alpine_version}/main/{arch}/APKINDEX.tar.gz"),
+    ("community", f"https://dl-cdn.alpinelinux.org/alpine/{alpine_version}/community/{arch}/APKINDEX.tar.gz"),
+]
+
+pkg = {}  # name -> {"repo":..., "ver":..., "deps":[...], "provides":[...]}
+provides = {}  # token -> set(names)
+
+def fetch_index(url: str) -> str:
+    with urllib.request.urlopen(url) as resp:
+        data = resp.read()
+    tf = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+    raw = tf.extractfile("APKINDEX").read()
+    return raw.decode("utf-8", "replace")
+
+for repo, url in repos:
+    idx = fetch_index(url)
+    for block in idx.strip().split("\n\n"):
+        m = re.search(r"^P:(.+)$", block, re.M)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        mv = re.search(r"^V:(.+)$", block, re.M)
+        if not mv:
+            continue
+        ver = mv.group(1).strip()
+        mdeps = re.search(r"^D:(.+)$", block, re.M)
+        deps = mdeps.group(1).split() if mdeps else []
+        mprov = re.search(r"^p:(.+)$", block, re.M)
+        prov = [t.split("=", 1)[0] for t in mprov.group(1).split()] if mprov else []
+
+        pkg[name] = {"repo": repo, "ver": ver, "deps": deps, "provides": prov}
+        for t in prov:
+            provides.setdefault(t, set()).add(name)
+
+def base_token(tok: str) -> str:
+    # Strip version constraints; keep prefixes like so:/cmd:/pc: intact.
+    for sep in (">=", "<=", ">", "<", "=", "~"):
+        if sep in tok:
+            return tok.split(sep, 1)[0]
+    return tok
+
+def resolve(tok: str):
+    t = base_token(tok)
+    if not t or t.startswith("/"):
+        return None
+    if t in pkg:
+        return t
+    if t in provides:
+        return sorted(provides[t])[0]
+    return None
+
+roots = ["docker-engine", "e2fsprogs", "containerd-ctr"]
+want = set()
+stack = list(roots)
+
+while stack:
+    name = stack.pop()
+    if name in want:
+        continue
+    if name not in pkg:
+        print(f"ERROR: package not found in index: {name}", file=sys.stderr)
+        sys.exit(2)
+    want.add(name)
+    for dep in pkg[name]["deps"]:
+        resolved = resolve(dep)
+        if resolved and resolved not in want:
+            stack.append(resolved)
+
+for name in sorted(want):
+    info = pkg[name]
+    print(f"{info['repo']}|{name}|{info['ver']}")
+PY
+
+echo "Resolved $(wc -l <"$tmp_dir/pkglist.txt" | tr -d ' ') packages."
+
+apk_dir="$tmp_dir/apks"
+mkdir -p "$apk_dir"
+
+download_apk() {
+  local repo="$1"
+  local name="$2"
+  local version="$3"
+  local out="$4"
+  local url="https://dl-cdn.alpinelinux.org/alpine/${alpine_version}/${repo}/${arch}/${name}-${version}.apk"
+  curl -fL --retry 3 --retry-delay 1 -o "$out" "$url"
+}
+
+echo ""
+echo "== Download + extract Alpine packages =="
+while IFS='|' read -r repo name version; do
+  apk="$apk_dir/${name}-${version}.apk"
+  echo "  - ${repo}/${name}-${version}.apk"
+  download_apk "$repo" "$name" "$version" "$apk"
+  tar -xf "$apk" -C "$tmp_dir/initrd-root"
+done <"$tmp_dir/pkglist.txt"
+
+echo ""
+echo "== Install cratebay-guest-agent into initramfs =="
+mkdir -p "$tmp_dir/initrd-root/usr/local/bin"
+cp "$tmp_dir/cratebay-guest-agent" "$tmp_dir/initrd-root/usr/local/bin/cratebay-guest-agent"
+chmod 0755 "$tmp_dir/initrd-root/usr/local/bin/cratebay-guest-agent"
+
+echo ""
+echo "== Write /init (runtime entrypoint) =="
+cat >"$tmp_dir/initrd-root/init" <<'SH'
+#!/bin/sh
+set -eu
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Alpine netboot initramfs ships BusyBox without applet symlinks (only /bin/sh).
+# Install symlinks so commands like `mkdir`/`mount` are available.
+if [ -x /bin/busybox ]; then
+  /bin/busybox --install -s /bin >/dev/null 2>&1 || true
+  /bin/busybox --install -s /sbin >/dev/null 2>&1 || true
+  /bin/busybox --install -s /usr/bin >/dev/null 2>&1 || true
+  /bin/busybox --install -s /usr/sbin >/dev/null 2>&1 || true
+fi
+
+# Provide a stable /etc/os-release so Docker can report OS info.
+mkdir -p /etc /usr/lib
+if [ ! -f /etc/os-release ]; then
+  cat >/etc/os-release <<'EOF'
+NAME="CrateBay Runtime"
+ID=cratebay
+VERSION_ID="0.1.0"
+PRETTY_NAME="CrateBay Runtime"
+EOF
+fi
+if [ ! -f /usr/lib/os-release ]; then
+  ln -sf /etc/os-release /usr/lib/os-release || true
+fi
+
+log() {
+  echo "[cratebay-runtime] $*"
+}
+
+log "booting..."
+
+mkdir -p /proc /sys /dev /run /tmp /var /var/lib /var/lib/docker /sys/fs/cgroup
+
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devtmpfs devtmpfs /dev || true
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts || true
+
+mount -t tmpfs tmpfs /run || true
+mkdir -p /run/lock
+ln -sf /run /var/run
+
+# Try loading common virtio/kernel modules (ok if built-in).
+#
+# NOTE: Docker networking requires bridge + veth + netfilter/NAT modules on
+# some kernels. We load a broad set best-effort to reduce "dockerd starts but
+# exits early" scenarios on minimal netboot kernels.
+for m in \
+  virtio_pci virtio_blk virtio_net virtio_vsock vmw_vsock_virtio_transport vsock \
+  overlay bridge veth br_netfilter \
+  nf_tables nf_tables_inet nf_tables_ipv4 nf_tables_ipv6 nf_tables_bridge nft_chain_nat nft_ct nft_counter \
+  nf_conntrack nf_nat ip_tables iptable_nat iptable_filter x_tables xt_conntrack \
+  tun; do
+  modprobe "$m" >/dev/null 2>&1 || true
+done
+
+# Basic vsock sanity signal (best-effort).
+if [ -e /proc/net/vsock ]; then
+  log "vsock: /proc/net/vsock present"
+else
+  log "WARN: vsock: /proc/net/vsock missing"
+fi
+
+# cgroup v2 setup (required for modern Docker).
+if mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null; then
+  if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    mkdir -p /sys/fs/cgroup/init
+    echo $$ > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+
+    ctrls="$(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null || true)"
+    enable=""
+    for c in $ctrls; do
+      enable="$enable +$c"
+    done
+    if [ -n "$enable" ]; then
+      echo "$enable" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+    fi
+  fi
+else
+  log "WARN: failed to mount cgroup2"
+fi
+
+# Networking via DHCP (virtio-net + NAT).
+ip link set lo up >/dev/null 2>&1 || true
+iface="$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | head -n 1 || true)"
+if [ -n "$iface" ]; then
+  ip link set "$iface" up >/dev/null 2>&1 || true
+  udhcpc -i "$iface" -q -t 5 -T 3 -n >/dev/null 2>&1 || true
+
+  # Surface the guest IP for the host-side runner (used for TCP forwarding).
+  ip4="$(ip -4 -o addr show dev "$iface" scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1 || true)"
+  if [ -n "$ip4" ]; then
+    log "guest_ip=${ip4}"
+  fi
+fi
+
+# Prepare persistent disk (/dev/vda) for Docker data-root.
+if [ -b /dev/vda ]; then
+  mkdir -p /var/lib/docker
+  if ! mount -t ext4 -o rw,noatime /dev/vda /var/lib/docker 2>/dev/null; then
+    log "formatting /dev/vda as ext4 (first boot)"
+    mkfs.ext4 -F /dev/vda >/dev/null 2>&1 || mkfs.ext4 /dev/vda >/dev/null 2>&1 || true
+    mount -t ext4 -o rw,noatime /dev/vda /var/lib/docker 2>/dev/null || true
+  fi
+fi
+
+# Ensure CA bundle exists (generated by the package's triggers on a real install).
+if command -v update-ca-certificates >/dev/null 2>&1; then
+  update-ca-certificates >/dev/null 2>&1 || true
+fi
+
+log "starting dockerd..."
+# Best-effort sysctls commonly required for Docker networking.
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
+sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
+
+dockerd \
+  --host=unix:///var/run/docker.sock \
+  --data-root=/var/lib/docker \
+  &
+dockerd_pid="$!"
+
+for _ in $(seq 1 400); do
+  [ -S /var/run/docker.sock ] && break
+  sleep 0.05
+done
+if ! kill -0 "$dockerd_pid" >/dev/null 2>&1; then
+  log "ERROR: dockerd exited early"
+elif [ ! -S /var/run/docker.sock ]; then
+  log "ERROR: dockerd did not create /var/run/docker.sock"
+fi
+
+# Best-effort: log containerd version for troubleshooting.
+if command -v ctr >/dev/null 2>&1; then
+  for sock in /var/run/docker/containerd/containerd.sock /run/containerd/containerd.sock; do
+    if [ -S "$sock" ]; then
+      log "ctr version (address=$sock)"
+      ctr --address "$sock" version 2>&1 | head -n 5 || true
+    fi
+  done
+fi
+
+if [ -x /usr/local/bin/cratebay-guest-agent ]; then
+  log "starting cratebay-guest-agent (tcp -> /var/run/docker.sock)"
+  /usr/local/bin/cratebay-guest-agent --tcp --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
+  agent_pid="$!"
+  sleep 0.2
+  if ! kill -0 "$agent_pid" >/dev/null 2>&1; then
+    log "WARN: cratebay-guest-agent exited early"
+  fi
+fi
+
+log "ready"
+while true; do
+  sleep 3600
+done
+SH
+chmod 0755 "$tmp_dir/initrd-root/init"
+
+echo ""
+echo "== Repack initramfs =="
+(
+  cd "$tmp_dir/initrd-root"
+  find . | cpio -o --format=newc --quiet | gzip -9
+) >"$tmp_dir/initramfs.out"
+
+echo ""
+echo "== Write bundled runtime assets =="
+image_id="cratebay-runtime-${arch}"
+image_dir="${dest_dir}/${image_id}"
+
+rm -rf "$image_dir"
+mkdir -p "$image_dir"
+
+mv "$tmp_dir/vmlinuz" "$image_dir/vmlinuz"
+mv "$tmp_dir/initramfs.out" "$image_dir/initramfs"
+
+# Optional: runtime lite is initramfs-first; rootfs.img is not required.
+rm -f "$image_dir/rootfs.img"
+
+echo "Runtime assets ready: ${image_dir}"

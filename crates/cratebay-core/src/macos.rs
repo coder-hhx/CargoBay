@@ -13,6 +13,8 @@ use crate::hypervisor::{
 use crate::images;
 use crate::store::{data_dir, next_id_for_prefix, VmStore};
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -186,6 +188,30 @@ impl MacOSHypervisor {
             }
         }
 
+        // Allow the CLI to find the runner binary shipped inside the desktop
+        // app bundle (when the CLI is installed separately).
+        if let Ok(home) = std::env::var("HOME") {
+            let candidates = [
+                PathBuf::from("/Applications/CrateBay.app/Contents/MacOS/cratebay-vz"),
+                PathBuf::from(home)
+                    .join("Applications")
+                    .join("CrateBay.app")
+                    .join("Contents")
+                    .join("MacOS")
+                    .join("cratebay-vz"),
+            ];
+            for candidate in candidates {
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        } else {
+            let candidate = PathBuf::from("/Applications/CrateBay.app/Contents/MacOS/cratebay-vz");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+
         PathBuf::from("cratebay-vz")
     }
 
@@ -229,6 +255,12 @@ impl MacOSHypervisor {
         let _ = std::fs::remove_file(&ready_file);
 
         let console_log = vm_console_log_path(&vm.id);
+        // The runtime VM uses TCP forwarding, which discovers the guest IP by scanning
+        // the serial console log for a `guest_ip=...` marker. Truncate the log on each
+        // start to avoid picking up stale IPs from previous boots.
+        if vm.name == crate::runtime::runtime_vm_name() {
+            let _ = std::fs::write(&console_log, b"");
+        }
         let console_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -258,7 +290,7 @@ impl MacOSHypervisor {
                 crate::runtime::docker_vsock_port(),
                 sock_path.to_string_lossy()
             );
-            cmd.arg("--vsock-forward").arg(spec);
+            cmd.arg("--tcp-forward").arg(spec);
         }
 
         if let Some(initrd) = initrd {
@@ -283,6 +315,19 @@ impl MacOSHypervisor {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::from(console_file))
             .stderr(Stdio::from(console_err));
+
+        // Detach the runner from the parent process/session. This ensures the
+        // VM keeps running even if the CLI process exits (e.g. after `cratebay
+        // runtime start`) and avoids process-group signals from terminating
+        // the runner unexpectedly.
+        //
+        // The runner's lifecycle is managed via pid files under the VM dir.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
 
         let child = cmd.spawn()?;
         Ok(child)

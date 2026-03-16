@@ -152,6 +152,77 @@ fn detect_docker_socket() -> Option<String> {
     None
 }
 
+#[cfg(unix)]
+fn docker_ping_unix_socket(sock: &Path) -> Result<(), String> {
+    use std::io::{Read, Write as _};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let mut stream =
+        UnixStream::connect(sock).map_err(|e| format!("connect {}: {}", sock.display(), e))?;
+
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+
+    stream
+        .write_all(b"GET /_ping HTTP/1.1\r\nHost: docker\r\n\r\n")
+        .map_err(|e| format!("write _ping: {}", e))?;
+
+    // Read more than a single packet: Docker may include enough headers that
+    // the "OK" body isn't within the first 256 bytes.
+    let mut out: Vec<u8> = Vec::with_capacity(2048);
+    let mut buf = [0u8; 1024];
+    for _ in 0..16 {
+        let n = match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => return Err(format!("read _ping: {}", e)),
+        };
+        out.extend_from_slice(&buf[..n]);
+        if out.len() >= 8192 {
+            break;
+        }
+        // Fast-path: once we see the end of headers, we likely have the body.
+        if out.windows(4).any(|w| w == b"\r\n\r\n") && out.windows(2).any(|w| w == b"OK") {
+            break;
+        }
+    }
+    let resp = String::from_utf8_lossy(&out);
+
+    if resp.contains("200 OK") && resp.contains("\r\n\r\nOK") {
+        return Ok(());
+    }
+
+    // Some daemons respond with just OK without headers (proxy layers).
+    if resp.contains("\r\n\r\nOK") || resp.trim_end() == "OK" {
+        return Ok(());
+    }
+
+    Err(format!(
+        "unexpected /_ping response: {}",
+        resp.lines().next().unwrap_or_default()
+    ))
+}
+
+#[cfg(unix)]
+fn wait_for_docker_socket_ready(sock: &Path, timeout: Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if sock.exists() {
+            if docker_ping_unix_socket(sock).is_ok() {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(format!(
+        "Docker socket was not ready within {}s: {}",
+        timeout.as_secs(),
+        sock.display()
+    ))
+}
+
 fn connect_docker() -> Result<Docker, String> {
     // Check DOCKER_HOST env first
     if std::env::var("DOCKER_HOST").is_ok() {
@@ -162,9 +233,49 @@ fn connect_docker() -> Result<Docker, String> {
     #[cfg(unix)]
     {
         if let Some(sock) = detect_docker_socket() {
-            return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
-                .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
+            let sock_path = Path::new(&sock);
+            if docker_ping_unix_socket(sock_path).is_ok() {
+                return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
+                    .map_err(|e| format!("Failed to connect to Docker at {}: {}", sock, e));
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(format!(
+                    "Docker socket exists but Docker engine is not responding: {}",
+                    sock
+                ));
+            }
         }
+
+        // No runtime detected; start the built-in runtime on macOS.
+        #[cfg(target_os = "macos")]
+        {
+            let hv = cratebay_core::create_hypervisor();
+            let vm_id = cratebay_core::runtime::ensure_runtime_vm_running(hv.as_ref())
+                .map_err(|e| format!("Failed to start CrateBay Runtime VM: {}", e))?;
+
+            let cratebay_sock = cratebay_core::runtime::host_docker_socket_path().to_path_buf();
+            wait_for_docker_socket_ready(&cratebay_sock, Duration::from_secs(45))
+                .map_err(|e| format!("{} (vm: {}, sock: {})", e, vm_id, cratebay_sock.display()))?;
+
+            return Docker::connect_with_socket(
+                cratebay_sock
+                    .to_str()
+                    .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
+                120,
+                bollard::API_DEFAULT_VERSION,
+            )
+            .map_err(|e| {
+                format!(
+                    "Failed to connect to CrateBay Runtime at {}: {}",
+                    cratebay_sock.display(),
+                    e
+                )
+            });
+        }
+
+        #[cfg(not(target_os = "macos"))]
         Err("No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime.".into())
     }
 

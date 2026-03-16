@@ -3,6 +3,9 @@ use std::sync::OnceLock;
 
 use crate::hypervisor::{Hypervisor, HypervisorError, VmConfig, VmState};
 
+#[cfg(feature = "download")]
+use sha2::{Digest, Sha256};
+
 pub const DEFAULT_RUNTIME_VM_NAME: &str = "cratebay-runtime";
 pub const DEFAULT_DOCKER_VSOCK_PORT: u32 = 6237;
 pub const DEFAULT_RUNTIME_ASSETS_SUBDIR: &str = "runtime-images";
@@ -29,15 +32,29 @@ pub fn runtime_vm_name() -> &'static str {
         .as_str()
 }
 
-/// The guest vsock port for the Docker API proxy inside the runtime VM.
+/// The guest port for the Docker API proxy inside the runtime VM.
+///
+/// Historically this was a virtio-vsock port on macOS. Newer runtimes may use
+/// TCP forwarding on the guest NAT IP instead, but the port number is shared.
 pub fn docker_vsock_port() -> u32 {
     *DOCKER_VSOCK_PORT.get_or_init(|| {
-        std::env::var("CRATEBAY_DOCKER_VSOCK_PORT")
+        std::env::var("CRATEBAY_DOCKER_PROXY_PORT")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .filter(|v| *v > 0)
+            .or_else(|| {
+                std::env::var("CRATEBAY_DOCKER_VSOCK_PORT")
+                    .ok()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .filter(|v| *v > 0)
+            })
             .unwrap_or(DEFAULT_DOCKER_VSOCK_PORT)
     })
+}
+
+/// Preferred name for the runtime guest proxy port.
+pub fn docker_proxy_port() -> u32 {
+    docker_vsock_port()
 }
 
 /// The host-side Docker-compatible Unix socket path exposed by CrateBay.
@@ -162,27 +179,177 @@ fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
     Some(exe_dir.to_path_buf())
 }
 
-fn runtime_images_dir() -> Option<PathBuf> {
+fn runtime_images_dir_candidates() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+
     if let Ok(dir) = std::env::var("CRATEBAY_RUNTIME_ASSETS_DIR") {
         if !dir.trim().is_empty() {
-            let root = PathBuf::from(dir);
-            if let Some(d) = runtime_images_dir_from_root(&root) {
-                return Some(d);
+            roots.push(PathBuf::from(dir));
+        }
+    }
+
+    if let Some(root) = runtime_assets_root_dir_from_current_exe() {
+        roots.push(root);
+    }
+
+    // If the CLI is installed separately from the desktop app, the runtime assets
+    // won't be located next to the CLI executable. On macOS, fall back to the
+    // default app bundle locations so `cratebay runtime start` works out-of-box
+    // after installing the desktop app.
+    #[cfg(target_os = "macos")]
+    {
+        roots.push(PathBuf::from(
+            "/Applications/CrateBay.app/Contents/Resources",
+        ));
+        if let Some(home) = std::env::var_os("HOME") {
+            roots.push(
+                PathBuf::from(home)
+                    .join("Applications")
+                    .join("CrateBay.app")
+                    .join("Contents")
+                    .join("Resources"),
+            );
+        }
+    }
+
+    roots
+        .into_iter()
+        .filter_map(|root| runtime_images_dir_from_root(&root))
+        .collect()
+}
+
+fn runtime_image_assets_dir(image_id: &str) -> Option<PathBuf> {
+    let mut placeholder_dir: Option<PathBuf> = None;
+
+    for images_dir in runtime_images_dir_candidates() {
+        let dir = images_dir.join(image_id);
+        if !dir.is_dir() {
+            continue;
+        }
+
+        match bundled_assets_ready(image_id, &dir) {
+            Some(true) => return Some(dir),
+            Some(false) => {
+                if placeholder_dir.is_none() {
+                    placeholder_dir = Some(dir);
+                }
+            }
+            None => {}
+        }
+    }
+
+    placeholder_dir
+}
+
+fn required_image_files(image_id: &str) -> Vec<&'static str> {
+    let rootfs_required = crate::images::find_image(image_id)
+        .map(|e| !e.rootfs_url.trim().is_empty())
+        .unwrap_or(true);
+
+    let mut files = vec!["vmlinuz", "initramfs"];
+    if rootfs_required {
+        files.push("rootfs.img");
+    }
+    files
+}
+
+fn bundled_assets_ready(image_id: &str, image_dir: &Path) -> Option<bool> {
+    let mut has_placeholder = false;
+    for name in required_image_files(image_id) {
+        let path = image_dir.join(name);
+        if !path.is_file() {
+            return None;
+        }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() < 1024 {
+                if let Ok(txt) = std::fs::read_to_string(&path) {
+                    if txt.contains("PLACEHOLDER") {
+                        has_placeholder = true;
+                    }
+                }
             }
         }
     }
 
-    let root = runtime_assets_root_dir_from_current_exe()?;
-    runtime_images_dir_from_root(&root)
+    Some(!has_placeholder)
 }
 
-fn runtime_image_assets_dir(image_id: &str) -> Option<PathBuf> {
-    let dir = runtime_images_dir()?.join(image_id);
-    if dir.is_dir() {
-        Some(dir)
-    } else {
-        None
+fn image_files_present(image_id: &str) -> bool {
+    let dest_dir = crate::images::image_dir(image_id);
+    required_image_files(image_id)
+        .into_iter()
+        .all(|name| dest_dir.join(name).is_file())
+}
+
+#[cfg(feature = "download")]
+fn sha256_file(path: &Path) -> Result<[u8; 32], HypervisorError> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 128 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
     }
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    Ok(out)
+}
+
+fn file_matches(src: &Path, dest: &Path) -> Result<bool, HypervisorError> {
+    if !src.is_file() || !dest.is_file() {
+        return Ok(false);
+    }
+    let src_meta = std::fs::metadata(src)?;
+    let dest_meta = std::fs::metadata(dest)?;
+    if src_meta.len() != dest_meta.len() {
+        return Ok(false);
+    }
+
+    #[cfg(feature = "download")]
+    {
+        return Ok(sha256_file(src)? == sha256_file(dest)?);
+    }
+
+    #[cfg(not(feature = "download"))]
+    Ok(true)
+}
+
+fn runtime_image_installed_up_to_date(image_id: &str) -> Result<bool, HypervisorError> {
+    if !crate::images::is_image_ready(image_id) {
+        return Ok(false);
+    }
+    if !image_files_present(image_id) {
+        return Ok(false);
+    }
+
+    // If we can't locate bundled assets (for example, only the CLI is installed),
+    // keep the already-installed runtime image usable.
+    let Some(assets_dir) = runtime_image_assets_dir(image_id) else {
+        return Ok(true);
+    };
+
+    let dest_dir = crate::images::image_dir(image_id);
+    for name in required_image_files(image_id) {
+        let src = assets_dir.join(name);
+        let dest = dest_dir.join(name);
+
+        // If bundled assets are missing, we can't compare; don't fail an existing install.
+        if !src.is_file() {
+            continue;
+        }
+
+        if !file_matches(&src, &dest)? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 fn write_ready_metadata(image_id: &str) -> Result<(), HypervisorError> {
@@ -248,7 +415,7 @@ fn install_runtime_image_from_assets(image_id: &str) -> Result<(), HypervisorErr
 }
 
 fn ensure_runtime_image_ready(image_id: &str) -> Result<(), HypervisorError> {
-    if crate::images::is_image_ready(image_id) {
+    if runtime_image_installed_up_to_date(image_id)? {
         return Ok(());
     }
 
@@ -265,12 +432,15 @@ fn ensure_runtime_image_ready(image_id: &str) -> Result<(), HypervisorError> {
 /// Ensure the built-in runtime VM exists, returning its VM id.
 pub fn ensure_runtime_vm_exists(hv: &dyn Hypervisor) -> Result<String, HypervisorError> {
     let name = runtime_vm_name();
+    let default_image_id = runtime_os_image_id().to_string();
     let vms = hv.list_vms()?;
     if let Some(vm) = vms.into_iter().find(|vm| vm.name == name) {
+        let image_id = vm.os_image.as_deref().unwrap_or(default_image_id.as_str());
+        ensure_runtime_image_ready(image_id)?;
         return Ok(vm.id);
     }
 
-    let image_id = runtime_os_image_id();
+    let image_id = default_image_id.as_str();
     if crate::images::find_image(image_id).is_none() {
         return Err(HypervisorError::CreateFailed(format!(
             "Runtime OS image '{}' not found in catalog",

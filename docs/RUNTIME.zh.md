@@ -6,16 +6,25 @@ CrateBay Runtime 是一台轻量 Linux VM，为 CrateBay（GUI + CLI）提供 Do
 
 - Host VM runner：`cratebay-vz`（由 `cratebay-core` 拉起）
 - Host Docker socket：`~/.cratebay/run/docker.sock`
-- 传输：**virtio-vsock**
-  - Host 侧创建 Unix socket；每次有连接时，Host 会打开到 guest 的 vsock 连接并做转发。
-  - Guest 侧运行 `cratebay-guest-agent`，监听 vsock 端口 `6237`，把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
+- 传输：**通过 guest NAT IP 的 TCP 转发**
+  - Host 侧创建 Unix socket；每次有连接时，Host 会连接到 guest（NAT IP）的 TCP `6237` 并做转发。
+  - Guest 侧运行 `cratebay-guest-agent`，监听 TCP `0.0.0.0:6237`，把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
+
+### macOS 签名说明（较新 macOS 版本必需）
+
+在较新的 macOS 版本上，Virtualization.framework 要求 VM runner 进程具备以下 entitlement：
+
+- `com.apple.security.virtualization`
+- `com.apple.security.hypervisor`
+
+本地开发可使用 ad-hoc 签名（`scripts/install-local-macos-app.sh` 已自动处理）。
 
 ### Guest 侧要求（运行时镜像）
 
 运行时 OS 镜像需要包含并在开机时启动：
 
 - Docker Engine（`dockerd`），通过 **Unix socket** `/var/run/docker.sock` 对外提供服务
-- `cratebay-guest-agent`，监听 **vsock** 端口 `6237`
+- `cratebay-guest-agent`，监听 **TCP** `0.0.0.0:6237`
 
 要让 `docker` 兼容客户端连接到 CrateBay Runtime，可设置：
 
@@ -59,7 +68,10 @@ CrateBay 将 Runtime VM 视作一种 OS image：
 ## 常用配置项
 
 - `CRATEBAY_DOCKER_SOCKET_PATH`：覆盖 host socket 路径
-- `CRATEBAY_DOCKER_VSOCK_PORT`：覆盖 guest vsock 端口（host + guest 必须一致）
+- `CRATEBAY_DOCKER_PROXY_PORT`：覆盖 guest proxy 端口（host + guest 必须一致）
+- `CRATEBAY_DOCKER_VSOCK_PORT`：proxy 端口的历史名称（兼容）
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`：覆盖使用哪个 OS image id
+- `CRATEBAY_RUNTIME_ASSETS_DIR`：覆盖内置 runtime 资产目录
+- `CRATEBAY_VZ_RUNNER_PATH`：覆盖 macOS VM runner 二进制路径
 - `CRATEBAY_WSL_DOCKER_PORT`：覆盖 WSL 内 dockerd 的 TCP 端口（仅 Windows）
 - `CRATEBAY_WSL_ROOTFS_TAR`：覆盖 WSL rootfs tar 的路径（仅 Windows）

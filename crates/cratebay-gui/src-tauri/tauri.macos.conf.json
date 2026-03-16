@@ -1,4 +1,7 @@
 {
+  "bundle": {
+    "externalBin": ["bin/cratebay-vz"]
+  },
   "app": {
     "windows": [
       {

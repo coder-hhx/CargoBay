@@ -44,3 +44,6 @@ assets/node_modules/
 # Local automation artifacts
 /.playwright-cli/
 /output/
+
+# Tauri sidecar binaries (generated per-target)
+crates/cratebay-gui/src-tauri/bin/

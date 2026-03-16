@@ -50,6 +50,8 @@ struct Args {
     shared_dirs: Vec<String>,
     /// Vsock forwards in "guest_port:unix_socket_path" format.
     vsock_forwards: Vec<String>,
+    /// TCP forwards in "guest_port:unix_socket_path" format (connects to guest IP).
+    tcp_forwards: Vec<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -58,7 +60,8 @@ impl Args {
         "Usage:\n  cratebay-vz --kernel <path> --disk <path> --cpus <n> --memory-mb <n> \
          [--initrd <path>] [--cmdline <str>] [--ready-file <path>] \
          [--console-log <path>] [--rosetta] [--share tag:host_path[:ro]] \
-         [--vsock-forward guest_port:unix_socket_path]\n"
+         [--vsock-forward guest_port:unix_socket_path] \
+         [--tcp-forward guest_port:unix_socket_path]\n"
     }
 
     fn parse() -> Result<Self, String> {
@@ -73,6 +76,7 @@ impl Args {
         let mut rosetta = false;
         let mut shared_dirs: Vec<String> = Vec::new();
         let mut vsock_forwards: Vec<String> = Vec::new();
+        let mut tcp_forwards: Vec<String> = Vec::new();
 
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -154,6 +158,12 @@ impl Args {
                             .ok_or_else(|| "--vsock-forward requires a value".to_string())?,
                     );
                 }
+                "--tcp-forward" => {
+                    tcp_forwards.push(
+                        it.next()
+                            .ok_or_else(|| "--tcp-forward requires a value".to_string())?,
+                    );
+                }
                 other => return Err(format!("Unknown argument: {}", other)),
             }
         }
@@ -176,6 +186,7 @@ impl Args {
             rosetta,
             shared_dirs,
             vsock_forwards,
+            tcp_forwards,
         })
     }
 }
@@ -310,6 +321,22 @@ fn run(args: Args) -> Result<(), String> {
             shutdown_requested.clone(),
         )?;
         forward_threads.push(thread);
+    }
+
+    // Set up TCP forwards (host unix socket -> guest tcp:port). This mode does
+    // not require guest AF_VSOCK support; it discovers the guest IP from the
+    // serial console log (printed by the runtime init).
+    if !args.tcp_forwards.is_empty() {
+        let console_log = args.console_log.as_ref().ok_or_else(|| {
+            "--tcp-forward requires --console-log for guest IP discovery".to_string()
+        })?;
+        let guest_ip = wait_for_guest_ip(console_log, std::time::Duration::from_secs(30))?;
+        for spec in &args.tcp_forwards {
+            let (guest_port, sock_path) = parse_vsock_forward(spec)?;
+            let thread =
+                start_tcp_forward(guest_ip, guest_port, sock_path, shutdown_requested.clone())?;
+            forward_threads.push(thread);
+        }
     }
 
     // Signal readiness after forwards are bound.
@@ -457,6 +484,113 @@ fn start_vsock_forward(
 }
 
 #[cfg(target_os = "macos")]
+fn wait_for_guest_ip(
+    console_log_path: &std::path::Path,
+    timeout: std::time::Duration,
+) -> Result<std::net::IpAddr, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if let Ok(content) = std::fs::read_to_string(console_log_path) {
+            for line in content.lines().rev().take(300) {
+                let Some(idx) = line.find("guest_ip=") else {
+                    continue;
+                };
+                let rest = &line[idx + "guest_ip=".len()..];
+                let token = rest.split_whitespace().next().unwrap_or_default();
+                if let Ok(ip) = token.parse::<std::net::IpAddr>() {
+                    tracing::info!("guest ip discovered: {}", ip);
+                    return Ok(ip);
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    Err(format!(
+        "Timed out waiting for guest_ip=... in console log: {}",
+        console_log_path.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn start_tcp_forward(
+    guest_ip: std::net::IpAddr,
+    guest_port: u32,
+    sock_path: std::path::PathBuf,
+    shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    use std::io;
+    use std::net::TcpStream;
+    use std::os::unix::net::UnixListener;
+    use std::time::Duration;
+
+    let port = u16::try_from(guest_port)
+        .map_err(|_| format!("Invalid tcp guest_port '{}': must be 1-65535", guest_port))?;
+    if port == 0 {
+        return Err("tcp guest_port must be > 0".to_string());
+    }
+
+    if let Some(parent) = sock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create socket dir {}: {}", parent.display(), e))?;
+    }
+
+    // Remove any stale socket from previous runs.
+    let _ = std::fs::remove_file(&sock_path);
+
+    let listener = UnixListener::bind(&sock_path)
+        .map_err(|e| format!("Failed to bind unix socket {}: {}", sock_path.display(), e))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to set socket nonblocking: {}", e))?;
+
+    tracing::info!(
+        "tcp forward enabled: {} -> guest tcp:{}:{}",
+        sock_path.display(),
+        guest_ip,
+        port
+    );
+
+    Ok(std::thread::spawn(move || {
+        while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _addr)) => {
+                    std::thread::spawn(move || {
+                        let tcp = match TcpStream::connect_timeout(
+                            &std::net::SocketAddr::new(guest_ip, port),
+                            Duration::from_secs(2),
+                        ) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("tcp connect failed ({}:{}): {}", guest_ip, port, e);
+                                return;
+                            }
+                        };
+                        let _ = tcp.set_nodelay(true);
+                        if let Err(e) = proxy_bidirectional_tcp(stream, tcp) {
+                            tracing::debug!("tcp proxy ended: {}", e);
+                        }
+                    });
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "unix socket accept failed on {}: {}",
+                        sock_path.display(),
+                        e
+                    );
+                    break;
+                }
+            }
+        }
+
+        let _ = std::fs::remove_file(&sock_path);
+    }))
+}
+
+#[cfg(target_os = "macos")]
 fn proxy_bidirectional(
     unix: std::os::unix::net::UnixStream,
     vsock: std::fs::File,
@@ -479,6 +613,34 @@ fn proxy_bidirectional(
 
     let t2 = std::thread::spawn(move || {
         let _ = std::io::copy(&mut vsock_r, &mut unix_w);
+        let _ = unix_w.shutdown(Shutdown::Write);
+    });
+
+    let _ = t1.join();
+    let _ = t2.join();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn proxy_bidirectional_tcp(
+    unix: std::os::unix::net::UnixStream,
+    tcp: std::net::TcpStream,
+) -> Result<(), String> {
+    use std::net::Shutdown;
+
+    let mut unix_r = unix.try_clone().map_err(|e| format!("unix clone: {}", e))?;
+    let mut unix_w = unix;
+
+    let mut tcp_r = tcp.try_clone().map_err(|e| format!("tcp clone: {}", e))?;
+    let mut tcp_w = tcp;
+
+    let t1 = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut unix_r, &mut tcp_w);
+        let _ = tcp_w.shutdown(Shutdown::Write);
+    });
+
+    let t2 = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut tcp_r, &mut unix_w);
         let _ = unix_w.shutdown(Shutdown::Write);
     });
 
