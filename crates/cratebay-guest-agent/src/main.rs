@@ -16,7 +16,6 @@ fn main() {
 fn run() -> Result<(), String> {
     use std::os::fd::FromRawFd;
     use std::os::unix::net::UnixStream;
-    use std::path::PathBuf;
 
     let cfg = Config::from_env_and_args()?;
 
@@ -69,6 +68,8 @@ struct Config {
 #[cfg(target_os = "linux")]
 impl Config {
     fn from_env_and_args() -> Result<Self, String> {
+        use std::path::PathBuf;
+
         let mut port: u32 = std::env::var("CRATEBAY_DOCKER_VSOCK_PORT")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
