@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -74,30 +75,48 @@ export function AppModal({
         <DialogHeader className="sm:text-left">
           <div className="flex items-start justify-between gap-3">
             <DialogTitle className="text-base">{modalTitle}</DialogTitle>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-xs"
-              onClick={() => onCopy(copyValue)}
-              title={t("copy")}
-              disabled={!copyValue}
-              className={cn(iconStroke, "[&_svg]:size-3")}
-            >
-              {I.copy}
-            </Button>
+            {modalKind !== "package" && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-xs"
+                onClick={() => onCopy(copyValue)}
+                title={t("copy")}
+                disabled={!copyValue}
+                className={cn(iconStroke, "[&_svg]:size-3")}
+              >
+                {I.copy}
+              </Button>
+            )}
           </div>
         </DialogHeader>
+        <DialogDescription className="sr-only">{modalBody || modalTitle}</DialogDescription>
 
         {modalKind === "package" ? (
           <div className="space-y-4">
             <div className="text-sm text-muted-foreground whitespace-pre-wrap">{modalBody}</div>
             <div className="space-y-2">
               <div className="text-xs font-medium text-muted-foreground">{t("newImageTag")}</div>
-              <Input
-                value={packageTag}
-                onChange={(e) => setPackageTag(e.target.value)}
-                placeholder="myimage:latest"
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  className="flex-1"
+                  value={packageTag}
+                  onChange={(e) => setPackageTag(e.target.value)}
+                  placeholder="myimage:latest"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-xs"
+                  onClick={() => onCopy(packageTag)}
+                  title={t("copy")}
+                  aria-label={t("copy")}
+                  disabled={!packageTag.trim()}
+                  className={cn("shrink-0", iconStroke, "[&_svg]:size-3")}
+                >
+                  {I.copy}
+                </Button>
+              </div>
             </div>
           </div>
         ) : (

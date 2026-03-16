@@ -19,7 +19,7 @@ export function useModal(t: (key: string) => string) {
 
   const openPackageModal = useCallback((container: string, defaultTag: string) => {
     setModalKind("package")
-    setModalTitle(t("packageImage"))
+    setModalTitle(t("packageImageTitle"))
     setPackageContainer(container)
     setPackageTag(defaultTag)
     setModalBody(`${t("packageFromContainer")}\n${t("container")}: ${container}`)

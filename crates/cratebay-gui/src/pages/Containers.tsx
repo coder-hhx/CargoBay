@@ -1158,16 +1158,16 @@ export function Containers({
             </div>
           )}
 
-          <div className="rounded-md border bg-muted/20">
-            <ScrollArea className="h-[420px]">
+          <div className="min-w-0 rounded-md border bg-muted/20">
+            <ScrollArea className="h-[420px] w-full">
               {logLoading && !logContent ? (
                 <div className="flex items-center justify-center gap-2 py-20 text-muted-foreground">
                   <Spinner />
                   {t("loading")}
                 </div>
               ) : logContent ? (
-                <div className="p-3">
-                  <pre className="text-xs font-mono whitespace-pre break-words">{logContent}</pre>
+                <div className="max-w-full p-3">
+                  <pre className="max-w-full text-xs font-mono whitespace-pre-wrap break-all">{logContent}</pre>
                   <div ref={logEndRef} />
                 </div>
               ) : (

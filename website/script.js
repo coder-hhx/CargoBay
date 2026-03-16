@@ -49,7 +49,7 @@
       statusBody:
         "For builders who want a better local AI workflow.",
       statusNote:
-        "Preview builds are evolving quickly. Follow the GitHub repo for updates and release notes.",
+        "Preview builds are evolving quickly with ongoing desktop UI, dialog layout, and interaction polish. Follow the GitHub repo for updates and release notes.",
       footer: "CrateBay · <span data-year></span>",
     },
     zh: {
@@ -99,7 +99,7 @@
       statusBody:
         "如果你想要更好的本地 AI 工作流，就关注 CrateBay。",
       statusNote:
-        "预览版本迭代很快；更新与发布说明请关注 GitHub 仓库。",
+        "预览版本迭代很快，桌面界面、弹窗布局与交互体验也在持续打磨；更新与发布说明请关注 GitHub 仓库。",
       footer: "CrateBay · <span data-year></span>",
     },
   }

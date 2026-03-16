@@ -104,11 +104,6 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
     return value.length <= 24 ? value.toUpperCase() : value
   }
 
-  const settingsTabLabel = useMemo(
-    () => (settingsTab === "ai" ? t("settingsAiTab") : t("settingsGeneralTab")),
-    [settingsTab, t]
-  )
-
   const activeProfile = useMemo(() => {
     if (!aiSettings) return null
     return (
@@ -476,39 +471,36 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
 
   return (
     <div className="space-y-6">
-      <Card className="py-0">
-        <CardContent className="py-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className={`size-10 shrink-0 rounded-lg bg-primary/10 text-primary flex items-center justify-center [&_svg]:size-5 ${iconStroke}`}>
-              {I.settings}
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-foreground">{t("settings")}</div>
-                <Badge variant="secondary" className="rounded-md px-1.5 py-0 text-[11px]">
-                  {settingsTabLabel}
-                </Badge>
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("settingsGeneralTab")} · {t("settingsAiTab")}
-              </div>
-            </div>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className={`size-9 shrink-0 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary flex items-center justify-center [&_svg]:size-5 ${iconStroke} ring-1 ring-primary/10`}>
+            {I.settings}
           </div>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground leading-tight">{t("settings")}</h2>
+            <p className="text-[11px] text-muted-foreground/70 leading-tight mt-0.5">v{APP_VERSION}</p>
+          </div>
+        </div>
 
-          <Tabs value={settingsTab} onValueChange={(v) => setSettingsTab(v as SettingsTab)}>
-            <TabsList className="w-fit">
-              <TabsTrigger value="general" className="flex-none gap-2 px-3">
-                <span className={`[&_svg]:size-4 ${iconStroke}`}>{I.settings}</span>
-                {t("settingsGeneralTab")}
-              </TabsTrigger>
-              <TabsTrigger value="ai" className="flex-none gap-2 px-3">
-                <span className={`[&_svg]:size-4 ${iconStroke}`}>{I.aiAssistant}</span>
-                {t("settingsAiTab")}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </CardContent>
-      </Card>
+        <Tabs value={settingsTab} onValueChange={(v) => setSettingsTab(v as SettingsTab)}>
+          <TabsList className="w-fit h-9 gap-0.5 rounded-xl bg-muted/60 p-1 backdrop-blur-sm ring-1 ring-border/40">
+            <TabsTrigger
+              value="general"
+              className="flex-none gap-1.5 rounded-lg px-3.5 py-1 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:ring-1 data-[state=active]:ring-border/50"
+            >
+              <span className={`[&_svg]:size-3.5 ${iconStroke}`}>{I.settings}</span>
+              {t("settingsGeneralTab")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="ai"
+              className="flex-none gap-1.5 rounded-lg px-3.5 py-1 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:ring-1 data-[state=active]:ring-border/50"
+            >
+              <span className={`[&_svg]:size-3.5 ${iconStroke}`}>{I.aiAssistant}</span>
+              {t("settingsAiTab")}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
 
       <section className="space-y-3" hidden={settingsTab !== "general"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">

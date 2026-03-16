@@ -23,7 +23,7 @@ use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
 use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
@@ -124,23 +124,17 @@ impl Drop for AppState {
     }
 }
 
+#[cfg(unix)]
 fn detect_docker_socket() -> Option<String> {
     // Unix socket detection (macOS / Linux)
-    #[cfg(unix)]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let candidates = [
-            format!("{}/.colima/default/docker.sock", home),
-            format!("{}/.orbstack/run/docker.sock", home),
-            "/var/run/docker.sock".to_string(),
-            format!("{}/.docker/run/docker.sock", home),
-        ];
-        if let Some(sock) = candidates.into_iter().find(|p| Path::new(p).exists()) {
-            return Some(sock);
-        }
-    }
-
-    None
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{}/.colima/default/docker.sock", home),
+        format!("{}/.orbstack/run/docker.sock", home),
+        "/var/run/docker.sock".to_string(),
+        format!("{}/.docker/run/docker.sock", home),
+    ];
+    candidates.into_iter().find(|p| Path::new(p).exists())
 }
 
 fn connect_docker() -> Result<Docker, String> {
@@ -214,20 +208,20 @@ fn runtime_setup_run(command: &str, args: &[&str]) -> Result<std::process::Outpu
         .map_err(|e| format!("Failed to run command '{}': {}", command, e))
 }
 
+#[cfg(target_os = "macos")]
 fn truncate_message(text: &str, max_chars: usize) -> String {
     let mut out = String::new();
-    let mut count = 0usize;
-    for ch in text.chars() {
+    for (count, ch) in text.chars().enumerate() {
         if count >= max_chars {
             out.push_str("...");
             break;
         }
         out.push(ch);
-        count += 1;
     }
     out
 }
 
+#[cfg(target_os = "macos")]
 fn runtime_setup_output_summary(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -3030,9 +3024,24 @@ async fn gpu_status() -> Result<GpuStatusDto, String> {
 }
 
 async fn ollama_check_installed() -> bool {
-    tokio::task::spawn_blocking(|| Command::new("ollama").arg("--version").output().is_ok())
-        .await
-        .unwrap_or(false)
+    tokio::task::spawn_blocking(|| {
+        if Command::new("ollama").arg("--version").output().is_ok() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            Command::new("cmd")
+                .args(["/C", "ollama", "--version"])
+                .output()
+                .is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 async fn ollama_check_running() -> Result<String, String> {
@@ -3133,13 +3142,39 @@ fn ollama_models_path() -> PathBuf {
 async fn run_local_cli(command: &str, args: Vec<String>) -> Result<String, String> {
     let cmd = command.to_string();
     tokio::task::spawn_blocking(move || {
-        let output = Command::new(&cmd)
+        let path = runtime_setup_path();
+        let mut primary = Command::new(&cmd);
+        primary
             .args(&args)
-            .env("PATH", runtime_setup_path())
+            .env("PATH", &path)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| format!("Failed to run {}: {}", cmd, e))?;
+            .stderr(Stdio::piped());
+        let output = match primary.output() {
+            Ok(output) => output,
+            Err(primary_error) => {
+                #[cfg(windows)]
+                {
+                    let mut fallback = Command::new("cmd");
+                    fallback
+                        .arg("/C")
+                        .arg(&cmd)
+                        .args(&args)
+                        .env("PATH", &path)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped());
+                    fallback.output().map_err(|fallback_error| {
+                        format!(
+                            "Failed to run {}: {} (cmd fallback: {})",
+                            cmd, primary_error, fallback_error
+                        )
+                    })?
+                }
+                #[cfg(not(windows))]
+                {
+                    return Err(format!("Failed to run {}: {}", cmd, primary_error));
+                }
+            }
+        };
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if output.status.success() {
@@ -6969,6 +7004,7 @@ async fn set_window_theme(window: tauri::WebviewWindow, theme: String) -> Result
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod ai_runtime_tests {
     use super::{
         agent_cli_run, ai_profile, ai_test_connection, default_ai_settings, load_ai_settings,
@@ -7134,12 +7170,13 @@ mod ai_runtime_tests {
     }
 
     fn prepend_path(dir: &Path) -> String {
-        let current = std::env::var("PATH").unwrap_or_default();
-        if current.is_empty() {
-            dir.display().to_string()
-        } else {
-            format!("{}:{}", dir.display(), current)
-        }
+        let current = std::env::var_os("PATH").unwrap_or_default();
+        std::env::join_paths(
+            std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&current)),
+        )
+        .expect("join PATH entries")
+        .to_string_lossy()
+        .into_owned()
     }
 
     fn write_forwarder_binary(bin_dir: &Path, name: &str, target_env: &str) {
@@ -7150,7 +7187,7 @@ mod ai_runtime_tests {
 set -euo pipefail
 target="${{{target_env}:-}}"
 if [[ -z "$target" ]]; then
-  echo "missing {target_env}" >&2
+echo "missing {target_env}" >&2
   exit 97
 fi
 exec "$target" "$@"
@@ -7313,7 +7350,47 @@ exec "$target" "$@"
         }
     }
 
+    #[cfg_attr(windows, allow(unreachable_code))]
     fn write_fake_ollama_binary(bin_dir: &Path, state_path: &Path) {
+        #[cfg(windows)]
+        {
+            let script_path = bin_dir.join("ollama.cmd");
+            let script = format!(
+                r#"@echo off
+setlocal EnableExtensions
+set "state={}"
+if not exist "%state%" (
+  type nul > "%state%"
+)
+if "%~1"=="--version" (
+  echo ollama version 0.5.7-test
+  exit /b 0
+)
+if "%~1"=="pull" (
+  if "%~2"=="" exit /b 1
+  >> "%state%" echo %~2
+  echo pulled %~2
+  exit /b 0
+)
+if "%~1"=="rm" (
+  if "%~2"=="" exit /b 1
+  > "%state%.tmp" (
+    for /f "usebackq delims=" %%L in ("%state%") do (
+      if /I not "%%L"=="%~2" echo %%L
+    )
+  )
+  move /y "%state%.tmp" "%state%" >nul
+  echo removed %~2
+  exit /b 0
+)
+exit /b 0
+"#,
+                state_path.display()
+            );
+            std::fs::write(&script_path, script).expect("write fake ollama binary");
+            return;
+        }
+
         let script = format!(
             "#!/usr/bin/env bash\nset -euo pipefail\nstate=\"{}\"\nmkdir -p \"$(dirname \"$state\")\"\ntouch \"$state\"\ncase \"${{1:-}}\" in\n  --version)\n    echo \"ollama version 0.5.7-test\"\n    ;;\n  pull)\n    model=\"${{2:?model required}}\"\n    if ! grep -Fxq \"$model\" \"$state\"; then\n      echo \"$model\" >> \"$state\"\n    fi\n    echo \"pulled $model\"\n    ;;\n  rm)\n    model=\"${{2:?model required}}\"\n    tmp=\"$state.tmp\"\n    grep -Fxv \"$model\" \"$state\" > \"$tmp\" || true\n    mv \"$tmp\" \"$state\"\n    echo \"removed $model\"\n    ;;\n  *)\n    echo \"unsupported fake ollama args: $*\" >&2\n    exit 1\n    ;;\nesac\n",
             state_path.display()
@@ -7448,13 +7525,7 @@ exec "$target" "$@"
         write_fake_ollama_binary(&bin_dir, &state_path);
         let server = FakeOllamaServer::start(state_path.clone());
 
-        let current_path = std::env::var("PATH").unwrap_or_default();
-        let joined_path = if current_path.is_empty() {
-            bin_dir.display().to_string()
-        } else {
-            format!("{}:{}", bin_dir.display(), current_path)
-        };
-        let _path = EnvGuard::set("PATH", joined_path);
+        let _path = EnvGuard::set("PATH", prepend_path(&bin_dir));
         let _config = EnvGuard::set(
             "CRATEBAY_CONFIG_DIR",
             config_dir.to_str().expect("config dir"),
@@ -7763,15 +7834,29 @@ exec "$target" "$@"
             config_dir.to_str().expect("config dir"),
         );
 
+        #[cfg(windows)]
+        let (mcp_command, mcp_args) = (
+            "cmd".to_string(),
+            vec![
+                "/C".to_string(),
+                "echo MCP_READY && ping -n 60 127.0.0.1 >nul".to_string(),
+            ],
+        );
+        #[cfg(not(windows))]
+        let (mcp_command, mcp_args) = (
+            "/bin/sh".to_string(),
+            vec![
+                "-lc".to_string(),
+                "echo MCP_READY; while true; do sleep 1; done".to_string(),
+            ],
+        );
+
         let mut settings = default_ai_settings();
         settings.mcp_servers = vec![McpServerEntry {
             id: "local-smoke".to_string(),
             name: "Local Smoke MCP".to_string(),
-            command: "/bin/sh".to_string(),
-            args: vec![
-                "-lc".to_string(),
-                "echo MCP_READY; while true; do sleep 1; done".to_string(),
-            ],
+            command: mcp_command.clone(),
+            args: mcp_args.clone(),
             env: vec!["CRATEBAY_MCP=1".to_string()],
             working_dir: tmp.path.display().to_string(),
             enabled: true,
@@ -7807,7 +7892,7 @@ exec "$target" "$@"
         let exported =
             mcp_export_client_config("codex".to_string()).expect("export codex MCP config");
         assert!(exported.contains("\"local-smoke\""));
-        assert!(exported.contains("\"/bin/sh\""));
+        assert!(exported.contains(&format!("\"{}\"", mcp_command)));
 
         let loaded = load_ai_settings().expect("reload AI settings");
         assert_eq!(loaded.mcp_servers.len(), 1);
@@ -8030,14 +8115,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
+    app.run(|_app_handle, _event| {
         #[cfg(target_os = "macos")]
-        if let RunEvent::Reopen {
+        if let tauri::RunEvent::Reopen {
             has_visible_windows: false,
             ..
-        } = event
+        } = _event
         {
-            if let Some(window) = app_handle.get_webview_window("main") {
+            if let Some(window) = _app_handle.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();

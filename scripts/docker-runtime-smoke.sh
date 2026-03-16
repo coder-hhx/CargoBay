@@ -86,7 +86,15 @@ if [[ "$running_state" != "true" ]]; then
   exit 1
 fi
 
-docker exec "$container_name" /bin/sh -lc 'echo CRATEBAY_CONTAINER_OK' | grep -Fq 'CRATEBAY_CONTAINER_OK'
+if ! runtime_probe_output="$(
+  MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+    docker exec "$container_name" /bin/sh -lc 'echo CRATEBAY_CONTAINER_OK' 2>&1
+)"; then
+  echo "ERROR: docker exec probe failed"
+  printf '%s\n' "$runtime_probe_output"
+  exit 1
+fi
+assert_contains "$runtime_probe_output" 'CRATEBAY_CONTAINER_OK' "docker exec probe should succeed"
 
 echo "== Verify env and login command =="
 env_output="$($cratebay_bin docker env "$container_name")"

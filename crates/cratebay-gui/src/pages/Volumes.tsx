@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { I } from "../icons"
 import { ErrorBanner } from "../components/ErrorDisplay"
 import { EmptyState } from "../components/EmptyState"
@@ -16,8 +16,14 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -65,6 +71,7 @@ export function Volumes({
   onToast,
   t,
 }: VolumesProps) {
+  const inspectCopyTimerRef = useRef<number | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createName, setCreateName] = useState("")
   const [createDriver, setCreateDriver] = useState("local")
@@ -73,10 +80,35 @@ export function Volumes({
 
   const [inspectVolume, setInspectVolume] = useState<VolumeInfo | null>(null)
   const [inspectLoading, setInspectLoading] = useState(false)
+  const [inspectCopyState, setInspectCopyState] = useState<
+    "idle" | "success" | "error"
+  >("idle")
 
   const [confirmDelete, setConfirmDelete] = useState("")
   const [search, setSearch] = useState("")
   const [refreshing, setRefreshing] = useState(false)
+
+  const clearInspectCopyTimer = () => {
+    if (inspectCopyTimerRef.current !== null) {
+      window.clearTimeout(inspectCopyTimerRef.current)
+      inspectCopyTimerRef.current = null
+    }
+  }
+
+  const resetInspectCopyState = () => {
+    clearInspectCopyTimer()
+    setInspectCopyState("idle")
+  }
+
+  const scheduleInspectCopyReset = () => {
+    clearInspectCopyTimer()
+    inspectCopyTimerRef.current = window.setTimeout(() => {
+      setInspectCopyState("idle")
+      inspectCopyTimerRef.current = null
+    }, 1600)
+  }
+
+  useEffect(() => () => clearInspectCopyTimer(), [])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return volumes
@@ -112,6 +144,7 @@ export function Volumes({
   }
 
   const handleInspect = async (name: string) => {
+    resetInspectCopyState()
     setInspectLoading(true)
     try {
       const vol = await onInspect(name)
@@ -120,6 +153,18 @@ export function Volumes({
       onToast(String(e))
     } finally {
       setInspectLoading(false)
+    }
+  }
+
+  const handleInspectCopy = async () => {
+    if (!inspectVolume) return
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(inspectVolume, null, 2))
+      setInspectCopyState("success")
+    } catch {
+      setInspectCopyState("error")
+    } finally {
+      scheduleInspectCopyReset()
     }
   }
 
@@ -389,147 +434,161 @@ export function Volumes({
       <Dialog
         open={Boolean(inspectVolume)}
         onOpenChange={(open) => {
-          if (!open) setInspectVolume(null)
+          if (!open) {
+            resetInspectCopyState()
+            setInspectVolume(null)
+          }
         }}
       >
         <DialogContent
-          className="sm:max-w-3xl"
+          className="flex max-h-[min(88vh,52rem)] flex-col overflow-hidden p-0 sm:max-w-3xl"
           data-testid="volumes-inspect-dialog"
         >
-          <DialogHeader>
-            <DialogTitle>
-              {inspectVolume
-                ? `${t("volumeDetails")} — ${inspectVolume.name}`
-                : t("volumeDetails")}
-            </DialogTitle>
+          <DialogHeader className="shrink-0 border-b px-6 pt-6 pb-4 pr-14">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle className="break-all text-left leading-snug">
+                {t("volumeDetails")}
+              </DialogTitle>
+              {inspectVolume && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "shrink-0 min-w-[104px]",
+                    inspectCopyState === "success" &&
+                      "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700 dark:text-emerald-400",
+                    inspectCopyState === "error" &&
+                      "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
+                  )}
+                  onClick={handleInspectCopy}
+                  title={t("copyJson")}
+                >
+                  <span className={cn("mr-1", iconStroke, "[&_svg]:size-4")}>
+                    {inspectCopyState === "success"
+                      ? I.check
+                      : inspectCopyState === "error"
+                        ? I.alertCircle
+                        : I.copy}
+                  </span>
+                  {inspectCopyState === "success"
+                    ? t("copied")
+                    : inspectCopyState === "error"
+                      ? t("copyFailed")
+                      : t("copy")}
+                </Button>
+              )}
+            </div>
+            <DialogDescription className="sr-only">
+              {t("volumeDetails")}
+            </DialogDescription>
           </DialogHeader>
 
           {inspectVolume && (
-            <ScrollArea className="max-h-[65vh] pr-4">
-              <div className="space-y-6">
-                <div className="flex items-center justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      navigator.clipboard.writeText(
-                        JSON.stringify(inspectVolume, null, 2)
-                      )
-                      onToast(t("copied"))
-                    }}
-                    title={t("copyJson")}
-                  >
-                    <span className={cn("mr-1", iconStroke, "[&_svg]:size-4")}>
-                      {I.copy}
-                    </span>
-                    {t("copy")}
-                  </Button>
-                </div>
+            <div className="min-h-0 flex-1 overflow-hidden px-6">
+              <ScrollArea className="h-full">
+                <div className="space-y-5 pb-6 pr-4 pt-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        {t("volumeName")}
+                      </div>
+                      <div className="break-all text-sm font-semibold text-foreground">
+                        {inspectVolume.name}
+                      </div>
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        {t("driver")}
+                      </div>
+                      <div className="break-all text-sm text-foreground">
+                        {inspectVolume.driver}
+                      </div>
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        Scope
+                      </div>
+                      <div className="break-all text-sm text-foreground">
+                        {inspectVolume.scope || "local"}
+                      </div>
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        {t("created")}
+                      </div>
+                      <div className="break-all text-sm text-foreground">
+                        {formatDate(inspectVolume.created_at)}
+                      </div>
+                    </div>
+                  </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      {t("volumeName")}
-                    </div>
-                    <div className="text-sm font-semibold text-foreground">
-                      {inspectVolume.name}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      {t("driver")}
-                    </div>
-                    <div className="text-sm text-foreground">{inspectVolume.driver}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      Scope
-                    </div>
-                    <div className="text-sm text-foreground">
-                      {inspectVolume.scope || "local"}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      {t("created")}
-                    </div>
-                    <div className="text-sm text-foreground">
-                      {formatDate(inspectVolume.created_at)}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t("mountpoint")}
-                  </div>
-                  <code className="block w-full overflow-auto rounded-md border bg-muted px-3 py-2 text-xs font-mono text-foreground">
-                    {inspectVolume.mountpoint || "-"}
-                  </code>
-                </div>
-
-                {inspectVolume.labels && Object.keys(inspectVolume.labels).length > 0 && (
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-muted-foreground">
-                      Labels
+                      {t("mountpoint")}
                     </div>
-                    <div className="flex flex-col gap-1">
-                      {Object.entries(inspectVolume.labels).map(([k, val]) => (
-                        <code
-                          key={k}
-                          className="rounded-md border bg-muted px-2 py-1 text-xs font-mono text-foreground"
-                        >
-                          <span className="text-brand-cyan">{k}</span>
-                          <span className="text-muted-foreground"> = </span>
-                          <span>{val}</span>
-                        </code>
-                      ))}
-                    </div>
+                    <code className="block w-full rounded-md border bg-muted px-3 py-2 text-xs font-mono text-foreground whitespace-pre-wrap break-all">
+                      {inspectVolume.mountpoint || "-"}
+                    </code>
                   </div>
-                )}
 
-                {inspectVolume.options && Object.keys(inspectVolume.options).length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      Options
+                  {inspectVolume.labels && Object.keys(inspectVolume.labels).length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        Labels
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {Object.entries(inspectVolume.labels).map(([k, val]) => (
+                          <code
+                            key={k}
+                            className="rounded-md border bg-muted px-2 py-1 text-xs font-mono text-foreground whitespace-pre-wrap break-all"
+                          >
+                            <span className="text-brand-cyan">{k}</span>
+                            <span className="text-muted-foreground"> = </span>
+                            <span>{val}</span>
+                          </code>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-1">
-                      {Object.entries(inspectVolume.options).map(([k, val]) => (
-                        <code
-                          key={k}
-                          className="rounded-md border bg-muted px-2 py-1 text-xs font-mono text-foreground"
-                        >
-                          <span className="text-brand-cyan">{k}</span>
-                          <span className="text-muted-foreground"> = </span>
-                          <span>{val}</span>
-                        </code>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                <div className="space-y-2">
-                  <div className="text-xs font-medium tracking-widest text-muted-foreground">
-                    RAW JSON
-                  </div>
-                  <pre className="overflow-auto rounded-md border bg-muted p-3 text-xs font-mono text-foreground">
-                    {JSON.stringify(inspectVolume, null, 2)}
-                  </pre>
+                  {inspectVolume.options && Object.keys(inspectVolume.options).length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        Options
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {Object.entries(inspectVolume.options).map(([k, val]) => (
+                          <code
+                            key={k}
+                            className="rounded-md border bg-muted px-2 py-1 text-xs font-mono text-foreground whitespace-pre-wrap break-all"
+                          >
+                            <span className="text-brand-cyan">{k}</span>
+                            <span className="text-muted-foreground"> = </span>
+                            <span>{val}</span>
+                          </code>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <Collapsible>
+                    <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-xs font-medium tracking-widest text-muted-foreground hover:text-foreground transition-colors">
+                      <span className={cn(iconStroke, "[&_svg]:size-3.5 transition-transform group-data-[state=open]:rotate-90")}>
+                        {I.chevronRight}
+                      </span>
+                      RAW JSON
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <pre className="mt-2 rounded-md border bg-muted p-3 text-xs font-mono text-foreground whitespace-pre-wrap break-all max-h-64 overflow-auto">
+                        {JSON.stringify(inspectVolume, null, 2)}
+                      </pre>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
-              </div>
-            </ScrollArea>
+              </ScrollArea>
+            </div>
           )}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setInspectVolume(null)}
-            >
-              {t("close")}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

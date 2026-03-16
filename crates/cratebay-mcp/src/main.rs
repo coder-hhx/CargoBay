@@ -16,7 +16,9 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -260,21 +262,16 @@ fn sandbox_audit_log(
     }
 }
 
+#[cfg(unix)]
 fn detect_docker_socket() -> Option<String> {
-    #[cfg(unix)]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let candidates = [
-            format!("{}/.colima/default/docker.sock", home),
-            format!("{}/.orbstack/run/docker.sock", home),
-            "/var/run/docker.sock".to_string(),
-            format!("{}/.docker/run/docker.sock", home),
-        ];
-        if let Some(sock) = candidates.into_iter().find(|p| Path::new(p).exists()) {
-            return Some(sock);
-        }
-    }
-    None
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{}/.colima/default/docker.sock", home),
+        format!("{}/.orbstack/run/docker.sock", home),
+        "/var/run/docker.sock".to_string(),
+        format!("{}/.docker/run/docker.sock", home),
+    ];
+    candidates.into_iter().find(|p| Path::new(p).exists())
 }
 
 fn connect_docker() -> Result<Docker> {
@@ -306,9 +303,9 @@ fn connect_docker() -> Result<Docker> {
                 return Ok(d);
             }
         }
-        return Err(anyhow!(
+        Err(anyhow!(
             "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
-        ));
+        ))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1071,9 +1068,11 @@ async fn sandbox_create(
     labels.insert(SANDBOX_LABEL_CPU_CORES.to_string(), cpu_cores.to_string());
     labels.insert(SANDBOX_LABEL_MEMORY_MB.to_string(), memory_mb.to_string());
 
-    let mut host_config = HostConfig::default();
-    host_config.nano_cpus = Some((cpu_cores as i64) * 1_000_000_000);
-    host_config.memory = Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024));
+    let mut host_config = HostConfig {
+        nano_cpus: Some((cpu_cores as i64) * 1_000_000_000),
+        memory: Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024)),
+        ..Default::default()
+    };
 
     let root = ctx.workspace_root.clone();
     if !args.mounts.is_empty() && root.is_none() {

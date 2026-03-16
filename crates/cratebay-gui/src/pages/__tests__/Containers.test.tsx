@@ -402,7 +402,7 @@ describe("Containers", () => {
     const user = userEvent.setup()
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === "container_logs") {
-        return "sample log line 1\nsample log line 2"
+        return "sample log line 1\nsample log line 2\naveryveryveryveryveryveryveryveryverylonglogtoken"
       }
       if (cmd === "container_stats") {
         return {
@@ -425,6 +425,10 @@ describe("Containers", () => {
     await user.click(logsBtn)
 
     expect(screen.getByText(/Logs — web-server/)).toBeInTheDocument()
+    const logDialog = screen.getByTestId("containers-dialog-logs")
+    const logOutput = logDialog.querySelector("pre")
+    expect(logOutput).not.toBeNull()
+    expect(logOutput).toHaveClass("whitespace-pre-wrap", "break-all", "max-w-full")
     expect(invoke).toHaveBeenCalledWith("container_logs", {
       id: "abc123",
       tail: "200",
