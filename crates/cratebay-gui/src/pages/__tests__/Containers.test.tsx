@@ -364,7 +364,7 @@ describe("Containers", () => {
     const createBtn = screen.getByText(t("create"))
     await user.click(createBtn)
 
-    expect(onRun).toHaveBeenCalledWith("redis:latest", "", "", "", true, undefined)
+    expect(onRun).toHaveBeenCalledWith("redis:latest", "", 2, 512, true, undefined)
   })
 
   it("shows exec button only for running containers", () => {

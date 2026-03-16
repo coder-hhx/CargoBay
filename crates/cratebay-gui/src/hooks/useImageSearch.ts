@@ -3,6 +3,9 @@ import { invoke } from "@tauri-apps/api/core"
 import type { ImageSearchResult, RunContainerResult } from "../types"
 
 export function useImageSearch() {
+  const DEFAULT_RUN_CPUS = 2
+  const DEFAULT_RUN_MEM_MB = 512
+
   const [imgQuery, setImgQuery] = useState("")
   const [imgSource, setImgSource] = useState("all")
   const [imgResults, setImgResults] = useState<ImageSearchResult[]>([])
@@ -13,8 +16,8 @@ export function useImageSearch() {
   const [imgTagsLoading, setImgTagsLoading] = useState(false)
   const [runImage, setRunImage] = useState("")
   const [runName, setRunName] = useState("")
-  const [runCpus, setRunCpus] = useState<number | "">("")
-  const [runMem, setRunMem] = useState<number | "">("")
+  const [runCpus, setRunCpus] = useState<number | "">(DEFAULT_RUN_CPUS)
+  const [runMem, setRunMem] = useState<number | "">(DEFAULT_RUN_MEM_MB)
   const [runPull, setRunPull] = useState(true)
   const [runLoading, setRunLoading] = useState(false)
   const [runResult, setRunResult] = useState<RunContainerResult | null>(null)
@@ -96,7 +99,7 @@ export function useImageSearch() {
       return result
     } catch (e) {
       setImgError(String(e))
-      return null
+      throw e
     } finally {
       setRunLoading(false)
     }

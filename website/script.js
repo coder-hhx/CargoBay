@@ -14,7 +14,7 @@
       heroLead:
         "Managed sandboxes. Local models. MCP — all in one desktop app.",
       heroSub:
-        "Built for fast local AI workflows with safer defaults and clearer runtime feedback.",
+        "Built for fast local AI workflows with safer defaults and clearer runtime errors.",
       githubCta: "GitHub",
       summary1Label: "AI Sandboxes",
       summary1Title: "Run locally",
@@ -62,7 +62,7 @@
       heroLead:
         "托管沙箱、本地模型、MCP —— 全都放进一个桌面应用里。",
       heroSub:
-        "为更快的本地 AI 工作流而生：默认更安全，反馈更清晰。",
+        "为更快的本地 AI 工作流而生：默认更安全，错误更清晰。",
       githubCta: "GitHub",
       summary1Label: "AI Sandboxes",
       summary1Title: "本地运行，可视化管理",

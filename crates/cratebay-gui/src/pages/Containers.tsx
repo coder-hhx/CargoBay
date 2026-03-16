@@ -79,11 +79,14 @@ export function Containers({
   onContainerAction, onToggleGroup,
   onOpenTextModal, onOpenPackageModal, onFetch, onSetupRuntime, onRun, t,
 }: ContainersProps) {
+  const DEFAULT_RUN_CPUS = 2
+  const DEFAULT_RUN_MEM_MB = 512
+
   const [showRunModal, setShowRunModal] = useState(false)
   const [runImage, setRunImage] = useState("")
   const [runName, setRunName] = useState("")
-  const [runCpus, setRunCpus] = useState<number | "">("")
-  const [runMem, setRunMem] = useState<number | "">("")
+  const [runCpus, setRunCpus] = useState<number | "">(DEFAULT_RUN_CPUS)
+  const [runMem, setRunMem] = useState<number | "">(DEFAULT_RUN_MEM_MB)
   const [runPull, setRunPull] = useState(true)
   const [, setRunResult] = useState<RunContainerResult | null>(null)
   const [, setRunError] = useState("")
@@ -263,7 +266,7 @@ export function Containers({
       setCreating(false)
     } catch (e) {
       setCreateFailed(String(e))
-      setCreateStatus(String(e))
+      setCreateStatus(t("createFailed"))
       setTimeout(() => {
         setCreating(false)
         setCreateFailed("")
@@ -274,8 +277,8 @@ export function Containers({
   const openRunModal = () => {
     setRunImage("")
     setRunName("")
-    setRunCpus("")
-    setRunMem("")
+    setRunCpus(DEFAULT_RUN_CPUS)
+    setRunMem(DEFAULT_RUN_MEM_MB)
     setRunPull(true)
     setRunResult(null)
     setRunError("")

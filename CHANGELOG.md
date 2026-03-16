@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated roadmap milestones to make AI Hub completion and pre-v1 validation explicit.
 - Clarified that CrateBay-managed sandboxes are the primary path and external sandbox compatibility remains experimental.
 
+### Fixed
+
+- GUI: surface container run errors in the inline “creating” card (no silent failures).
+- GUI: default Run Container CPU/memory inputs to `2` cores and `512` MB.
+
 ## [0.7.0] - 2026-03-02
 
 ### Added

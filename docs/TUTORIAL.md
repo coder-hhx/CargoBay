@@ -248,7 +248,7 @@ Images support:
 
 - **Search images** across **Docker Hub** and **Quay**
 - **List tags** for registry-domain references (e.g. `quay.io/org/image`, `ghcr.io/org/image`)
-- **Create containers** from an image with optional **CPU cores / memory (MB)** and optional **pull**
+- **Create containers** from an image with optional **CPU cores / memory (MB)** limits (defaults to **2 CPU / 512MB**, clear to disable), and optional **pull**
 - **Import custom images** from a local `.tar` archive (`docker load -i`)
 - **Push images** to a registry (`docker push`)
 
