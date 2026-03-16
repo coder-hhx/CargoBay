@@ -42,6 +42,16 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ -z "${DOCKER_HOST:-}" ]]; then
+  active_context="$(docker context show 2>/dev/null || true)"
+  if [[ -n "$active_context" ]]; then
+    detected_host="$(docker context inspect "$active_context" --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null || true)"
+    if [[ -n "$detected_host" ]]; then
+      export DOCKER_HOST="$detected_host"
+    fi
+  fi
+fi
+
 artifact_dir="$repo_root/dist/desktop-smoke"
 driver_log="$artifact_dir/tauri-driver.log"
 test_log="$artifact_dir/desktop-smoke-test.log"
@@ -59,6 +69,7 @@ printf 'config_dir=%s\n' "$CRATEBAY_CONFIG_DIR" >> "$artifact_dir/run-context.tx
 printf 'data_dir=%s\n' "$CRATEBAY_DATA_DIR" >> "$artifact_dir/run-context.txt"
 printf 'log_dir=%s\n' "$CRATEBAY_LOG_DIR" >> "$artifact_dir/run-context.txt"
 printf 'workdir=%s\n' "$CRATEBAY_DESKTOP_E2E_WORKDIR" >> "$artifact_dir/run-context.txt"
+printf 'docker_host=%s\n' "${DOCKER_HOST:-}" >> "$artifact_dir/run-context.txt"
 
 docker version > "$artifact_dir/docker-version.txt"
 docker info > "$artifact_dir/docker-info.txt"

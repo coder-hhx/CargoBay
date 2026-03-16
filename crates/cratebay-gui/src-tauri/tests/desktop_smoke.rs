@@ -4,6 +4,7 @@ use std::{
     env,
     io::{Read, Write},
     path::{Path, PathBuf},
+    process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::time::sleep;
@@ -28,6 +29,10 @@ impl Drop for DockerCleanup {
 }
 
 fn cleanup_container(container_name: &str) {
+    if docker_cli_remove_container(container_name).is_ok() {
+        return;
+    }
+
     #[cfg(unix)]
     {
         let _ = docker_request_unix("DELETE", &format!("/containers/{container_name}?force=1"));
@@ -35,6 +40,10 @@ fn cleanup_container(container_name: &str) {
 }
 
 fn docker_running_state(container_name: &str) -> Option<bool> {
+    if let Some(state) = docker_running_state_cli(container_name) {
+        return Some(state);
+    }
+
     #[cfg(unix)]
     {
         let (status, body) =
@@ -56,6 +65,40 @@ fn docker_running_state(container_name: &str) -> Option<bool> {
     {
         let _ = container_name;
         None
+    }
+}
+
+fn docker_cli_remove_container(container_name: &str) -> Result<(), String> {
+    let output = Command::new("docker")
+        .args(["rm", "-f", container_name])
+        .output()
+        .map_err(|e| format!("docker rm -f {container_name}: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("No such container") || stderr.contains("No such object") {
+        return Ok(());
+    }
+
+    Err(stderr.trim().to_string())
+}
+
+fn docker_running_state_cli(container_name: &str) -> Option<bool> {
+    let output = Command::new("docker")
+        .args(["inspect", "-f", "{{.State.Running}}", container_name])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
     }
 }
 
