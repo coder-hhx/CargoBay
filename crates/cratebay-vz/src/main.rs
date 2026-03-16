@@ -52,6 +52,10 @@ struct Args {
     vsock_forwards: Vec<String>,
     /// TCP forwards in "guest_port:unix_socket_path" format (connects to guest IP).
     tcp_forwards: Vec<String>,
+    /// Host TCP listeners forwarded to target host:port pairs.
+    host_tcp_forwards: Vec<String>,
+    /// Internal HTTP CONNECT proxies bound on the host bridge.
+    http_connect_proxies: Vec<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -61,7 +65,9 @@ impl Args {
          [--initrd <path>] [--cmdline <str>] [--ready-file <path>] \
          [--console-log <path>] [--rosetta] [--share tag:host_path[:ro]] \
          [--vsock-forward guest_port:unix_socket_path] \
-         [--tcp-forward guest_port:unix_socket_path]\n"
+         [--tcp-forward guest_port:unix_socket_path] \
+         [--host-tcp-forward bind_host:bind_port=target_host:target_port] \
+         [--http-connect-proxy bind_host:bind_port]\n"
     }
 
     fn parse() -> Result<Self, String> {
@@ -77,6 +83,8 @@ impl Args {
         let mut shared_dirs: Vec<String> = Vec::new();
         let mut vsock_forwards: Vec<String> = Vec::new();
         let mut tcp_forwards: Vec<String> = Vec::new();
+        let mut host_tcp_forwards: Vec<String> = Vec::new();
+        let mut http_connect_proxies: Vec<String> = Vec::new();
 
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -164,6 +172,18 @@ impl Args {
                             .ok_or_else(|| "--tcp-forward requires a value".to_string())?,
                     );
                 }
+                "--host-tcp-forward" => {
+                    host_tcp_forwards.push(
+                        it.next()
+                            .ok_or_else(|| "--host-tcp-forward requires a value".to_string())?,
+                    );
+                }
+                "--http-connect-proxy" => {
+                    http_connect_proxies.push(
+                        it.next()
+                            .ok_or_else(|| "--http-connect-proxy requires a value".to_string())?,
+                    );
+                }
                 other => return Err(format!("Unknown argument: {}", other)),
             }
         }
@@ -187,6 +207,8 @@ impl Args {
             shared_dirs,
             vsock_forwards,
             tcp_forwards,
+            host_tcp_forwards,
+            http_connect_proxies,
         })
     }
 }
@@ -323,6 +345,24 @@ fn run(args: Args) -> Result<(), String> {
         forward_threads.push(thread);
     }
 
+    for spec in &args.http_connect_proxies {
+        let (bind_host, bind_port) = parse_host_port(spec, "http connect proxy bind")?;
+        let thread = start_http_connect_proxy(bind_host, bind_port, shutdown_requested.clone())?;
+        forward_threads.push(thread);
+    }
+
+    for spec in &args.host_tcp_forwards {
+        let ((bind_host, bind_port), (target_host, target_port)) = parse_host_tcp_forward(spec)?;
+        let thread = start_host_tcp_forward(
+            bind_host,
+            bind_port,
+            target_host,
+            target_port,
+            shutdown_requested.clone(),
+        )?;
+        forward_threads.push(thread);
+    }
+
     // Set up TCP forwards (host unix socket -> guest tcp:port). This mode does
     // not require guest AF_VSOCK support; it discovers the guest IP from the
     // serial console log (printed by the runtime init).
@@ -412,6 +452,88 @@ fn parse_vsock_forward(spec: &str) -> Result<(u32, std::path::PathBuf), String> 
     }
 
     Ok((port, path))
+}
+
+#[cfg(target_os = "macos")]
+fn parse_host_port(spec: &str, label: &str) -> Result<(String, u16), String> {
+    if spec.starts_with('[') {
+        let end = spec
+            .find(']')
+            .ok_or_else(|| format!("Invalid {} '{}': missing closing ']'", label, spec))?;
+        let host = spec[1..end].to_string();
+        let port = spec[end + 1..]
+            .strip_prefix(':')
+            .ok_or_else(|| format!("Invalid {} '{}': missing port", label, spec))?
+            .parse::<u16>()
+            .map_err(|_| format!("Invalid {} '{}': bad port", label, spec))?;
+        return Ok((host, port));
+    }
+
+    let colon = spec
+        .rfind(':')
+        .ok_or_else(|| format!("Invalid {} '{}': expected host:port", label, spec))?;
+    let host = spec[..colon].to_string();
+    let port = spec[colon + 1..]
+        .parse::<u16>()
+        .map_err(|_| format!("Invalid {} '{}': bad port", label, spec))?;
+    if host.trim().is_empty() {
+        return Err(format!("Invalid {} '{}': empty host", label, spec));
+    }
+    Ok((host, port))
+}
+
+#[cfg(target_os = "macos")]
+fn connect_target_tcp(target_host: &str, target_port: u16) -> Result<std::net::TcpStream, String> {
+    use std::net::ToSocketAddrs;
+    use std::time::Duration;
+
+    let mut addresses = (target_host, target_port)
+        .to_socket_addrs()
+        .map_err(|error| format!("resolve {}:{}: {}", target_host, target_port, error))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err(format!(
+            "resolve {}:{}: no addresses returned",
+            target_host, target_port
+        ));
+    }
+
+    addresses.sort_by_key(|address| if address.is_ipv4() { 0 } else { 1 });
+
+    let mut last_error = None;
+    for address in addresses {
+        match std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5)) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last_error = Some(format!("{}: {}", address, error)),
+        }
+    }
+
+    Err(format!(
+        "connect to {}:{} failed: {}",
+        target_host,
+        target_port,
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    ))
+}
+
+#[cfg(target_os = "macos")]
+type HostTcpForwardEndpoint = (String, u16);
+
+#[cfg(target_os = "macos")]
+fn parse_host_tcp_forward(
+    spec: &str,
+) -> Result<(HostTcpForwardEndpoint, HostTcpForwardEndpoint), String> {
+    let (bind_spec, target_spec) = spec.split_once('=').ok_or_else(|| {
+        format!(
+            "Invalid --host-tcp-forward '{}': expected bind_host:bind_port=target_host:target_port",
+            spec
+        )
+    })?;
+
+    Ok((
+        parse_host_port(bind_spec, "host tcp forward bind")?,
+        parse_host_port(target_spec, "host tcp forward target")?,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -591,6 +713,188 @@ fn start_tcp_forward(
 }
 
 #[cfg(target_os = "macos")]
+fn start_host_tcp_forward(
+    bind_host: String,
+    bind_port: u16,
+    target_host: String,
+    target_port: u16,
+    shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    use std::io;
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    let bind_addr = format!("{}:{}", bind_host, bind_port);
+    let listener = TcpListener::bind(&bind_addr)
+        .map_err(|error| format!("Failed to bind host TCP forward {}: {}", bind_addr, error))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("Failed to set host TCP forward nonblocking: {}", error))?;
+
+    tracing::info!(
+        "host tcp forward enabled on {} -> {}:{}",
+        bind_addr,
+        target_host,
+        target_port
+    );
+
+    Ok(std::thread::spawn(move || {
+        while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((client, _addr)) => {
+                    let target_host = target_host.clone();
+                    std::thread::spawn(move || {
+                        match connect_target_tcp(target_host.as_str(), target_port) {
+                            Ok(server) => {
+                                let _ = server.set_nodelay(true);
+                                let _ = client.set_nodelay(true);
+                                if let Err(error) = proxy_bidirectional_host_tcp(client, server) {
+                                    tracing::debug!("host tcp forward ended: {}", error);
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    "host tcp forward connect failed ({}:{}): {}",
+                                    target_host,
+                                    target_port,
+                                    error
+                                );
+                            }
+                        }
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(error) => {
+                    tracing::warn!("host tcp forward accept failed on {}: {}", bind_addr, error);
+                    break;
+                }
+            }
+        }
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn start_http_connect_proxy(
+    bind_host: String,
+    bind_port: u16,
+    shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    use std::io;
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    let bind_addr = format!("{}:{}", bind_host, bind_port);
+    let listener = TcpListener::bind(&bind_addr)
+        .map_err(|error| format!("Failed to bind HTTP CONNECT proxy {}: {}", bind_addr, error))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("Failed to set HTTP CONNECT proxy nonblocking: {}", error))?;
+
+    tracing::info!("http connect proxy enabled on {}", bind_addr);
+
+    Ok(std::thread::spawn(move || {
+        while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _addr)) => {
+                    std::thread::spawn(move || {
+                        if let Err(error) = handle_http_connect_client(stream) {
+                            tracing::debug!("http connect proxy client ended: {}", error);
+                        }
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "http connect proxy accept failed on {}: {}",
+                        bind_addr,
+                        error
+                    );
+                    break;
+                }
+            }
+        }
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn handle_http_connect_client(mut client: std::net::TcpStream) -> Result<(), String> {
+    use std::io::{Read, Write};
+
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .map_err(|error| format!("client timeout: {}", error))?;
+
+    let mut request = Vec::with_capacity(1024);
+    let mut scratch = [0u8; 1024];
+    let header_end = loop {
+        let read = client
+            .read(&mut scratch)
+            .map_err(|error| format!("read request: {}", error))?;
+        if read == 0 {
+            return Err("client closed before proxy request completed".to_string());
+        }
+        request.extend_from_slice(&scratch[..read]);
+        if request.len() > 16 * 1024 {
+            return Err("proxy request headers too large".to_string());
+        }
+
+        if let Some(index) = request.windows(4).position(|chunk| chunk == b"\r\n\r\n") {
+            break index + 4;
+        }
+        if let Some(index) = request.windows(2).position(|chunk| chunk == b"\n\n") {
+            break index + 2;
+        }
+    };
+
+    let request_head = &request[..header_end];
+    let buffered_body = &request[header_end..];
+    let request_text = String::from_utf8_lossy(request_head);
+    let first_line = request_text
+        .lines()
+        .next()
+        .ok_or_else(|| "empty proxy request".to_string())?;
+    let Some(rest) = first_line.strip_prefix("CONNECT ") else {
+        client
+            .write_all(b"HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n")
+            .map_err(|error| format!("write 501: {}", error))?;
+        return Err(format!("unsupported proxy request '{}'", first_line));
+    };
+
+    let target = rest
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("invalid CONNECT request '{}'", first_line))?;
+    let (target_host, target_port) = parse_host_port(target, "CONNECT target")?;
+    let server = connect_target_tcp(target_host.as_str(), target_port)?;
+    let _ = server.set_nodelay(true);
+    let _ = client.set_nodelay(true);
+    let _ = client.set_read_timeout(None);
+
+    client
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .map_err(|error| format!("write proxy response: {}", error))?;
+    client
+        .flush()
+        .map_err(|error| format!("flush proxy response: {}", error))?;
+
+    let mut server = server;
+    if !buffered_body.is_empty() {
+        server
+            .write_all(buffered_body)
+            .map_err(|error| format!("forward buffered client bytes: {}", error))?;
+        server
+            .flush()
+            .map_err(|error| format!("flush buffered client bytes: {}", error))?;
+    }
+
+    proxy_bidirectional_host_tcp(client, server)
+}
+
+#[cfg(target_os = "macos")]
 fn proxy_bidirectional(
     unix: std::os::unix::net::UnixStream,
     vsock: std::fs::File,
@@ -647,6 +951,37 @@ fn proxy_bidirectional_tcp(
     let _ = t1.join();
     let _ = t2.join();
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn proxy_bidirectional_host_tcp(
+    inbound: std::net::TcpStream,
+    outbound: std::net::TcpStream,
+) -> Result<(), String> {
+    inbound
+        .set_nonblocking(true)
+        .map_err(|error| format!("set inbound nonblocking: {}", error))?;
+    outbound
+        .set_nonblocking(true)
+        .map_err(|error| format!("set outbound nonblocking: {}", error))?;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .map_err(|error| format!("build proxy runtime: {}", error))?;
+
+    runtime.block_on(async move {
+        let mut inbound = tokio::net::TcpStream::from_std(inbound)
+            .map_err(|error| format!("wrap inbound tcp stream: {}", error))?;
+        let mut outbound = tokio::net::TcpStream::from_std(outbound)
+            .map_err(|error| format!("wrap outbound tcp stream: {}", error))?;
+
+        tokio::io::copy_bidirectional(&mut inbound, &mut outbound)
+            .await
+            .map_err(|error| format!("copy bidirectional host tcp: {}", error))?;
+
+        Ok(())
+    })
 }
 
 #[cfg(target_os = "macos")]

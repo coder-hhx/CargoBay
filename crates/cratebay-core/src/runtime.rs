@@ -3,9 +3,6 @@ use std::sync::OnceLock;
 
 use crate::hypervisor::{Hypervisor, HypervisorError, VmConfig, VmState};
 
-#[cfg(feature = "download")]
-use sha2::{Digest, Sha256};
-
 pub const DEFAULT_RUNTIME_VM_NAME: &str = "cratebay-runtime";
 pub const DEFAULT_DOCKER_VSOCK_PORT: u32 = 6237;
 pub const DEFAULT_RUNTIME_ASSETS_SUBDIR: &str = "runtime-images";
@@ -83,6 +80,49 @@ pub fn host_docker_socket_path() -> &'static Path {
         .as_path()
 }
 
+pub fn runtime_host_docker_socket_path(vm_id: &str) -> PathBuf {
+    let base = host_docker_socket_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| crate::store::data_dir().join("run"));
+    base.join(format!("docker-{}.sock", vm_id))
+}
+
+#[cfg(unix)]
+pub fn link_runtime_host_docker_socket(vm_id: &str) -> Result<(), HypervisorError> {
+    use std::os::unix::fs::symlink;
+
+    let alias = host_docker_socket_path();
+    let actual = runtime_host_docker_socket_path(vm_id);
+    if let Some(parent) = actual.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    match std::fs::symlink_metadata(alias) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(alias);
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    symlink(&actual, alias)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn unlink_runtime_host_docker_socket(vm_id: &str) {
+    let alias = host_docker_socket_path();
+    let actual = runtime_host_docker_socket_path(vm_id);
+
+    if let Ok(target) = std::fs::read_link(alias) {
+        if target == actual {
+            let _ = std::fs::remove_file(alias);
+        }
+    }
+    let _ = std::fs::remove_file(&actual);
+}
+
 /// OS image id used for the built-in runtime VM.
 ///
 /// Can be overridden via `CRATEBAY_RUNTIME_OS_IMAGE_ID`.
@@ -141,6 +181,24 @@ fn runtime_assets_root_dir_from_current_exe() -> Option<PathBuf> {
     runtime_assets_root_dir_from_exe_dir(exe_dir)
 }
 
+fn workspace_runtime_assets_root_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
+    for ancestor in exe_dir.ancestors() {
+        if !ancestor.join("Cargo.toml").is_file() {
+            continue;
+        }
+
+        let src_tauri_dir = ancestor
+            .join("crates")
+            .join("cratebay-gui")
+            .join("src-tauri");
+        if runtime_images_dir_from_root(&src_tauri_dir).is_some() {
+            return Some(src_tauri_dir);
+        }
+    }
+
+    None
+}
+
 fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
     // macOS app bundle layout: <App>.app/Contents/MacOS/<exe>
     #[cfg(target_os = "macos")]
@@ -174,6 +232,10 @@ fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
         if parent_resources.is_dir() {
             return Some(parent_resources);
         }
+    }
+
+    if let Some(root) = workspace_runtime_assets_root_from_exe_dir(exe_dir) {
+        return Some(root);
     }
 
     Some(exe_dir.to_path_buf())
@@ -216,6 +278,10 @@ fn runtime_images_dir_candidates() -> Vec<PathBuf> {
         .into_iter()
         .filter_map(|root| runtime_images_dir_from_root(&root))
         .collect()
+}
+
+pub fn bundled_runtime_assets_dir() -> Option<PathBuf> {
+    runtime_images_dir_candidates().into_iter().next()
 }
 
 fn runtime_image_assets_dir(image_id: &str) -> Option<PathBuf> {
@@ -281,24 +347,29 @@ fn image_files_present(image_id: &str) -> bool {
         .all(|name| dest_dir.join(name).is_file())
 }
 
-#[cfg(feature = "download")]
-fn sha256_file(path: &Path) -> Result<[u8; 32], HypervisorError> {
+fn files_equal(src: &Path, dest: &Path) -> Result<bool, HypervisorError> {
     use std::io::Read;
 
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 128 * 1024];
+    let mut src_file = std::fs::File::open(src)?;
+    let mut dest_file = std::fs::File::open(dest)?;
+    let mut src_buf = [0u8; 128 * 1024];
+    let mut dest_buf = [0u8; 128 * 1024];
+
     loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
+        let src_read = src_file.read(&mut src_buf)?;
+        let dest_read = dest_file.read(&mut dest_buf)?;
+
+        if src_read != dest_read {
+            return Ok(false);
         }
-        hasher.update(&buf[..n]);
+        if src_read == 0 {
+            return Ok(true);
+        }
+
+        if src_buf[..src_read] != dest_buf[..dest_read] {
+            return Ok(false);
+        }
     }
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    Ok(out)
 }
 
 fn file_matches(src: &Path, dest: &Path) -> Result<bool, HypervisorError> {
@@ -311,13 +382,7 @@ fn file_matches(src: &Path, dest: &Path) -> Result<bool, HypervisorError> {
         return Ok(false);
     }
 
-    #[cfg(feature = "download")]
-    {
-        Ok(sha256_file(src)? == sha256_file(dest)?)
-    }
-
-    #[cfg(not(feature = "download"))]
-    Ok(true)
+    files_equal(src, dest)
 }
 
 fn runtime_image_installed_up_to_date(image_id: &str) -> Result<bool, HypervisorError> {
@@ -429,18 +494,14 @@ fn ensure_runtime_image_ready(image_id: &str) -> Result<(), HypervisorError> {
     Ok(())
 }
 
-/// Ensure the built-in runtime VM exists, returning its VM id.
-pub fn ensure_runtime_vm_exists(hv: &dyn Hypervisor) -> Result<String, HypervisorError> {
+fn existing_runtime_vm(
+    hv: &dyn Hypervisor,
+) -> Result<Option<crate::hypervisor::VmInfo>, HypervisorError> {
     let name = runtime_vm_name();
-    let default_image_id = runtime_os_image_id().to_string();
-    let vms = hv.list_vms()?;
-    if let Some(vm) = vms.into_iter().find(|vm| vm.name == name) {
-        let image_id = vm.os_image.as_deref().unwrap_or(default_image_id.as_str());
-        ensure_runtime_image_ready(image_id)?;
-        return Ok(vm.id);
-    }
+    Ok(hv.list_vms()?.into_iter().find(|vm| vm.name == name))
+}
 
-    let image_id = default_image_id.as_str();
+fn create_runtime_vm(hv: &dyn Hypervisor, image_id: &str) -> Result<String, HypervisorError> {
     if crate::images::find_image(image_id).is_none() {
         return Err(HypervisorError::CreateFailed(format!(
             "Runtime OS image '{}' not found in catalog",
@@ -452,7 +513,7 @@ pub fn ensure_runtime_vm_exists(hv: &dyn Hypervisor) -> Result<String, Hyperviso
 
     let paths = crate::images::image_paths(image_id);
     let config = VmConfig {
-        name: name.to_string(),
+        name: runtime_vm_name().to_string(),
         cpus: 2,
         memory_mb: 2048,
         disk_gb: 20,
@@ -466,6 +527,36 @@ pub fn ensure_runtime_vm_exists(hv: &dyn Hypervisor) -> Result<String, Hyperviso
     };
 
     hv.create_vm(config)
+}
+
+pub fn stop_runtime_vm_if_exists(hv: &dyn Hypervisor) -> Result<(), HypervisorError> {
+    if let Some(vm) = existing_runtime_vm(hv)? {
+        let _ = hv.stop_vm(&vm.id);
+    }
+    Ok(())
+}
+
+pub fn reset_runtime_vm(hv: &dyn Hypervisor) -> Result<String, HypervisorError> {
+    let image_id = runtime_os_image_id().to_string();
+    stop_runtime_vm_if_exists(hv)?;
+
+    if let Some(vm) = existing_runtime_vm(hv)? {
+        hv.delete_vm(&vm.id)?;
+    }
+
+    create_runtime_vm(hv, image_id.as_str())
+}
+
+/// Ensure the built-in runtime VM exists, returning its VM id.
+pub fn ensure_runtime_vm_exists(hv: &dyn Hypervisor) -> Result<String, HypervisorError> {
+    let default_image_id = runtime_os_image_id().to_string();
+    if let Some(vm) = existing_runtime_vm(hv)? {
+        let image_id = vm.os_image.as_deref().unwrap_or(default_image_id.as_str());
+        ensure_runtime_image_ready(image_id)?;
+        return Ok(vm.id);
+    }
+
+    create_runtime_vm(hv, default_image_id.as_str())
 }
 
 /// Ensure the built-in runtime VM is running and the host Docker socket exists.
@@ -806,6 +897,25 @@ mod tests {
 
         let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
         assert_eq!(root, exe_dir);
+    }
+
+    #[test]
+    fn runtime_assets_root_prefers_workspace_assets_over_target_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+
+        let src_tauri_dir = dir
+            .path()
+            .join("crates")
+            .join("cratebay-gui")
+            .join("src-tauri");
+        std::fs::create_dir_all(src_tauri_dir.join(DEFAULT_RUNTIME_ASSETS_SUBDIR)).unwrap();
+
+        let exe_dir = dir.path().join("target").join("debug");
+        std::fs::create_dir_all(exe_dir.join(DEFAULT_RUNTIME_ASSETS_SUBDIR)).unwrap();
+
+        let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
+        assert_eq!(root, src_tauri_dir);
     }
 
     #[cfg(target_os = "macos")]

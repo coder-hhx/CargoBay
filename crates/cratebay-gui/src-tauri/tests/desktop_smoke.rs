@@ -2,7 +2,8 @@ use fantoccini::{Client, ClientBuilder, Locator};
 use serde_json::json;
 use std::{
     env,
-    process::Command,
+    io::{Read, Write},
+    path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::time::sleep;
@@ -27,25 +28,90 @@ impl Drop for DockerCleanup {
 }
 
 fn cleanup_container(container_name: &str) {
-    let _ = Command::new("docker")
-        .args(["rm", "-f", container_name])
-        .output();
+    #[cfg(unix)]
+    {
+        let _ = docker_request_unix("DELETE", &format!("/containers/{container_name}?force=1"));
+    }
 }
 
 fn docker_running_state(container_name: &str) -> Option<bool> {
-    let output = Command::new("docker")
-        .args(["inspect", "-f", "{{.State.Running}}", container_name])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    #[cfg(unix)]
+    {
+        let (status, body) =
+            docker_request_unix("GET", &format!("/containers/{container_name}/json")).ok()?;
+        if status == 404 {
+            return None;
+        }
+        if status != 200 {
+            return None;
+        }
+        let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+        return json
+            .get("State")
+            .and_then(|state| state.get("Running"))
+            .and_then(|running| running.as_bool());
     }
-    let state = String::from_utf8_lossy(&output.stdout);
-    match state.trim() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
+
+    #[cfg(not(unix))]
+    {
+        let _ = container_name;
+        None
     }
+}
+
+#[cfg(unix)]
+fn docker_unix_socket_path() -> Option<PathBuf> {
+    let home = env::var("HOME").unwrap_or_default();
+    [
+        cratebay_core::runtime::host_docker_socket_path().to_path_buf(),
+        PathBuf::from(format!("{home}/.colima/default/docker.sock")),
+        PathBuf::from(format!("{home}/.orbstack/run/docker.sock")),
+        PathBuf::from("/var/run/docker.sock"),
+        PathBuf::from(format!("{home}/.docker/run/docker.sock")),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+#[cfg(unix)]
+fn docker_request_unix(method: &str, path: &str) -> Result<(u16, String), String> {
+    let socket = docker_unix_socket_path().ok_or_else(|| "docker socket not found".to_string())?;
+    docker_request_unix_with_socket(&socket, method, path)
+}
+
+#[cfg(unix)]
+fn docker_request_unix_with_socket(
+    socket: &Path,
+    method: &str,
+    path: &str,
+) -> Result<(u16, String), String> {
+    use std::os::unix::net::UnixStream;
+
+    let mut stream =
+        UnixStream::connect(socket).map_err(|e| format!("connect {}: {e}", socket.display()))?;
+    stream
+        .write_all(
+            format!("{method} {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .map_err(|e| format!("write {method} {path}: {e}"))?;
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|e| format!("read {method} {path}: {e}"))?;
+
+    let response = String::from_utf8_lossy(&response);
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| format!("invalid HTTP response for {method} {path}"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| format!("invalid status line: {status_line}"))?;
+    Ok((status, body.to_string()))
 }
 
 fn sanitize_test_key(raw: &str) -> String {
@@ -365,15 +431,6 @@ async fn desktop_shell_renders_and_navigates() {
 #[tokio::test]
 #[ignore = "requires Linux desktop automation runtime"]
 async fn desktop_shell_runs_container_lifecycle() {
-    let docker_info = Command::new("docker")
-        .arg("info")
-        .output()
-        .expect("docker info should run");
-    assert!(
-        docker_info.status.success(),
-        "docker daemon should be available for desktop runtime smoke"
-    );
-
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time")

@@ -179,23 +179,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch CrateBay Runtime assets (macOS only)
-        if: runner.os == 'macOS'
-        run: |
-          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
-          bash scripts/fetch-runtime-assets.sh "${arch}"
-
-      - name: Fetch CrateBay Runtime assets (Windows WSL2 only)
+      - name: Build CrateBay Runtime assets (Windows WSL2 only)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
-          bash scripts/fetch-wsl-runtime-assets.sh "${arch}"
+          bash scripts/build-runtime-assets-wsl.sh "${arch}"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install macOS runtime asset build dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install squashfs zig
+          cargo install cargo-zigbuild --locked --force
+
+      - name: Add Linux musl target for bundled runtime
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
+          rustup target add "${arch}-unknown-linux-musl"
+
+      - name: Build CrateBay Runtime assets (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
+          bash scripts/build-runtime-assets-alpine.sh "${arch}"
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3

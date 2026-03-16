@@ -35,15 +35,57 @@ RUST_TARGET="$(rustc -vV | grep host | awk '{print $2}')"  # e.g. aarch64-apple-
 GUI_CRATE="crates/cratebay-gui"
 TAURI_DIR="$GUI_CRATE/src-tauri"
 
+ensure_node_runtime() {
+    if command -v node >/dev/null 2>&1; then
+        local current_major
+        current_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+        if (( current_major >= 22 )); then
+            return 0
+        fi
+    fi
+
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+        # shellcheck disable=SC1090
+        . "$NVM_DIR/nvm.sh"
+        for candidate in 24 22 --lts; do
+            if nvm use "$candidate" >/dev/null 2>&1; then
+                local nvm_major
+                nvm_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+                if (( nvm_major >= 22 )); then
+                    return 0
+                fi
+            fi
+        done
+    fi
+
+    return 1
+}
+
+if ! ensure_node_runtime; then
+    if command -v node >/dev/null 2>&1; then
+        echo "ERROR: Node.js 22+ is required. Current: $(node -v)"
+    else
+        echo "ERROR: Node.js 22+ is required."
+    fi
+    echo "Use: nvm install 24 && nvm use 24"
+    exit 1
+fi
+
 echo "=== CrateBay macOS Release Build ==="
 echo "  Version : $VERSION"
 echo "  Arch    : $ARCH"
 echo "  Target  : $RUST_TARGET"
 echo ""
 
-# ── Step 0: Fetch bundled runtime assets (macOS) ─────────────────────────────
-echo "── [0/6] Fetching CrateBay Runtime assets ──"
-bash scripts/fetch-runtime-assets.sh "$ARCH"
+# ── Step 0: Build bundled runtime assets (macOS) ─────────────────────────────
+runtime_arch="$ARCH"
+if [[ "$runtime_arch" == "arm64" ]]; then
+    runtime_arch="aarch64"
+fi
+
+echo "── [0/6] Building CrateBay Runtime assets ──"
+bash scripts/build-runtime-assets-alpine.sh "$runtime_arch"
 
 # ── Step 1: Build daemon & CLI ───────────────────────────────────────────────
 echo "── [1/6] Building daemon and CLI (release) ──"

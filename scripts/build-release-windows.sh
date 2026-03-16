@@ -37,6 +37,33 @@ GUI_CRATE="crates/cratebay-gui"
 TAURI_DIR="$GUI_CRATE/src-tauri"
 DIST_DIR="$REPO_ROOT/dist"
 
+ensure_node_runtime() {
+    if command -v node >/dev/null 2>&1; then
+        local current_major
+        current_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+        if (( current_major >= 22 )); then
+            return 0
+        fi
+    fi
+
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+        # shellcheck disable=SC1090
+        . "$NVM_DIR/nvm.sh"
+        for candidate in 24 22 --lts; do
+            if nvm use "$candidate" >/dev/null 2>&1; then
+                local nvm_major
+                nvm_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+                if (( nvm_major >= 22 )); then
+                    return 0
+                fi
+            fi
+        done
+    fi
+
+    return 1
+}
+
 SKIP_GUI=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,9 +78,19 @@ echo "  Arch    : $ARCH"
 echo "  Target  : $RUST_TARGET"
 echo ""
 
-# ── Step 0: Fetch bundled runtime assets (Windows WSL2) ──────────────────────
-echo "── [0/5] Fetching CrateBay WSL Runtime assets ──"
-bash scripts/fetch-wsl-runtime-assets.sh "$ARCH"
+if ! ensure_node_runtime; then
+    if command -v node >/dev/null 2>&1; then
+        echo "ERROR: Node.js 22+ is required. Current: $(node -v)"
+    else
+        echo "ERROR: Node.js 22+ is required."
+    fi
+    echo "Use: nvm install 24 && nvm use 24"
+    exit 1
+fi
+
+# ── Step 0: Build bundled runtime assets (Windows WSL2) ──────────────────────
+echo "── [0/5] Building CrateBay WSL Runtime assets ──"
+bash scripts/build-runtime-assets-wsl.sh "$ARCH"
 
 # ── Step 1: Build daemon & CLI ───────────────────────────────────────────────
 echo "── [1/5] Building daemon and CLI (release) ──"

@@ -32,6 +32,43 @@ if [[ -z "$rust_target" ]]; then
   exit 1
 fi
 
+ensure_node_runtime() {
+  if command -v node >/dev/null 2>&1; then
+    local current_major
+    current_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+    if (( current_major >= 22 )); then
+      return 0
+    fi
+  fi
+
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh"
+    for candidate in 24 22 --lts; do
+      if nvm use "$candidate" >/dev/null 2>&1; then
+        local nvm_major
+        nvm_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+        if (( nvm_major >= 22 )); then
+          return 0
+        fi
+      fi
+    done
+  fi
+
+  return 1
+}
+
+if ! ensure_node_runtime; then
+  if command -v node >/dev/null 2>&1; then
+    echo "ERROR: Node.js 22+ is required. Current: $(node -v)" >&2
+  else
+    echo "ERROR: Node.js 22+ is required." >&2
+  fi
+  echo "Use: nvm install 24 && nvm use 24" >&2
+  exit 1
+fi
+
 echo "== Prepare bundled runtime assets (${runtime_arch}) =="
 bash "$repo_root/scripts/build-runtime-assets-alpine.sh" "$runtime_arch"
 

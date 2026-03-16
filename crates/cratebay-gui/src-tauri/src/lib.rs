@@ -23,7 +23,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
@@ -223,6 +223,104 @@ fn wait_for_docker_socket_ready(sock: &Path, timeout: Duration) -> Result<(), St
     ))
 }
 
+#[cfg(target_os = "macos")]
+static MACOS_RUNTIME_CONNECT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn macos_runtime_connect_lock() -> &'static Mutex<()> {
+    MACOS_RUNTIME_CONNECT_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(target_os = "macos")]
+fn prime_macos_runtime_assets_env() {
+    if std::env::var_os("CRATEBAY_RUNTIME_ASSETS_DIR").is_none() {
+        if let Some(dir) = cratebay_core::runtime::bundled_runtime_assets_dir() {
+            std::env::set_var("CRATEBAY_RUNTIME_ASSETS_DIR", dir);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn connect_cratebay_runtime_docker() -> Result<Docker, String> {
+    let _guard = macos_runtime_connect_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    if std::env::var_os("CRATEBAY_RUNTIME_ASSETS_DIR").is_none() {
+        if let Some(dir) = cratebay_core::runtime::bundled_runtime_assets_dir() {
+            std::env::set_var("CRATEBAY_RUNTIME_ASSETS_DIR", dir);
+        }
+    }
+
+    let cratebay_sock = cratebay_core::runtime::host_docker_socket_path().to_path_buf();
+    if cratebay_sock.exists() && docker_ping_unix_socket(&cratebay_sock).is_ok() {
+        return Docker::connect_with_socket(
+            cratebay_sock
+                .to_str()
+                .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
+            120,
+            bollard::API_DEFAULT_VERSION,
+        )
+        .map_err(|e| {
+            format!(
+                "Failed to connect to CrateBay Runtime at {}: {}",
+                cratebay_sock.display(),
+                e
+            )
+        });
+    }
+
+    let hv = cratebay_core::create_hypervisor();
+    let start_attempt = |label: &str| -> Result<String, String> {
+        let vm_id = cratebay_core::runtime::ensure_runtime_vm_running(hv.as_ref())
+            .map_err(|e| format!("{} failed to start CrateBay Runtime VM: {}", label, e))?;
+        wait_for_docker_socket_ready(&cratebay_sock, Duration::from_secs(45)).map_err(|e| {
+            format!(
+                "{} failed waiting for Docker socket (vm: {}, sock: {}): {}",
+                label,
+                vm_id,
+                cratebay_sock.display(),
+                e
+            )
+        })?;
+        Ok(vm_id)
+    };
+
+    let start_runtime = || -> Result<String, String> {
+        if let Ok(vm_id) = start_attempt("start") {
+            return Ok(vm_id);
+        }
+
+        let _ = cratebay_core::runtime::stop_runtime_vm_if_exists(hv.as_ref());
+        let _ = std::fs::remove_file(&cratebay_sock);
+        if let Ok(vm_id) = start_attempt("restart") {
+            return Ok(vm_id);
+        }
+
+        let _ = cratebay_core::runtime::stop_runtime_vm_if_exists(hv.as_ref());
+        let _ = std::fs::remove_file(&cratebay_sock);
+        cratebay_core::runtime::reset_runtime_vm(hv.as_ref())
+            .map_err(|e| format!("reset failed to recreate CrateBay Runtime VM: {}", e))?;
+        start_attempt("reset")
+    };
+
+    let _vm_id = start_runtime()?;
+    Docker::connect_with_socket(
+        cratebay_sock
+            .to_str()
+            .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
+        120,
+        bollard::API_DEFAULT_VERSION,
+    )
+    .map_err(|e| {
+        format!(
+            "Failed to connect to CrateBay Runtime at {}: {}",
+            cratebay_sock.display(),
+            e
+        )
+    })
+}
+
 fn connect_docker() -> Result<Docker, String> {
     // Check DOCKER_HOST env first
     if std::env::var("DOCKER_HOST").is_ok() {
@@ -251,28 +349,7 @@ fn connect_docker() -> Result<Docker, String> {
         // No runtime detected; start the built-in runtime on macOS.
         #[cfg(target_os = "macos")]
         {
-            let hv = cratebay_core::create_hypervisor();
-            let vm_id = cratebay_core::runtime::ensure_runtime_vm_running(hv.as_ref())
-                .map_err(|e| format!("Failed to start CrateBay Runtime VM: {}", e))?;
-
-            let cratebay_sock = cratebay_core::runtime::host_docker_socket_path().to_path_buf();
-            wait_for_docker_socket_ready(&cratebay_sock, Duration::from_secs(45))
-                .map_err(|e| format!("{} (vm: {}, sock: {})", e, vm_id, cratebay_sock.display()))?;
-
-            return Docker::connect_with_socket(
-                cratebay_sock
-                    .to_str()
-                    .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
-                120,
-                bollard::API_DEFAULT_VERSION,
-            )
-            .map_err(|e| {
-                format!(
-                    "Failed to connect to CrateBay Runtime at {}: {}",
-                    cratebay_sock.display(),
-                    e
-                )
-            });
+            return connect_cratebay_runtime_docker();
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -383,52 +460,7 @@ fn docker_runtime_quick_setup_macos() -> Result<String, String> {
         }
     }
 
-    let hv = cratebay_core::create_hypervisor();
-    let vm_id = cratebay_core::runtime::ensure_runtime_vm_running(hv.as_ref())
-        .map_err(|e| format!("Failed to start CrateBay Runtime VM: {}", e))?;
-
-    let handle = tokio::runtime::Handle::try_current()
-        .map_err(|e| format!("No tokio runtime available for Docker check: {}", e))?;
-    let ok = handle.block_on(async {
-        let sock_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while !cratebay_sock.exists() {
-            if tokio::time::Instant::now() >= sock_deadline {
-                return Err(format!(
-                    "CrateBay Runtime VM started ({}), but Docker socket was not created at {}",
-                    vm_id,
-                    cratebay_sock.display()
-                ));
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-
-        let docker = Docker::connect_with_socket(
-            cratebay_sock
-                .to_str()
-                .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
-            120,
-            bollard::API_DEFAULT_VERSION,
-        )
-        .map_err(|e| format!("Failed to connect to Docker socket: {}", e))?;
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            match docker.version().await {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(format!(
-                            "Docker runtime is not responding yet (vm: {}). Last error: {}",
-                            vm_id, e
-                        ));
-                    }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-    });
-
-    ok.map(|_| {
+    connect_cratebay_runtime_docker().map(|_| {
         format!(
             "CrateBay Runtime is running. Docker socket: {}",
             cratebay_sock.display()
@@ -8241,6 +8273,8 @@ exec "$target" "$@"
 }
 
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    prime_macos_runtime_assets_env();
     cratebay_core::logging::init();
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()

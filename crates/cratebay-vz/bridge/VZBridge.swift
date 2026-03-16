@@ -64,6 +64,24 @@ private func setError(_ out: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
     out?.pointee = makeError(msg)
 }
 
+private func selectedBridgedInterface() -> VZBridgedNetworkInterface? {
+    let available = VZBridgedNetworkInterface.networkInterfaces
+    guard !available.isEmpty else { return nil }
+
+    if let requested = ProcessInfo.processInfo.environment["CRATEBAY_VZ_BRIDGED_INTERFACE"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       !requested.isEmpty,
+       let exact = available.first(where: { $0.identifier == requested }) {
+        return exact
+    }
+
+    if let wifi = available.first(where: { $0.identifier == "en0" }) {
+        return wifi
+    }
+
+    return available.first
+}
+
 // MARK: - C API implementation
 
 @_cdecl("vz_free_string")
@@ -183,9 +201,16 @@ public func vz_create_and_start_vm(
     let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
     vzConfig.storageDevices = [blockDevice]
 
-    // --- Network (NAT) ---
+    // --- Network (default NAT; bridged is explicit opt-in) ---
     let networkDevice = VZVirtioNetworkDeviceConfiguration()
-    networkDevice.attachment = VZNATNetworkDeviceAttachment()
+    let requestedMode = ProcessInfo.processInfo.environment["CRATEBAY_VZ_NETWORK_MODE"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    if requestedMode == "bridged", let bridged = selectedBridgedInterface() {
+        networkDevice.attachment = VZBridgedNetworkDeviceAttachment(interface: bridged)
+    } else {
+        networkDevice.attachment = VZNATNetworkDeviceAttachment()
+    }
     vzConfig.networkDevices = [networkDevice]
 
     // --- Virtio socket (vsock) ---

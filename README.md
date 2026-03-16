@@ -20,6 +20,6 @@
 - CrateBay v1.0 is now live (download from GitHub Releases).
 - The public v1 scope is focused on local AI sandboxes, local models, MCP servers, and provider / CLI bridges.
 - Containers remain the supporting runtime underneath those workflows.
-- On macOS and Windows, CrateBay ships a built-in Docker-compatible runtime (macOS: lightweight VM; Windows: WSL2) so users don't need to install Docker Desktop for CrateBay to work.
+- On macOS and Windows, CrateBay ships a built-in Docker-compatible runtime (macOS: lightweight VM; Windows: WSL2) so users don't need Docker Desktop, Colima, `docker`, or `docker compose` for CrateBay itself to work.
 - VMs and Kubernetes remain experimental post-v1 tracks until dedicated runner validation is in place.
 - Public updates will be shared through releases and changelog entries when they are ready.

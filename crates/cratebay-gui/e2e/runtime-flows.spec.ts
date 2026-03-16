@@ -7,6 +7,8 @@ test("runs container, image, and volume flows end-to-end", async ({ page }) => {
   await page.getByTestId("nav-containers").click()
   await page.getByTestId("containers-run").click()
   const runContainerDialog = page.getByTestId("containers-dialog-run")
+  await expect(runContainerDialog.getByTestId("containers-run-cpus")).toHaveValue("2")
+  await expect(runContainerDialog.getByTestId("containers-run-memory")).toHaveValue("512")
   await runContainerDialog.getByPlaceholder("nginx:latest").fill("redis:7")
   await runContainerDialog.getByPlaceholder("my-container").fill("e2e-redis")
   await runContainerDialog.getByRole("button", { name: "Create" }).click()
@@ -20,6 +22,8 @@ test("runs container, image, and volume flows end-to-end", async ({ page }) => {
   await page.getByRole("button", { name: "Run" }).first().click()
 
   const imageRunDialog = page.getByTestId("images-dialog-run")
+  await expect(imageRunDialog.getByTestId("images-run-cpus")).toHaveValue("2")
+  await expect(imageRunDialog.getByTestId("images-run-memory")).toHaveValue("512")
   await imageRunDialog.getByRole("textbox").nth(1).fill("search-redis")
   await imageRunDialog.getByRole("button", { name: "Create" }).click()
   await expect(imageRunDialog).toContainText("docker exec -it")

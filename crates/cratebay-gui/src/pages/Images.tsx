@@ -99,6 +99,9 @@ export function Images({
   pushRef, setPushRef, pushLoading,
   onSearch, onTags, onRun, onLoad, onPush, onCopy, t,
 }: ImagesProps) {
+  const DEFAULT_RUN_CPUS = 2
+  const DEFAULT_RUN_MEM_MB = 512
+
   const [showRunModal, setShowRunModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [activeTab, setActiveTab] = useState<"local" | "search">("local")
@@ -206,6 +209,9 @@ export function Images({
   const openRunWithImage = (ref: string) => {
     setRunImage(ref)
     setRunName("")
+    setRunCpus(DEFAULT_RUN_CPUS)
+    setRunMem(DEFAULT_RUN_MEM_MB)
+    setRunPull(true)
     setRunResult(null)
     setShowRunModal(true)
   }
@@ -531,6 +537,7 @@ export function Images({
               <div className="grid gap-2">
                 <div className="text-sm font-medium">{t("cpus")}</div>
                 <Input
+                  data-testid="images-run-cpus"
                   type="number"
                   min={1}
                   value={runCpus}
@@ -540,6 +547,7 @@ export function Images({
               <div className="grid gap-2">
                 <div className="text-sm font-medium">{t("memoryMb")}</div>
                 <Input
+                  data-testid="images-run-memory"
                   type="number"
                   min={64}
                   value={runMem}

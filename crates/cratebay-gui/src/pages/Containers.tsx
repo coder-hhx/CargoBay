@@ -875,6 +875,7 @@ export function Containers({
               <div>
                 <label className="text-xs font-semibold text-muted-foreground">{t("cpus")}</label>
                 <Input
+                  data-testid="containers-run-cpus"
                   type="number"
                   min={1}
                   value={runCpus}
@@ -888,6 +889,7 @@ export function Containers({
               <div>
                 <label className="text-xs font-semibold text-muted-foreground">{t("memoryMb")}</label>
                 <Input
+                  data-testid="containers-run-memory"
                   type="number"
                   min={64}
                   value={runMem}

@@ -247,6 +247,78 @@ cp "$tmp_dir/cratebay-guest-agent" "$tmp_dir/initrd-root/usr/local/bin/cratebay-
 chmod 0755 "$tmp_dir/initrd-root/usr/local/bin/cratebay-guest-agent"
 
 echo ""
+echo "== Write udhcpc DHCP script =="
+mkdir -p "$tmp_dir/initrd-root/usr/share/udhcpc"
+cat >"$tmp_dir/initrd-root/usr/share/udhcpc/default.script" <<'SH'
+#!/bin/sh
+set -eu
+
+RESOLV_CONF=/etc/resolv.conf
+
+mask_to_prefix() {
+  local mask="$1"
+  local prefix=0
+  local octet
+
+  old_ifs="$IFS"
+  IFS=.
+  set -- $mask
+  IFS="$old_ifs"
+
+  for octet in "$@"; do
+    case "$octet" in
+      255) prefix=$((prefix + 8)) ;;
+      254) prefix=$((prefix + 7)) ;;
+      252) prefix=$((prefix + 6)) ;;
+      248) prefix=$((prefix + 5)) ;;
+      240) prefix=$((prefix + 4)) ;;
+      224) prefix=$((prefix + 3)) ;;
+      192) prefix=$((prefix + 2)) ;;
+      128) prefix=$((prefix + 1)) ;;
+      0) ;;
+      *) echo 24; return ;;
+    esac
+  done
+
+  echo "$prefix"
+}
+
+case "$1" in
+  deconfig)
+    ip addr flush dev "$interface" || true
+    ip link set "$interface" up || true
+    ;;
+  renew|bound)
+    ip addr flush dev "$interface" || true
+    if [ -n "${subnet:-}" ]; then
+      ip addr add "$ip/$(mask_to_prefix "$subnet")" dev "$interface"
+    elif [ -n "${mask:-}" ]; then
+      ip addr add "$ip/$(mask_to_prefix "$mask")" dev "$interface"
+    else
+      ip addr add "$ip/24" dev "$interface"
+    fi
+
+    ip link set "$interface" up || true
+    ip route del default dev "$interface" 2>/dev/null || true
+    metric=0
+    for router_ip in ${router:-}; do
+      ip route add default via "$router_ip" dev "$interface" metric "$metric" 2>/dev/null || \
+        ip route replace default via "$router_ip" dev "$interface" metric "$metric" || true
+      metric=$((metric + 1))
+    done
+
+    : > "$RESOLV_CONF"
+    for dns_ip in ${dns:-}; do
+      echo "nameserver $dns_ip" >> "$RESOLV_CONF"
+    done
+    ;;
+esac
+
+exit 0
+SH
+chmod 0755 "$tmp_dir/initrd-root/usr/share/udhcpc/default.script"
+
+echo ""
 echo "== Write /init (runtime entrypoint) =="
 cat >"$tmp_dir/initrd-root/init" <<'SH'
 #!/bin/sh
@@ -279,6 +351,20 @@ fi
 
 log() {
   echo "[cratebay-runtime] $*"
+  printf '<6>[cratebay-runtime] %s\n' "$*" >/dev/kmsg 2>/dev/null || true
+}
+
+cmdline_value() {
+  key="$1"
+  for arg in $(cat /proc/cmdline 2>/dev/null); do
+    case "$arg" in
+      "$key"=*)
+        printf '%s' "${arg#*=}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
 }
 
 log "booting..."
@@ -340,12 +426,41 @@ ip link set lo up >/dev/null 2>&1 || true
 iface="$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | head -n 1 || true)"
 if [ -n "$iface" ]; then
   ip link set "$iface" up >/dev/null 2>&1 || true
-  udhcpc -i "$iface" -q -t 5 -T 3 -n >/dev/null 2>&1 || true
+  udhcpc -i "$iface" -q -t 5 -T 3 -n -s /usr/share/udhcpc/default.script >/dev/null 2>&1 || true
 
   # Surface the guest IP for the host-side runner (used for TCP forwarding).
   ip4="$(ip -4 -o addr show dev "$iface" scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1 || true)"
   if [ -n "$ip4" ]; then
     log "guest_ip=${ip4}"
+  fi
+
+  ip route add default via 192.168.64.1 dev "$iface" >/dev/null 2>&1 || true
+  runtime_dns="$(cmdline_value cratebay_dns || true)"
+  if [ -n "$runtime_dns" ]; then
+    : > /etc/resolv.conf
+    old_ifs="$IFS"
+    IFS=,
+    set -- $runtime_dns
+    IFS="$old_ifs"
+    for dns_ip in "$@"; do
+      [ -n "$dns_ip" ] && echo "nameserver $dns_ip" >> /etc/resolv.conf
+    done
+  elif [ ! -s /etc/resolv.conf ]; then
+    printf 'nameserver 192.168.64.1\n' >/etc/resolv.conf
+  fi
+  log "net_debug routes=$(ip route 2>/dev/null | tr '\n' ';' || true)"
+  log "net_debug resolv=$(tr '\n' ';' </etc/resolv.conf 2>/dev/null || true)"
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z -w 2 1.1.1.1 443 >/dev/null 2>&1; then
+      log "net_debug egress_1_1_1_1=ok"
+    else
+      log "net_debug egress_1_1_1_1=fail"
+    fi
+    if nc -z -w 2 quay.io 443 >/dev/null 2>&1; then
+      log "net_debug egress_quay_443=ok"
+    else
+      log "net_debug egress_quay_443=fail"
+    fi
   fi
 fi
 
@@ -370,10 +485,39 @@ sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
 sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
 
-dockerd \
+runtime_http_proxy="$(cmdline_value cratebay_http_proxy || true)"
+if [ -n "$runtime_http_proxy" ]; then
+  export HTTP_PROXY="http://${runtime_http_proxy}"
+  export HTTPS_PROXY="http://${runtime_http_proxy}"
+  export http_proxy="$HTTP_PROXY"
+  export https_proxy="$HTTPS_PROXY"
+  export NO_PROXY="127.0.0.1,localhost,::1"
+  export no_proxy="$NO_PROXY"
+  log "docker_proxy=${HTTP_PROXY}"
+fi
+export DOCKER_RAMDISK=1
+
+mkdir -p /etc/docker
+daemon_config=/etc/docker/daemon.json
+if [ -n "$runtime_http_proxy" ]; then
+  cat >"$daemon_config" <<EOF
+{
+  "proxies": {
+    "http-proxy": "http://${runtime_http_proxy}",
+    "https-proxy": "http://${runtime_http_proxy}",
+    "no-proxy": "127.0.0.1,localhost,::1"
+  }
+}
+EOF
+else
+  printf '{}\n' >"$daemon_config"
+fi
+
+set -- dockerd \
+  --config-file="$daemon_config" \
   --host=unix:///var/run/docker.sock \
-  --data-root=/var/lib/docker \
-  &
+  --data-root=/var/lib/docker
+"$@" &
 dockerd_pid="$!"
 
 for _ in $(seq 1 400); do

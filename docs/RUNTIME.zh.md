@@ -1,6 +1,6 @@
 # CrateBay Runtime（内置 Docker Engine）
 
-CrateBay Runtime 是一台轻量 Linux VM，为 CrateBay（GUI + CLI）提供 Docker 兼容 API，从而避免用户必须安装 Colima / Docker Desktop / OrbStack。
+CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS 上是轻量 Linux VM，在 Windows 上是随应用打包的 WSL2 发行版。CrateBay 的 GUI + CLI 可直接使用它，不要求用户再安装 Docker Desktop、Colima、`docker` 或 `docker compose`。
 
 ## macOS 架构（Virtualization.framework）
 
@@ -46,6 +46,8 @@ export DOCKER_HOST=unix://$HOME/.cratebay/run/docker.sock
 
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 
+Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `rootfs.tar`，再把它嵌入安装包，因此终端用户不会在首次运行时再触发运行时下载。
+
 ## 运行时镜像
 
 CrateBay 将 Runtime VM 视作一种 OS image：
@@ -72,6 +74,7 @@ CrateBay 将 Runtime VM 视作一种 OS image：
 - `CRATEBAY_DOCKER_VSOCK_PORT`：proxy 端口的历史名称（兼容）
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`：覆盖使用哪个 OS image id
 - `CRATEBAY_RUNTIME_ASSETS_DIR`：覆盖内置 runtime 资产目录
+- `CRATEBAY_RUNTIME_HTTP_PROXY`：覆盖 runtime 拉取镜像时使用的代理（macOS 在未显式设置时也会回退读取 `scutil --proxy` 的系统代理）
 - `CRATEBAY_VZ_RUNNER_PATH`：覆盖 macOS VM runner 二进制路径
 - `CRATEBAY_WSL_DOCKER_PORT`：覆盖 WSL 内 dockerd 的 TCP 端口（仅 Windows）
 - `CRATEBAY_WSL_ROOTFS_TAR`：覆盖 WSL rootfs tar 的路径（仅 Windows）

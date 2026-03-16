@@ -12,7 +12,7 @@ use crate::hypervisor::{
 };
 use crate::images;
 use crate::store::{data_dir, next_id_for_prefix, VmStore};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -45,6 +45,11 @@ struct VmEntry {
     initrd_path: Option<String>,
     /// Kernel command line (from os_image catalog or env var).
     cmdline: Option<String>,
+}
+
+struct RuntimeHttpProxyConfig {
+    guest_endpoint: String,
+    host_tcp_forward: Option<String>,
 }
 
 fn vm_dir(id: &str) -> PathBuf {
@@ -81,7 +86,294 @@ fn pid_alive(pid: u32) -> bool {
     matches!(err.raw_os_error(), Some(libc::EPERM))
 }
 
+fn vm_runner_processes(id: &str) -> Vec<u32> {
+    let disk = vm_disk_path(id);
+    let ready = vm_runner_ready_path(id);
+    let console = vm_console_log_path(id);
+    let current_uid = unsafe { libc::geteuid() } as u32;
+
+    let output = match Command::new("ps")
+        .args(["-axww", "-o", "pid=,uid=,command="])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => return Vec::new(),
+    };
+
+    let disk = disk.to_string_lossy();
+    let ready = ready.to_string_lossy();
+    let console = console.to_string_lossy();
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let pid = parts.next()?.parse::<u32>().ok()?;
+            let uid = parts.next()?.parse::<u32>().ok()?;
+            if uid != current_uid {
+                return None;
+            }
+
+            let command = parts.collect::<Vec<_>>().join(" ");
+            if !command.contains("cratebay-vz") {
+                return None;
+            }
+            if command.contains(disk.as_ref())
+                || command.contains(ready.as_ref())
+                || command.contains(console.as_ref())
+            {
+                return Some(pid);
+            }
+
+            None
+        })
+        .collect()
+}
+
+fn terminate_runner_pids(id: &str, pids: &[u32], reason: &str) {
+    if pids.is_empty() {
+        return;
+    }
+
+    warn!(
+        "Terminating {} VZ runner process(es) for VM {} ({}): {:?}",
+        pids.len(),
+        id,
+        reason,
+        pids
+    );
+
+    for pid in pids {
+        if pid_alive(*pid) {
+            let _ = unsafe { libc::kill(*pid as i32, libc::SIGTERM) };
+        }
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if pids.iter().all(|pid| !pid_alive(*pid)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    for pid in pids {
+        if pid_alive(*pid) {
+            warn!(
+                "Runner process {} for VM {} did not stop gracefully during {}, sending SIGKILL",
+                pid, id, reason
+            );
+            let _ = unsafe { libc::kill(*pid as i32, libc::SIGKILL) };
+        }
+    }
+}
+
+fn cleanup_stray_runner_processes(id: &str, preserve_pid: Option<u32>, reason: &str) -> Vec<u32> {
+    let stray = vm_runner_processes(id)
+        .into_iter()
+        .filter(|pid| Some(*pid) != preserve_pid)
+        .collect::<Vec<_>>();
+    terminate_runner_pids(id, &stray, reason);
+    stray
+}
+
+fn wait_for_child_exit(
+    child: &mut Child,
+    timeout: Duration,
+) -> Result<Option<std::process::ExitStatus>, std::io::Error> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 impl MacOSHypervisor {
+    fn allocate_runtime_host_proxy_port() -> Result<u16, HypervisorError> {
+        for port in 3128..=3228 {
+            if std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).is_ok() {
+                return Ok(port);
+            }
+        }
+
+        Err(HypervisorError::CreateFailed(
+            "Failed to allocate a host proxy bridge port for CrateBay Runtime".into(),
+        ))
+    }
+
+    fn parse_runtime_http_proxy(raw: &str) -> Option<(String, u16, bool)> {
+        let mut value = raw.trim();
+        if value.is_empty() {
+            return None;
+        }
+
+        if let Some(stripped) = value.strip_prefix("http://") {
+            value = stripped;
+        } else if let Some(stripped) = value.strip_prefix("https://") {
+            value = stripped;
+        }
+
+        let value = value.split('/').next()?.trim();
+        if value.is_empty() {
+            return None;
+        }
+
+        let (host, port) = if value.starts_with('[') {
+            let end = value.find(']')?;
+            let host = &value[1..end];
+            let port = value[end + 1..].strip_prefix(':')?.parse::<u16>().ok()?;
+            (host, port)
+        } else {
+            let colon = value.rfind(':')?;
+            let host = &value[..colon];
+            let port = value[colon + 1..].parse::<u16>().ok()?;
+            (host, port)
+        };
+
+        if port == 0 {
+            return None;
+        }
+
+        let host = host.trim();
+        if host.is_empty() {
+            return None;
+        }
+
+        let is_loopback = matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]");
+        let host = if is_loopback {
+            "127.0.0.1".to_string()
+        } else {
+            host.to_string()
+        };
+
+        Some((host, port, is_loopback))
+    }
+
+    fn runtime_http_proxy() -> Option<RuntimeHttpProxyConfig> {
+        let make_config = |host: String, port: u16, is_loopback: bool| -> Option<_> {
+            if is_loopback {
+                let bind_port = Self::allocate_runtime_host_proxy_port().ok()?;
+                return Some(RuntimeHttpProxyConfig {
+                    guest_endpoint: format!("192.168.64.1:{}", bind_port),
+                    host_tcp_forward: Some(format!("0.0.0.0:{}={}:{}", bind_port, host, port)),
+                });
+            }
+
+            Some(RuntimeHttpProxyConfig {
+                guest_endpoint: format!("{}:{}", host, port),
+                host_tcp_forward: None,
+            })
+        };
+
+        if let Ok(raw) = std::env::var("CRATEBAY_RUNTIME_HTTP_PROXY") {
+            if let Some((host, port, is_loopback)) = Self::parse_runtime_http_proxy(&raw) {
+                return make_config(host, port, is_loopback);
+            }
+        }
+
+        let output = Command::new("scutil").arg("--proxy").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut values = HashMap::<String, String>::new();
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            let Some((key, value)) = trimmed.split_once(" : ") else {
+                continue;
+            };
+            values.insert(key.trim().to_string(), value.trim().to_string());
+        }
+
+        let candidates = [
+            ("HTTPSEnable", "HTTPSProxy", "HTTPSPort"),
+            ("HTTPEnable", "HTTPProxy", "HTTPPort"),
+        ];
+        for (enable_key, host_key, port_key) in candidates {
+            if values.get(enable_key).is_some_and(|value| value == "1") {
+                let host = values.get(host_key)?;
+                let port = values.get(port_key)?;
+                if let Some((host, port, is_loopback)) =
+                    Self::parse_runtime_http_proxy(&format!("{}:{}", host, port))
+                {
+                    return make_config(host, port, is_loopback);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn push_runtime_dns_server(servers: &mut Vec<String>, seen: &mut HashSet<String>, value: &str) {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let Ok(addr) = trimmed.parse::<std::net::Ipv4Addr>() else {
+            return;
+        };
+
+        if addr.is_unspecified() || addr.is_loopback() || addr.is_link_local() {
+            return;
+        }
+
+        let octets = addr.octets();
+        if octets == [192, 168, 64, 1] {
+            return;
+        }
+        if octets[0] == 198 && matches!(octets[1], 18 | 19) {
+            return;
+        }
+
+        let server = addr.to_string();
+        if seen.insert(server.clone()) {
+            servers.push(server);
+        }
+    }
+
+    fn runtime_dns_servers() -> Vec<String> {
+        const DEFAULT_DNS_SERVERS: &[&str] = &["1.1.1.1", "8.8.8.8"];
+
+        let mut servers = Vec::new();
+        let mut seen = HashSet::new();
+
+        if let Ok(raw) = std::env::var("CRATEBAY_RUNTIME_DNS") {
+            for item in raw.split([',', ' ', '\t', '\n']) {
+                Self::push_runtime_dns_server(&mut servers, &mut seen, item);
+            }
+            if !servers.is_empty() {
+                return servers;
+            }
+        }
+
+        if let Ok(output) = Command::new("scutil").arg("--dns").output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if !line.contains("nameserver") {
+                        continue;
+                    }
+                    if let Some((_, value)) = line.split_once(':') {
+                        Self::push_runtime_dns_server(&mut servers, &mut seen, value);
+                    }
+                }
+            }
+        }
+
+        for server in DEFAULT_DNS_SERVERS {
+            Self::push_runtime_dns_server(&mut servers, &mut seen, server);
+        }
+
+        servers
+    }
+
     pub fn new() -> Self {
         let store = VmStore::new();
         let loaded = match store.load_vms() {
@@ -179,17 +471,31 @@ impl MacOSHypervisor {
             return PathBuf::from(path);
         }
 
+        let mut sibling_candidate = None;
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 let candidate = dir.join("cratebay-vz");
-                if candidate.is_file() {
+                let is_app_bundle_runner = dir
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|name| name == "MacOS")
+                    && dir
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|name| name == "Contents");
+
+                if is_app_bundle_runner && candidate.is_file() {
                     return candidate;
                 }
+
+                sibling_candidate = Some(candidate);
             }
         }
 
         // Allow the CLI to find the runner binary shipped inside the desktop
-        // app bundle (when the CLI is installed separately).
+        // app bundle (when the CLI is installed separately or run from a local
+        // build tree where the adjacent runner binary is not entitled).
         if let Ok(home) = std::env::var("HOME") {
             let candidates = [
                 PathBuf::from("/Applications/CrateBay.app/Contents/MacOS/cratebay-vz"),
@@ -207,6 +513,12 @@ impl MacOSHypervisor {
             }
         } else {
             let candidate = PathBuf::from("/Applications/CrateBay.app/Contents/MacOS/cratebay-vz");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+
+        if let Some(candidate) = sibling_candidate {
             if candidate.is_file() {
                 return candidate;
             }
@@ -238,10 +550,40 @@ impl MacOSHypervisor {
             .or_else(|| std::env::var("CRATEBAY_VZ_INITRD").ok());
 
         // Use VM-specific cmdline (from OS image catalog), then env var, then default.
-        let cmdline = vm_cmdline
+        let mut cmdline = vm_cmdline
             .map(|s| s.to_string())
             .or_else(|| std::env::var("CRATEBAY_VZ_CMDLINE").ok())
             .unwrap_or_else(|| "console=hvc0".into());
+        let runtime_http_proxy = if vm.name == crate::runtime::runtime_vm_name() {
+            Self::runtime_http_proxy()
+        } else {
+            None
+        };
+
+        if vm.name == crate::runtime::runtime_vm_name()
+            && !cmdline
+                .split_whitespace()
+                .any(|arg| arg.starts_with("cratebay_dns="))
+        {
+            let dns_servers = Self::runtime_dns_servers();
+            if !dns_servers.is_empty() {
+                cmdline.push_str(" cratebay_dns=");
+                cmdline.push_str(&dns_servers.join(","));
+            }
+        }
+        if vm.name == crate::runtime::runtime_vm_name()
+            && !cmdline
+                .split_whitespace()
+                .any(|arg| arg.starts_with("cratebay_http_proxy="))
+        {
+            if let Some(proxy) = runtime_http_proxy
+                .as_ref()
+                .map(|config| config.guest_endpoint.as_str())
+            {
+                cmdline.push_str(" cratebay_http_proxy=");
+                cmdline.push_str(proxy);
+            }
+        }
 
         let disk = vm_disk_path(&vm.id);
         if !disk.exists() {
@@ -284,13 +626,25 @@ impl MacOSHypervisor {
             .arg(&console_log);
 
         if vm.name == crate::runtime::runtime_vm_name() {
-            let sock_path = crate::runtime::host_docker_socket_path();
+            let sock_path = crate::runtime::runtime_host_docker_socket_path(&vm.id);
+            if let Some(parent) = sock_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let _ = std::fs::remove_file(&sock_path);
+            #[cfg(unix)]
+            crate::runtime::link_runtime_host_docker_socket(&vm.id)?;
             let spec = format!(
                 "{}:{}",
                 crate::runtime::docker_vsock_port(),
                 sock_path.to_string_lossy()
             );
             cmd.arg("--tcp-forward").arg(spec);
+            if let Some(forward) = runtime_http_proxy
+                .as_ref()
+                .and_then(|config| config.host_tcp_forward.as_deref())
+            {
+                cmd.arg("--host-tcp-forward").arg(forward);
+            }
         }
 
         if let Some(initrd) = initrd {
@@ -438,6 +792,18 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn start_vm(&self, id: &str) -> Result<(), HypervisorError> {
+        let preserve_pid = {
+            let vms = crate::lock_or_recover(&self.vms);
+            vms.get(id)
+                .ok_or(HypervisorError::NotFound(id.into()))?
+                .runner_pid
+        };
+        let cleaned_pids = cleanup_stray_runner_processes(id, preserve_pid, "start preflight");
+        let remaining_conflicts = vm_runner_processes(id)
+            .into_iter()
+            .filter(|pid| Some(*pid) != preserve_pid)
+            .collect::<Vec<_>>();
+
         let (already_running, need_persist, vm_info, kernel_path, initrd_path, cmdline) = {
             let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
@@ -446,6 +812,20 @@ impl Hypervisor for MacOSHypervisor {
 
             let mut already_running = false;
             let mut need_persist = false;
+
+            if !cleaned_pids.is_empty() {
+                if entry
+                    .runner_pid
+                    .is_some_and(|pid| cleaned_pids.contains(&pid))
+                {
+                    entry.runner = None;
+                    entry.runner_pid = None;
+                }
+                let _ = std::fs::remove_file(vm_runner_pid_path(id));
+                let _ = std::fs::remove_file(vm_runner_ready_path(id));
+                entry.info.state = VmState::Stopped;
+                need_persist = true;
+            }
 
             if let Some(pid) = entry.runner_pid {
                 if pid_alive(pid) {
@@ -474,6 +854,16 @@ impl Hypervisor for MacOSHypervisor {
                 entry.cmdline.clone(),
             )
         };
+
+        if !remaining_conflicts.is_empty() {
+            if need_persist {
+                let _ = self.persist();
+            }
+            return Err(HypervisorError::CreateFailed(format!(
+                "Stale VZ runner processes are still active for VM {}: {:?}",
+                id, remaining_conflicts
+            )));
+        }
 
         if already_running {
             if need_persist {
@@ -505,7 +895,18 @@ impl Hypervisor for MacOSHypervisor {
 
             if Instant::now() >= deadline {
                 let _ = child.kill();
-                let _ = child.wait();
+                match wait_for_child_exit(&mut child, Duration::from_secs(5)) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => warn!(
+                        "Timed out waiting for runner process {} to exit after start timeout",
+                        child.id()
+                    ),
+                    Err(error) => warn!(
+                        "Failed waiting for runner process {} after start timeout: {}",
+                        child.id(),
+                        error
+                    ),
+                }
                 return Err(HypervisorError::CreateFailed(
                     "Timed out waiting for VM to start".into(),
                 ));
@@ -547,19 +948,20 @@ impl Hypervisor for MacOSHypervisor {
     }
 
     fn stop_vm(&self, id: &str) -> Result<(), HypervisorError> {
-        let (child, pid_opt, previous_state, rosetta_prev) = {
+        let (child, pid_opt, previous_state, rosetta_prev, is_runtime_vm) = {
             let mut vms = crate::lock_or_recover(&self.vms);
             let entry = vms
                 .get_mut(id)
                 .ok_or(HypervisorError::NotFound(id.into()))?;
             let prev = entry.info.state.clone();
             let rosetta_prev = entry._rosetta_mounted;
+            let is_runtime_vm = entry.info.name == crate::runtime::runtime_vm_name();
             let child = entry.runner.take();
             let pid_opt = entry.runner_pid;
             entry.info.state = VmState::Stopped;
             entry._rosetta_mounted = false;
             entry.runner_pid = None;
-            (child, pid_opt, prev, rosetta_prev)
+            (child, pid_opt, prev, rosetta_prev, is_runtime_vm)
         };
 
         // Phase 1: Send SIGTERM for graceful ACPI shutdown (the runner
@@ -596,11 +998,29 @@ impl Hypervisor for MacOSHypervisor {
 
         // Wait for the child process to be reaped.
         if let Some(mut child) = child {
-            let _ = child.wait();
+            match wait_for_child_exit(&mut child, Duration::from_secs(5)) {
+                Ok(Some(_)) => {}
+                Ok(None) => warn!(
+                    "Timed out waiting for VM {} runner {} to exit after stop",
+                    id,
+                    child.id()
+                ),
+                Err(error) => warn!(
+                    "Failed waiting for VM {} runner {} after stop: {}",
+                    id,
+                    child.id(),
+                    error
+                ),
+            }
         }
 
         let _ = std::fs::remove_file(vm_runner_pid_path(id));
         let _ = std::fs::remove_file(vm_runner_ready_path(id));
+        cleanup_stray_runner_processes(id, None, "stop cleanup");
+        if is_runtime_vm {
+            #[cfg(unix)]
+            crate::runtime::unlink_runtime_host_docker_socket(id);
+        }
 
         if let Err(e) = self.persist() {
             let mut vms = crate::lock_or_recover(&self.vms);
