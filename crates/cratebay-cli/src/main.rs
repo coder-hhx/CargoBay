@@ -454,10 +454,8 @@ fn docker_ping_unix_socket(sock: &Path) -> Result<(), String> {
 fn wait_for_docker_socket_ready(sock: &Path, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if sock.exists() {
-            if docker_ping_unix_socket(sock).is_ok() {
-                return Ok(());
-            }
+        if sock.exists() && docker_ping_unix_socket(sock).is_ok() {
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -505,7 +503,7 @@ fn connect_docker() -> Result<Docker, String> {
             wait_for_docker_socket_ready(&cratebay_sock, Duration::from_secs(45))
                 .map_err(|e| format!("{} (vm: {}, sock: {})", e, vm_id, cratebay_sock.display()))?;
 
-            return Docker::connect_with_socket(
+            Docker::connect_with_socket(
                 cratebay_sock
                     .to_str()
                     .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
@@ -518,7 +516,7 @@ fn connect_docker() -> Result<Docker, String> {
                     cratebay_sock.display(),
                     e
                 )
-            });
+            })
         }
 
         #[cfg(not(target_os = "macos"))]
