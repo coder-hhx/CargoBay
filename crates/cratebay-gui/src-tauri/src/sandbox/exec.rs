@@ -1,5 +1,8 @@
 use super::*;
 
+const SANDBOX_EXEC_TIMEOUT_SEC: u64 = 120;
+const SANDBOX_EXEC_MAX_TIMEOUT_SEC: u64 = 3600;
+
 #[derive(Debug, Serialize)]
 pub(crate) struct SandboxExecResultDto {
     pub(crate) ok: bool,
@@ -85,96 +88,118 @@ pub(crate) async fn sandbox_cleanup_expired() -> Result<SandboxCleanupResultDto,
 pub(crate) async fn sandbox_exec(
     id: String,
     command: String,
+    timeout_sec: Option<u64>,
 ) -> Result<SandboxExecResultDto, String> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return Err(sandbox_validation_error("Sandbox command is required"));
     }
+
+    let timeout = timeout_sec
+        .unwrap_or(SANDBOX_EXEC_TIMEOUT_SEC)
+        .clamp(1, SANDBOX_EXEC_MAX_TIMEOUT_SEC);
+
     let docker = connect_docker().map_err(|e| sandbox_connect_error(&e))?;
     let (_, name) = sandbox_require_managed(&docker, &id).await?;
-    let exec = docker
-        .create_exec(
-            &id,
-            CreateExecOptions {
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                cmd: Some(vec![
-                    "/bin/sh".to_string(),
-                    "-lc".to_string(),
-                    trimmed.to_string(),
-                ]),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(|e| sandbox_docker_error("create exec in", &name, &e))?;
-    let output = docker
-        .start_exec(&exec.id, None)
-        .await
-        .map_err(|e| sandbox_docker_error("start exec in", &name, &e))?;
-
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    if let StartExecResults::Attached { mut output, .. } = output {
-        while let Some(chunk) = output
-            .try_next()
+    let out = tokio::time::timeout(Duration::from_secs(timeout), async {
+        let exec = docker
+            .create_exec(
+                &id,
+                CreateExecOptions {
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    cmd: Some(vec![
+                        "/bin/sh".to_string(),
+                        "-lc".to_string(),
+                        trimmed.to_string(),
+                    ]),
+                    ..Default::default()
+                },
+            )
             .await
-            .map_err(|e| sandbox_stream_error("sandbox exec output from", &name, &e))?
-        {
-            match chunk {
-                LogOutput::StdOut { message } | LogOutput::Console { message } => {
-                    stdout.push_str(&String::from_utf8_lossy(&message));
+            .map_err(|e| sandbox_docker_error("create exec in", &name, &e))?;
+        let output = docker
+            .start_exec(&exec.id, None)
+            .await
+            .map_err(|e| sandbox_docker_error("start exec in", &name, &e))?;
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        if let StartExecResults::Attached { mut output, .. } = output {
+            while let Some(chunk) = output
+                .try_next()
+                .await
+                .map_err(|e| sandbox_stream_error("sandbox exec output from", &name, &e))?
+            {
+                match chunk {
+                    LogOutput::StdOut { message } | LogOutput::Console { message } => {
+                        stdout.push_str(&String::from_utf8_lossy(&message));
+                    }
+                    LogOutput::StdErr { message } => {
+                        stderr.push_str(&String::from_utf8_lossy(&message));
+                    }
+                    LogOutput::StdIn { .. } => {}
                 }
-                LogOutput::StdErr { message } => {
-                    stderr.push_str(&String::from_utf8_lossy(&message));
-                }
-                LogOutput::StdIn { .. } => {}
             }
         }
-    }
 
-    let exec_inspect = docker
-        .inspect_exec(&exec.id)
-        .await
-        .map_err(|e| sandbox_docker_error("inspect exec in", &name, &e))?;
-    let exit_code = exec_inspect.exit_code;
+        let exec_inspect = docker
+            .inspect_exec(&exec.id)
+            .await
+            .map_err(|e| sandbox_docker_error("inspect exec in", &name, &e))?;
+        let exit_code = exec_inspect.exit_code;
 
-    let command_len = trimmed.len();
-    sandbox_audit_log(
-        "exec",
-        &sandbox_short_id(&id),
-        &name,
-        if exit_code.unwrap_or_default() == 0 {
-            "ok"
+        let command_len = trimmed.len();
+        sandbox_audit_log(
+            "exec",
+            &sandbox_short_id(&id),
+            &name,
+            if exit_code.unwrap_or_default() == 0 {
+                "ok"
+            } else {
+                "warn"
+            },
+            &format!(
+                "command_len={} exit_code={}",
+                command_len,
+                exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            ),
+        );
+
+        let output = if stderr.trim().is_empty() {
+            stdout.clone()
+        } else if stdout.trim().is_empty() {
+            stderr.clone()
         } else {
-            "warn"
-        },
-        &format!(
-            "command_len={} exit_code={}",
-            command_len,
-            exit_code
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        ),
-    );
+            format!("{}\n{}", stdout, stderr)
+        };
 
-    let output = if stderr.trim().is_empty() {
-        stdout.clone()
-    } else if stdout.trim().is_empty() {
-        stderr.clone()
-    } else {
-        format!(
-            "{}
-{}",
-            stdout, stderr
-        )
-    };
-
-    Ok(SandboxExecResultDto {
-        ok: exit_code.unwrap_or_default() == 0,
-        output,
-        stdout,
-        stderr,
-        exit_code,
+        Ok(SandboxExecResultDto {
+            ok: exit_code.unwrap_or_default() == 0,
+            output,
+            stdout,
+            stderr,
+            exit_code,
+        })
     })
+    .await;
+
+    match out {
+        Ok(result) => result,
+        Err(_) => {
+            sandbox_audit_log(
+                "exec",
+                &sandbox_short_id(&id),
+                &name,
+                "error",
+                &format!("timeout={}s command={}", timeout, trimmed),
+            );
+            Err(sandbox_error(
+                SandboxErrorKind::Runtime,
+                format!("Sandbox exec timed out after {} seconds", timeout),
+            ))
+        }
+    }
 }

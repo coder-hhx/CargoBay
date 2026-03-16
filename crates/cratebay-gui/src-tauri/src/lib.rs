@@ -1,14 +1,19 @@
+use bollard::auth::DockerCredentials;
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogOutput,
     LogsOptions, RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions, TagImageOptions};
+use bollard::image::{
+    CommitContainerOptions, CreateImageOptions, ImportImageOptions, ListImagesOptions,
+    PushImageOptions, RemoveImageOptions, TagImageOptions,
+};
 use bollard::service::HostConfig;
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 use bollard::Docker;
 use futures_util::stream::TryStreamExt;
+use futures_util::StreamExt;
 use keyring::Entry;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::{Deserialize, Serialize};
@@ -23,7 +28,12 @@ use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
+<<<<<<< pref/ui-optimize
 use tauri::{Emitter, Manager, State, WindowEvent};
+=======
+use tauri::{Emitter, Manager, RunEvent, State, WindowEvent};
+use tokio_util::codec::{BytesCodec, FramedRead};
+>>>>>>> master
 use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
@@ -127,6 +137,7 @@ impl Drop for AppState {
 #[cfg(unix)]
 fn detect_docker_socket() -> Option<String> {
     // Unix socket detection (macOS / Linux)
+<<<<<<< pref/ui-optimize
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
         format!("{}/.colima/default/docker.sock", home),
@@ -135,6 +146,26 @@ fn detect_docker_socket() -> Option<String> {
         format!("{}/.docker/run/docker.sock", home),
     ];
     candidates.into_iter().find(|p| Path::new(p).exists())
+=======
+    #[cfg(unix)]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let candidates = [
+            cratebay_core::runtime::host_docker_socket_path()
+                .to_string_lossy()
+                .into_owned(),
+            format!("{}/.colima/default/docker.sock", home),
+            format!("{}/.orbstack/run/docker.sock", home),
+            "/var/run/docker.sock".to_string(),
+            format!("{}/.docker/run/docker.sock", home),
+        ];
+        if let Some(sock) = candidates.into_iter().find(|p| Path::new(p).exists()) {
+            return Some(sock);
+        }
+    }
+
+    None
+>>>>>>> master
 }
 
 fn connect_docker() -> Result<Docker, String> {
@@ -165,6 +196,12 @@ fn connect_docker() -> Result<Docker, String> {
                 return Ok(d);
             }
         }
+        if let Ok(host) = cratebay_core::runtime::ensure_runtime_wsl_running() {
+            // Persist for subsequent calls within this GUI process.
+            std::env::set_var("DOCKER_HOST", &host);
+            return Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+                .map_err(|e| format!("Failed to connect to CrateBay Runtime at {}: {}", host, e));
+        }
         Err(
             "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
                 .into(),
@@ -179,16 +216,41 @@ fn connect_docker() -> Result<Docker, String> {
 }
 
 fn runtime_setup_path() -> String {
-    let mut items = std::env::var("PATH")
-        .unwrap_or_default()
+    let raw = std::env::var("PATH").unwrap_or_default();
+    let mut items = raw
         .split(':')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
-    for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+
+    // Some launchers (for example tauri-driver) can start the app with an empty PATH.
+    // Ensure basic system directories are present so spawned shells can find coreutils.
+    if items.is_empty() {
+        items = vec![
+            "/usr/local/sbin".to_string(),
+            "/usr/local/bin".to_string(),
+            "/usr/sbin".to_string(),
+            "/usr/bin".to_string(),
+            "/sbin".to_string(),
+            "/bin".to_string(),
+        ];
+    }
+
+    for extra in [
+        "/usr/local/sbin",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+        "/opt/homebrew/bin",
+    ] {
         if !items.iter().any(|item| item == extra) {
             items.push(extra.to_string());
         }
     }
+
     items.join(":")
 }
 
@@ -208,6 +270,7 @@ fn runtime_setup_run(command: &str, args: &[&str]) -> Result<std::process::Outpu
         .map_err(|e| format!("Failed to run command '{}': {}", command, e))
 }
 
+<<<<<<< pref/ui-optimize
 #[cfg(target_os = "macos")]
 fn truncate_message(text: &str, max_chars: usize) -> String {
     let mut out = String::new();
@@ -235,46 +298,119 @@ fn runtime_setup_output_summary(output: &std::process::Output) -> String {
     truncate_message(&base.replace('\n', " "), 320)
 }
 
+=======
+>>>>>>> master
 #[cfg(target_os = "macos")]
 fn docker_runtime_quick_setup_macos() -> Result<String, String> {
     if connect_docker().is_ok() {
         return Ok("Docker runtime is already available.".to_string());
     }
 
-    if !runtime_setup_command_exists("docker") {
-        if !runtime_setup_command_exists("brew") {
-            return Err(
-                "Docker CLI is missing and Homebrew is not installed. Install Homebrew from https://brew.sh, then run `brew install docker`."
-                    .to_string(),
-            );
-        }
-        let install = runtime_setup_run("brew", &["install", "docker"])?;
-        if !install.status.success() {
+    let cratebay_sock = cratebay_core::runtime::host_docker_socket_path().to_path_buf();
+
+    if let Some(sock) = detect_docker_socket() {
+        // If there's a non-CrateBay socket present but unreachable, don't override it silently.
+        if std::path::Path::new(&sock) != cratebay_sock {
             return Err(format!(
-                "Failed to install Docker CLI via Homebrew: {}",
-                runtime_setup_output_summary(&install)
+                "Found Docker socket at {}, but it is not reachable. Start your runtime, fix permissions, or set DOCKER_HOST, then refresh.",
+                sock
             ));
-        }
-    } else {
-        let version = runtime_setup_run("docker", &["version"]);
-        if let Ok(output) = version {
-            if !output.status.success() {
-                warn!(
-                    "docker version check failed during runtime setup: {}",
-                    runtime_setup_output_summary(&output)
-                );
-            }
         }
     }
 
-    if connect_docker().is_ok() {
-        Ok("Docker runtime is reachable. Containers and Volumes are ready.".to_string())
-    } else {
-        Err(
-            "Docker CLI is installed, but no Docker-compatible daemon socket is reachable. Start your runtime or set DOCKER_HOST, then refresh."
-                .to_string(),
+    let hv = cratebay_core::create_hypervisor();
+    let vm_id = cratebay_core::runtime::ensure_runtime_vm_running(hv.as_ref())
+        .map_err(|e| format!("Failed to start CrateBay Runtime VM: {}", e))?;
+
+    let handle = tokio::runtime::Handle::try_current()
+        .map_err(|e| format!("No tokio runtime available for Docker check: {}", e))?;
+    let ok = handle.block_on(async {
+        let sock_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !cratebay_sock.exists() {
+            if tokio::time::Instant::now() >= sock_deadline {
+                return Err(format!(
+                    "CrateBay Runtime VM started ({}), but Docker socket was not created at {}",
+                    vm_id,
+                    cratebay_sock.display()
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let docker = Docker::connect_with_socket(
+            cratebay_sock
+                .to_str()
+                .ok_or_else(|| "Docker socket path is not valid UTF-8".to_string())?,
+            120,
+            bollard::API_DEFAULT_VERSION,
         )
+        .map_err(|e| format!("Failed to connect to Docker socket: {}", e))?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            match docker.version().await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(format!(
+                            "Docker runtime is not responding yet (vm: {}). Last error: {}",
+                            vm_id, e
+                        ));
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    });
+
+    ok.map(|_| {
+        format!(
+            "CrateBay Runtime is running. Docker socket: {}",
+            cratebay_sock.display()
+        )
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn docker_runtime_quick_setup_windows() -> Result<String, String> {
+    if connect_docker().is_ok() {
+        return Ok("Docker runtime is already available.".to_string());
     }
+
+    let host = cratebay_core::runtime::ensure_runtime_wsl_running()
+        .map_err(|e| format!("Failed to start CrateBay Runtime (WSL2): {}", e))?;
+    std::env::set_var("DOCKER_HOST", &host);
+
+    let handle = tokio::runtime::Handle::try_current()
+        .map_err(|e| format!("No tokio runtime available for Docker check: {}", e))?;
+    let ok = handle.block_on(async {
+        let docker = Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+            .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+        loop {
+            match docker.version().await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(format!(
+                            "Docker runtime is not responding yet. Last error: {}",
+                            e
+                        ));
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    });
+
+    ok.map(|_| format!("CrateBay Runtime is running. DOCKER_HOST: {}", host))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn docker_runtime_quick_setup_generic() -> Result<String, String> {
+    connect_docker()
+        .map(|_| "Docker runtime is reachable. Containers and Volumes are ready.".into())
 }
 
 fn docker_host_for_cli() -> Option<String> {
@@ -1017,77 +1153,134 @@ async fn image_tags(reference: String, limit: usize) -> Result<Vec<String>, Stri
 
 #[tauri::command]
 async fn image_load(path: String) -> Result<String, String> {
-    let docker_host = docker_host_for_cli();
-    tokio::task::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("docker");
-        cmd.arg("load").arg("-i").arg(&path);
-        if let Some(host) = docker_host {
-            cmd.env("DOCKER_HOST", host);
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("path is required".into());
+    }
+
+    let docker = connect_docker()?;
+    let archive = PathBuf::from(trimmed);
+    let file = tokio::fs::File::open(&archive)
+        .await
+        .map_err(|e| format!("Failed to open {}: {}", archive.display(), e))?;
+
+    let read_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let read_error_capture = read_error.clone();
+    let archive_display = archive.display().to_string();
+
+    let byte_stream = FramedRead::new(file, BytesCodec::new()).filter_map(move |result| {
+        let read_error_capture = read_error_capture.clone();
+        let archive_display = archive_display.clone();
+        async move {
+            match result {
+                Ok(buf) => Some(buf.freeze()),
+                Err(e) => {
+                    let mut guard = read_error_capture.lock().unwrap_or_else(|e| e.into_inner());
+                    *guard = Some(format!(
+                        "Failed to read image archive {}: {}",
+                        archive_display, e
+                    ));
+                    None
+                }
+            }
         }
-        let out = cmd
-            .output()
-            .map_err(|e| format!("Failed to run docker: {}", e))?;
-        if !out.status.success() {
-            return Err(format!(
-                "docker load failed (exit {}): {}",
-                out.status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
+    });
+
+    let mut stream = docker.import_image_stream(ImportImageOptions::default(), byte_stream, None);
+    let mut out = String::new();
+    while let Some(progress) = stream.try_next().await.map_err(|e| e.to_string())? {
+        if let Some(error) = progress.error {
+            return Err(error);
         }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        if let Some(line) = progress.stream {
+            out.push_str(&line);
+            continue;
+        }
+        if let Some(status) = progress.status {
+            if let Some(p) = progress.progress {
+                out.push_str(&format!("{} {}\n", status, p));
+            } else {
+                out.push_str(&format!("{}\n", status));
+            }
+        }
+    }
+
+    if let Some(e) = read_error.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        return Err(e);
+    }
+
+    Ok(out.trim().to_string())
 }
 
 #[tauri::command]
 async fn image_push(reference: String) -> Result<String, String> {
-    let docker_host = docker_host_for_cli();
-    tokio::task::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("docker");
-        cmd.arg("push").arg(&reference);
-        if let Some(host) = docker_host {
-            cmd.env("DOCKER_HOST", host);
+    let trimmed = reference.trim();
+    if trimmed.is_empty() {
+        return Err("reference is required".into());
+    }
+    validation::validate_image_reference(trimmed)?;
+    let docker = connect_docker()?;
+
+    let (repo, tag) = split_image_reference(trimmed);
+    let auth = cratebay_core::docker_auth::resolve_registry_auth_for_image(trimmed)?;
+    let creds = auth.map(|a| DockerCredentials {
+        username: a.username,
+        password: a.password,
+        serveraddress: Some(a.server_address),
+        identitytoken: a.identity_token,
+        ..Default::default()
+    });
+
+    let mut stream = docker.push_image(&repo, Some(PushImageOptions { tag }), creds);
+    let mut out = String::new();
+    while let Some(progress) = stream.try_next().await.map_err(|e| e.to_string())? {
+        if let Some(status) = progress.status {
+            if let Some(p) = progress.progress {
+                out.push_str(&format!("{} {}\n", status, p));
+            } else {
+                out.push_str(&format!("{}\n", status));
+            }
         }
-        let out = cmd
-            .output()
-            .map_err(|e| format!("Failed to run docker: {}", e))?;
-        if !out.status.success() {
-            return Err(format!(
-                "docker push failed (exit {}): {}",
-                out.status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
+
+    Ok(out.trim().to_string())
 }
 
 #[tauri::command]
 async fn image_pack_container(container: String, tag: String) -> Result<String, String> {
-    let docker_host = docker_host_for_cli();
-    tokio::task::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("docker");
-        cmd.arg("commit").arg(&container).arg(&tag);
-        if let Some(host) = docker_host {
-            cmd.env("DOCKER_HOST", host);
-        }
-        let out = cmd
-            .output()
-            .map_err(|e| format!("Failed to run docker: {}", e))?;
-        if !out.status.success() {
-            return Err(format!(
-                "docker commit failed (exit {}): {}",
-                out.status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let c = container.trim();
+    if c.is_empty() {
+        return Err("container is required".into());
+    }
+    let t = tag.trim();
+    if t.is_empty() {
+        return Err("tag is required".into());
+    }
+
+    let docker = connect_docker()?;
+    let (repo, image_tag) = split_image_reference(t);
+    let opts = CommitContainerOptions {
+        container: c,
+        repo: repo.as_str(),
+        tag: image_tag.as_str(),
+        pause: true,
+        ..Default::default()
+    };
+    let result = docker
+        .commit_container(opts, Config::<String>::default())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let id = result
+        .id
+        .clone()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| result.expected.clone().filter(|v| !v.trim().is_empty()));
+    if let Some(id) = id {
+        Ok(id)
+    } else {
+        serde_json::to_string(&result).map_err(|e| e.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3245,6 +3438,7 @@ async fn ollama_delete_model(name: String) -> Result<AiHubActionResultDto, Strin
 // ── AI settings commands ───────────────────────────────────────────
 
 const AI_SECRET_SERVICE: &str = "com.cratebay.app.ai";
+const AI_SETTINGS_SCHEMA_VERSION: u32 = 1;
 static AI_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
 static SANDBOX_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -3369,7 +3563,11 @@ impl Default for AiSecurityPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiSettings {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default = "default_ai_profiles")]
     profiles: Vec<AiProviderProfile>,
+    #[serde(default)]
     active_profile_id: String,
     #[serde(default = "default_ai_skills")]
     skills: Vec<AiSkillDefinition>,
@@ -3636,6 +3834,7 @@ fn default_ai_settings() -> AiSettings {
         .map(|p| p.id.clone())
         .unwrap_or_else(|| "openai-default".to_string());
     AiSettings {
+        schema_version: AI_SETTINGS_SCHEMA_VERSION,
         profiles,
         active_profile_id,
         skills: default_ai_skills(),
@@ -3720,6 +3919,8 @@ fn validate_ai_profile_inner(profile: &AiProviderProfile) -> AiProfileValidation
 }
 
 fn normalize_ai_settings(mut settings: AiSettings) -> AiSettings {
+    settings.schema_version = settings.schema_version.max(AI_SETTINGS_SCHEMA_VERSION);
+
     if settings.profiles.is_empty() {
         return default_ai_settings();
     }
@@ -3842,9 +4043,37 @@ fn load_ai_settings() -> Result<AiSettings, String> {
 
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read settings file {}: {}", path.display(), e))?;
-    let parsed: AiSettings = serde_json::from_str(&raw)
-        .map_err(|e| format!("Failed to parse AI settings JSON: {}", e))?;
-    Ok(normalize_ai_settings(parsed))
+    let parsed: AiSettings = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                path = %path.display(),
+                error = %e,
+                "Failed to parse AI settings JSON; backing up and resetting to defaults"
+            );
+            let backup_path = path.with_file_name(format!(
+                "ai-settings.broken-{}.json",
+                chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            ));
+            if let Err(backup_err) = std::fs::write(&backup_path, raw.as_bytes()) {
+                warn!(
+                    backup = %backup_path.display(),
+                    error = %backup_err,
+                    "Failed to write backup AI settings file"
+                );
+            }
+
+            let defaults = default_ai_settings();
+            persist_ai_settings(&path, &defaults)?;
+            return Ok(defaults);
+        }
+    };
+    let original_version = parsed.schema_version;
+    let normalized = normalize_ai_settings(parsed);
+    if original_version < AI_SETTINGS_SCHEMA_VERSION {
+        persist_ai_settings(&path, &normalized)?;
+    }
+    Ok(normalized)
 }
 
 #[tauri::command]
@@ -4180,24 +4409,131 @@ fn mcp_export_client_config(client: String) -> Result<String, String> {
         return Err(format!("Unsupported MCP client '{}'", client));
     }
     let settings = load_ai_settings()?;
-    let mut servers = serde_json::Map::new();
-    for server in settings.mcp_servers.into_iter().filter(|item| item.enabled) {
-        let env_map = mcp_env_map(&server.env);
-        servers.insert(
-            server.id.clone(),
-            serde_json::json!({
-                "command": server.command,
-                "args": server.args,
-                "cwd": if server.working_dir.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(server.working_dir) },
-                "env": env_map,
-            }),
+    let mut enabled = settings
+        .mcp_servers
+        .into_iter()
+        .filter(|item| item.enabled)
+        .collect::<Vec<_>>();
+    enabled.sort_by(|a, b| a.id.cmp(&b.id));
+
+    match normalized_client.as_str() {
+        "claude" | "cursor" => {
+            let mut servers = serde_json::Map::new();
+            for server in enabled {
+                let mut entry = serde_json::Map::new();
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(server.command),
+                );
+                entry.insert(
+                    "args".to_string(),
+                    serde_json::to_value(server.args).map_err(|e| e.to_string())?,
+                );
+
+                let env_map = mcp_env_map(&server.env);
+                entry.insert(
+                    "env".to_string(),
+                    serde_json::to_value(env_map).map_err(|e| e.to_string())?,
+                );
+                if !server.working_dir.trim().is_empty() {
+                    entry.insert(
+                        "cwd".to_string(),
+                        serde_json::Value::String(server.working_dir.trim().to_string()),
+                    );
+                }
+
+                servers.insert(server.id, serde_json::Value::Object(entry));
+            }
+
+            serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": servers }))
+                .map_err(|e| format!("Failed to encode MCP export config: {}", e))
+        }
+        "codex" => export_codex_mcp_config(&enabled),
+        _ => unreachable!("client validated"),
+    }
+}
+
+fn export_codex_mcp_config(servers: &[McpServerEntry]) -> Result<String, String> {
+    if servers.is_empty() {
+        return Ok(
+            "# No enabled MCP servers in CrateBay.\n# Add one in AI Hub → MCP, then export again.\n"
+                .to_string(),
         );
     }
-    serde_json::to_string_pretty(&serde_json::json!({
-        "client": normalized_client,
-        "mcpServers": servers,
-    }))
-    .map_err(|e| format!("Failed to encode MCP export config: {}", e))
+
+    fn toml_quote(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('"');
+        for ch in value.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                _ => out.push(ch),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    fn toml_key_segment(key: &str) -> String {
+        let is_bare = !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if is_bare {
+            key.to_string()
+        } else {
+            toml_quote(key)
+        }
+    }
+
+    fn toml_string_array(values: &[String]) -> String {
+        let items = values
+            .iter()
+            .map(|value| toml_quote(value))
+            .collect::<Vec<_>>();
+        format!("[{}]", items.join(", "))
+    }
+
+    let mut out = String::new();
+    out.push_str("# Add to ~/.codex/config.toml\n");
+    out.push_str("# Docs: docs/MCP_SERVER.md\n\n");
+
+    for server in servers {
+        let id_key = toml_key_segment(&server.id);
+        out.push_str(&format!("[mcp_servers.{}]\n", id_key));
+        out.push_str(&format!("command = {}\n", toml_quote(&server.command)));
+        out.push_str(&format!("args = {}\n", toml_string_array(&server.args)));
+
+        if !server.working_dir.trim().is_empty() {
+            out.push_str(&format!(
+                "cwd = {}\n",
+                toml_quote(server.working_dir.trim())
+            ));
+        }
+
+        let env_map = mcp_env_map(&server.env);
+        if !env_map.is_empty() {
+            out.push('\n');
+            out.push_str(&format!("[mcp_servers.{}.env]\n", id_key));
+            let mut env_items = env_map.into_iter().collect::<Vec<_>>();
+            env_items.sort_by(|a, b| a.0.cmp(&b.0));
+            for (key, value) in env_items {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml_key_segment(&key),
+                    toml_quote(&value)
+                ));
+            }
+        }
+
+        out.push('\n');
+    }
+
+    Ok(out.trim_end().to_string() + "\n")
 }
 
 #[tauri::command]
@@ -5664,7 +6000,9 @@ async fn assistant_execute_step(
         "sandbox_exec" => {
             let id = assistant_arg_string(args_map, "id")?;
             let command = assistant_arg_string(args_map, "command")?;
-            serde_json::to_value(sandbox_exec(id, command).await?).map_err(|e| e.to_string())?
+            let timeout_sec = args_map.get("timeout_sec").and_then(|v| v.as_u64());
+            serde_json::to_value(sandbox_exec(id, command, timeout_sec).await?)
+                .map_err(|e| e.to_string())?
         }
         "stop_container" => {
             let id = assistant_arg_string(args_map, "id")?;
@@ -6172,11 +6510,15 @@ async fn docker_runtime_quick_setup() -> Result<DockerRuntimeSetupResult, String
         .await
         .map_err(|e| format!("Runtime setup task failed: {}", e))?;
 
-    #[cfg(not(target_os = "macos"))]
-    let setup_result: Result<String, String> = Err(
-        "One-click runtime setup currently supports macOS Docker CLI bootstrap only. Install Docker CLI and expose a Docker-compatible socket."
-            .to_string(),
-    );
+    #[cfg(target_os = "windows")]
+    let setup_result = tokio::task::spawn_blocking(docker_runtime_quick_setup_windows)
+        .await
+        .map_err(|e| format!("Runtime setup task failed: {}", e))?;
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let setup_result = tokio::task::spawn_blocking(docker_runtime_quick_setup_generic)
+        .await
+        .map_err(|e| format!("Runtime setup task failed: {}", e))?;
 
     let (ok, message) = match setup_result {
         Ok(msg) => (true, msg),
@@ -7468,9 +7810,13 @@ exit /b 0
             .any(|entry| entry == "CRATEBAY_SANDBOX=1"));
         assert!(inspect.env.iter().any(|entry| entry == "CRATEBAY_E2E=1"));
 
-        let exec = sandbox_exec(created.id.clone(), "echo CRATEBAY_SANDBOX_OK".to_string())
-            .await
-            .expect("exec sandbox command");
+        let exec = sandbox_exec(
+            created.id.clone(),
+            "echo CRATEBAY_SANDBOX_OK".to_string(),
+            None,
+        )
+        .await
+        .expect("exec sandbox command");
         assert!(exec.ok);
         assert_eq!(exec.exit_code, Some(0));
         assert!(exec.stdout.contains("CRATEBAY_SANDBOX_OK"));
@@ -7891,8 +8237,16 @@ exit /b 0
 
         let exported =
             mcp_export_client_config("codex".to_string()).expect("export codex MCP config");
+<<<<<<< pref/ui-optimize
         assert!(exported.contains("\"local-smoke\""));
         assert!(exported.contains(&format!("\"{}\"", mcp_command)));
+=======
+        assert!(
+            exported.contains("[mcp_servers.local-smoke]")
+                || exported.contains("[mcp_servers.\"local-smoke\"]")
+        );
+        assert!(exported.contains("command = \"/bin/sh\""));
+>>>>>>> master
 
         let loaded = load_ai_settings().expect("reload AI settings");
         assert_eq!(loaded.mcp_servers.len(), 1);

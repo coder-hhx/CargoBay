@@ -154,6 +154,44 @@ pub fn builtin_catalog() -> Vec<OsImageEntry> {
             default_cmdline: "console=hvc0 root=/dev/vda1 rw".into(),
             status: ImageStatus::NotDownloaded,
         },
+        OsImageEntry {
+            id: "cratebay-runtime-aarch64".into(),
+            name: "CrateBay Runtime Lite (aarch64)".into(),
+            version: "0.1.0".into(),
+            arch: "aarch64".into(),
+            kernel_url:
+                "https://github.com/coder-hhx/CrateBay/releases/download/runtime-v0.1.0/vmlinuz-aarch64"
+                    .into(),
+            initrd_url:
+                "https://github.com/coder-hhx/CrateBay/releases/download/runtime-v0.1.0/initramfs-aarch64"
+                    .into(),
+            rootfs_url: "".into(),
+            size_bytes: 150_000_000,
+            kernel_sha256: "".into(),
+            initrd_sha256: "".into(),
+            rootfs_sha256: "".into(),
+            default_cmdline: "console=hvc0".into(),
+            status: ImageStatus::NotDownloaded,
+        },
+        OsImageEntry {
+            id: "cratebay-runtime-x86_64".into(),
+            name: "CrateBay Runtime Lite (x86_64)".into(),
+            version: "0.1.0".into(),
+            arch: "x86_64".into(),
+            kernel_url:
+                "https://github.com/coder-hhx/CrateBay/releases/download/runtime-v0.1.0/vmlinuz-x86_64"
+                    .into(),
+            initrd_url:
+                "https://github.com/coder-hhx/CrateBay/releases/download/runtime-v0.1.0/initramfs-x86_64"
+                    .into(),
+            rootfs_url: "".into(),
+            size_bytes: 150_000_000,
+            kernel_sha256: "".into(),
+            initrd_sha256: "".into(),
+            rootfs_sha256: "".into(),
+            default_cmdline: "console=hvc0".into(),
+            status: ImageStatus::NotDownloaded,
+        },
     ]
 }
 
@@ -311,29 +349,30 @@ where
     let total = entry.size_bytes;
 
     // Files to download: (url, dest_path, sha256, label)
-    let files = [
-        (
-            &entry.kernel_url,
-            &paths.kernel_path,
-            &entry.kernel_sha256,
-            "kernel",
-        ),
-        (
-            &entry.initrd_url,
-            &paths.initrd_path,
-            &entry.initrd_sha256,
-            "initrd",
-        ),
-        (
-            &entry.rootfs_url,
-            &paths.rootfs_path,
-            &entry.rootfs_sha256,
+    let mut files: Vec<(&str, &Path, &str, &str)> = Vec::with_capacity(3);
+    files.push((
+        entry.kernel_url.as_str(),
+        paths.kernel_path.as_path(),
+        entry.kernel_sha256.as_str(),
+        "kernel",
+    ));
+    files.push((
+        entry.initrd_url.as_str(),
+        paths.initrd_path.as_path(),
+        entry.initrd_sha256.as_str(),
+        "initrd",
+    ));
+    if !entry.rootfs_url.trim().is_empty() {
+        files.push((
+            entry.rootfs_url.as_str(),
+            paths.rootfs_path.as_path(),
+            entry.rootfs_sha256.as_str(),
             "rootfs",
-        ),
-    ];
+        ));
+    }
 
     let client = reqwest::Client::builder()
-        .user_agent("CrateBay/0.1.0")
+        .user_agent(concat!("CrateBay/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| ImageError::DownloadFailed(e.to_string()))?;
 
@@ -454,8 +493,15 @@ pub fn create_disk_from_image(
     let paths = image_paths(image_id);
 
     if paths.rootfs_path.exists() {
-        // Copy the rootfs as the disk image.
-        std::fs::copy(&paths.rootfs_path, dest)?;
+        // Copy the rootfs as the disk image (prefer copy-on-write cloning on macOS).
+        crate::fsutil::copy_file_fast(&paths.rootfs_path, dest)?;
+
+        // Ensure the disk is at least `size_bytes` (sparse extend).
+        let current = std::fs::metadata(dest)?.len();
+        if current < size_bytes {
+            let f = std::fs::OpenOptions::new().write(true).open(dest)?;
+            f.set_len(size_bytes)?;
+        }
     } else {
         // Create a sparse raw disk image.
         let f = std::fs::File::create(dest)?;

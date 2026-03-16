@@ -10,8 +10,10 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+if [[ -z "${CI:-}" && -s "$NVM_DIR/nvm.sh" ]]; then
+  set +u
   . "$NVM_DIR/nvm.sh"
+  set -u
   nvm use 24 >/dev/null 2>&1 || nvm use 22 >/dev/null 2>&1 || nvm use --lts >/dev/null 2>&1 || true
 fi
 
@@ -66,7 +68,7 @@ npm ci
 npm run build
 popd >/dev/null
 
-cargo build -p cratebay-gui
+cargo build -p cratebay-gui --features custom-protocol
 
 app_path="$repo_root/target/debug/cratebay-gui"
 if [[ ! -x "$app_path" ]]; then
@@ -81,7 +83,7 @@ sleep 3
 
 CRATEBAY_DESKTOP_E2E_APP="$app_path" \
 TAURI_DRIVER_URL="http://127.0.0.1:4444" \
-cargo test -p cratebay-gui --test desktop_smoke -- --ignored --nocapture --test-threads=1 2>&1 | tee "$test_log"
+cargo test -p cratebay-gui --features custom-protocol --test desktop_smoke -- --ignored --nocapture --test-threads=1 2>&1 | tee "$test_log"
 
 docker ps -a > "$artifact_dir/docker-ps.txt"
 find "$artifact_dir" -maxdepth 2 -type f | sort > "$artifact_dir/artifacts.txt"

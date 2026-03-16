@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-release-macos.sh — Build CrateBay v0.1.0 macOS release artifacts
+# build-release-macos.sh — Build CrateBay macOS release artifacts
 #
 # Produces:
 #   dist/CrateBay_<version>_<arch>.dmg  — GUI app with embedded daemon
@@ -20,7 +20,15 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION="0.1.0"
+VERSION="$(
+    grep -E '^version\\s*=\\s*\"' "$REPO_ROOT/crates/cratebay-cli/Cargo.toml" \
+        | head -n 1 \
+        | sed -E 's/.*\"([^\"]+)\".*/\\1/'
+)"
+if [[ -z "${VERSION}" ]]; then
+    echo "ERROR: Failed to resolve version from crates/cratebay-cli/Cargo.toml"
+    exit 1
+fi
 ARCH="$(uname -m)"                           # aarch64 or x86_64
 RUST_TARGET="$(rustc -vV | grep host | awk '{print $2}')"  # e.g. aarch64-apple-darwin
 
@@ -32,6 +40,10 @@ echo "  Version : $VERSION"
 echo "  Arch    : $ARCH"
 echo "  Target  : $RUST_TARGET"
 echo ""
+
+# ── Step 0: Fetch bundled runtime assets (macOS) ─────────────────────────────
+echo "── [0/6] Fetching CrateBay Runtime assets ──"
+bash scripts/fetch-runtime-assets.sh "$ARCH"
 
 # ── Step 1: Build daemon & CLI ───────────────────────────────────────────────
 echo "── [1/6] Building daemon and CLI (release) ──"

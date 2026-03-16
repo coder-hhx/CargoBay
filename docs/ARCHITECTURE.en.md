@@ -79,7 +79,7 @@ CrateBay/
 3. **Hypervisor trait abstraction** — A unified VM interface with per-platform implementations. Adding a new platform only requires a new backend.
 4. **Tauri v2 for the GUI** — Uses 60-90% less memory than Electron while costing roughly one-third the development effort of a fully native GUI.
 5. **On-demand K3s download** — K3s is not bundled in the installer, keeping the distribution size small.
-6. **Automatic Docker socket detection** — Supports Colima / OrbStack / Docker Desktop / native Docker with no manual configuration.
+6. **Automatic Docker runtime detection** — Supports CrateBay Runtime (macOS socket / Windows WSL2), Colima / OrbStack / Docker Desktop / native Docker with no manual configuration.
 
 ## Proto Definitions (VM Only)
 

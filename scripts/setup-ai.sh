@@ -64,11 +64,11 @@ if have_cmd docker; then
   if docker compose version >/dev/null 2>&1; then
     echo "  ✓ docker compose: $(docker compose version | head -n 1)"
   else
-    echo "  ⚠ docker compose: missing (install Docker Desktop / compose plugin)"
+    echo "  • docker compose: not found (optional)"
   fi
 else
   echo "  ⚠ docker        : missing (install Docker Desktop / Colima / OrbStack)"
-  echo "  ⚠ docker compose: missing (depends on Docker install)"
+  echo "  • docker compose: not found (optional)"
 fi
 
 if have_cmd ollama; then

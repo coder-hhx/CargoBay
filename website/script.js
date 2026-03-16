@@ -48,8 +48,11 @@
       statusTitle: "Coming soon",
       statusBody:
         "For builders who want a better local AI workflow.",
+<<<<<<< pref/ui-optimize
       statusNote:
         "Preview builds are evolving quickly with ongoing desktop UI, dialog layout, and interaction polish. Follow the GitHub repo for updates and release notes.",
+=======
+>>>>>>> master
       footer: "CrateBay · <span data-year></span>",
     },
     zh: {
@@ -98,8 +101,11 @@
       statusTitle: "即将推出",
       statusBody:
         "如果你想要更好的本地 AI 工作流，就关注 CrateBay。",
+<<<<<<< pref/ui-optimize
       statusNote:
         "预览版本迭代很快，桌面界面、弹窗布局与交互体验也在持续打磨；更新与发布说明请关注 GitHub 仓库。",
+=======
+>>>>>>> master
       footer: "CrateBay · <span data-year></span>",
     },
   }

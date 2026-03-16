@@ -62,6 +62,15 @@ Then configure your MCP client to run `cratebay-mcp` with that env var.
 
 ## Client Config Notes
 
+### Export from CrateBay GUI
+
+CrateBay can generate copy-paste config snippets for common MCP clients.
+
+In the desktop app, open **AI Hub → MCP → Export config**, select your client, then copy the output:
+
+- **Claude Desktop / Cursor**: JSON snippet (`mcpServers`)
+- **Codex**: TOML snippet for `~/.codex/config.toml`
+
 ### Claude Desktop (macOS / Windows)
 
 Edit Claude Desktop config and restart the app.

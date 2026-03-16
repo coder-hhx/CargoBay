@@ -34,7 +34,7 @@ export const messages: Record<string, Record<string, string>> = {
     refresh: "Refresh",
     save: "Save",
     export: "Export",
-    dockerOneClickSetup: "Install Docker CLI & Repair Runtime",
+    dockerOneClickSetup: "Start Runtime",
     postV1Track: "Post-v1 track",
     vmsComingSoonDesc: "Virtual machines are no longer part of the default v1 workflow. This area stays as a post-v1 track until dedicated runtime runners and GPU-aware validation land.",
     kubernetesComingSoonDesc: "Kubernetes is being held as a post-v1 expansion track. The default desktop workflow now focuses on local AI sandboxes, models, MCP, and provider bridges.",
@@ -60,8 +60,12 @@ export const messages: Record<string, Record<string, string>> = {
     pullingImage: "Pulling image...",
     creatingContainer: "Creating container...",
     packageImage: "Package as image",
+<<<<<<< pref/ui-optimize
     packageImageTitle: "Image Package",
     packageFromContainer: "Create an image from a container (docker commit)",
+=======
+    packageFromContainer: "Create an image from a container (commit)",
+>>>>>>> master
     newImageTag: "New image tag",
     package: "Package",
     container: "Container",
@@ -113,7 +117,7 @@ export const messages: Record<string, Record<string, string>> = {
     pushImage: "Push image",
     imageRef: "Image reference",
     push: "Push",
-    pushHint: "Same as `docker push` (login first if needed)",
+    pushHint: "Push to a registry (login first if needed)",
     browse: "Browse...",
     imageLoaded: "Image imported",
     imagePushed: "Image pushed",
@@ -525,7 +529,7 @@ export const messages: Record<string, Record<string, string>> = {
     refresh: "刷新",
     save: "保存",
     export: "导出",
-    dockerOneClickSetup: "一键安装 Docker CLI 并修复 Runtime",
+    dockerOneClickSetup: "启动运行时",
     postV1Track: "v1 之后",
     vmsComingSoonDesc: "虚拟机已不再属于默认 v1 工作流。这里保留为 v1 之后的扩展方向，待专用 runtime runner 和 GPU 感知验证成熟后再恢复。",
     kubernetesComingSoonDesc: "Kubernetes 暂时保留为 v1 之后的扩展方向。默认桌面工作流现已聚焦本地 AI 沙箱、模型、MCP 与 provider bridges。",
@@ -550,8 +554,12 @@ export const messages: Record<string, Record<string, string>> = {
     pullingImage: "正在拉取镜像...",
     creatingContainer: "正在创建容器...",
     packageImage: "打包为镜像",
+<<<<<<< pref/ui-optimize
     packageImageTitle: "镜像打包",
     packageFromContainer: "从容器打包镜像（docker commit）",
+=======
+    packageFromContainer: "从容器打包镜像（commit）",
+>>>>>>> master
     newImageTag: "新镜像标签",
     package: "打包",
     container: "容器",
@@ -601,7 +609,7 @@ export const messages: Record<string, Record<string, string>> = {
     pushImage: "上传镜像",
     imageRef: "镜像引用",
     push: "上传",
-    pushHint: "等价于 docker push（需要时请先登录目标仓库）",
+    pushHint: "推送到仓库（需要时请先登录目标仓库）",
     browse: "浏览...",
     imageLoaded: "镜像已导入",
     imagePushed: "镜像已上传",

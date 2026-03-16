@@ -27,23 +27,32 @@ const mockContainer = (overrides?: Partial<ContainerInfo>): ContainerInfo => ({
   ...overrides,
 })
 
-const mockSandbox = (overrides?: Partial<SandboxInfoDto>): SandboxInfoDto => ({
-  id: "sandbox-1",
-  short_id: "sandbox-1",
-  name: "Agent Sandbox",
-  image: "python:3.12",
-  state: "running",
-  status: "Up 5 minutes",
-  template_id: "python-agent",
-  owner: "test",
-  created_at: "2026-03-06T00:00:00Z",
-  expires_at: "2026-03-06T08:00:00Z",
-  ttl_hours: 8,
-  cpu_cores: 2,
-  memory_mb: 2048,
-  is_expired: false,
-  ...overrides,
-})
+const mockSandbox = (overrides?: Partial<SandboxInfoDto>): SandboxInfoDto => {
+  const merged: SandboxInfoDto = {
+    id: "sandbox-1",
+    short_id: "sandbox-1",
+    name: "Agent Sandbox",
+    image: "python:3.12",
+    state: "running",
+    status: "Up 5 minutes",
+    lifecycle_state: "running",
+    template_id: "python-agent",
+    owner: "test",
+    created_at: "2026-03-06T00:00:00Z",
+    expires_at: "2026-03-06T08:00:00Z",
+    ttl_hours: 8,
+    cpu_cores: 2,
+    memory_mb: 2048,
+    is_expired: false,
+    ...overrides,
+  }
+
+  merged.lifecycle_state =
+    overrides?.lifecycle_state ??
+    (merged.is_expired ? "expired" : merged.state === "running" ? "running" : "stopped")
+
+  return merged
+}
 
 const baseOllamaStatus: OllamaStatusDto = {
   installed: true,

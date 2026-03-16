@@ -947,9 +947,10 @@ dependencies = [
 
 [[package]]
 name = "cratebay-cli"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "bollard",
+ "bytes",
  "clap",
  "clap_complete",
  "cratebay-core",
@@ -958,13 +959,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tonic",
 ]
 
 [[package]]
 name = "cratebay-core"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "criterion",
  "futures-util",
  "kvm-bindings",
@@ -988,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "cratebay-daemon"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "cratebay-core",
  "tokio",
@@ -998,10 +1001,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cratebay-guest-agent"
+version = "1.0.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "cratebay-gui"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "bollard",
+ "bytes",
  "chrono",
  "cratebay-core",
  "fantoccini",
@@ -1017,6 +1028,7 @@ dependencies = [
  "tauri-plugin-mcp-bridge",
  "tauri-plugin-shell",
  "tokio",
+ "tokio-util",
  "tonic",
  "tracing",
 ]
@@ -1039,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "cratebay-vz"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "cratebay-core",
  "libc",

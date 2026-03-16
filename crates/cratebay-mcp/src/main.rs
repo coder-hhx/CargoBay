@@ -16,8 +16,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-#[cfg(unix)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -276,42 +274,44 @@ fn detect_docker_socket() -> Option<String> {
 
 fn connect_docker() -> Result<Docker> {
     if std::env::var("DOCKER_HOST").is_ok() {
-        return Docker::connect_with_local_defaults()
-            .map_err(|e| anyhow!("Failed to connect via DOCKER_HOST: {}", e));
-    }
-
-    #[cfg(unix)]
-    {
-        if let Some(sock) = detect_docker_socket() {
-            return Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
-                .map_err(|e| anyhow!("Failed to connect to Docker at {}: {}", sock, e));
-        }
-        return Err(anyhow!(
-            "No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
-        ));
-    }
-
-    #[cfg(windows)]
-    {
-        let candidates = [
-            r"//./pipe/docker_engine",
-            r"//./pipe/dockerDesktopLinuxEngine",
-        ];
-        for pipe in &candidates {
-            if let Ok(d) = Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION)
-            {
-                return Ok(d);
+        Docker::connect_with_local_defaults()
+            .map_err(|e| anyhow!("Failed to connect via DOCKER_HOST: {}", e))
+    } else {
+        #[cfg(unix)]
+        {
+            if let Some(sock) = detect_docker_socket() {
+                Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
+                    .map_err(|e| anyhow!("Failed to connect to Docker at {}: {}", sock, e))
+            } else {
+                Err(anyhow!(
+                    "No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                ))
             }
         }
-        Err(anyhow!(
-            "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
-        ))
-    }
 
-    #[cfg(not(any(unix, windows)))]
-    {
-        Docker::connect_with_local_defaults()
-            .map_err(|e| anyhow!("Failed to connect to Docker: {}", e))
+        #[cfg(windows)]
+        {
+            let candidates = [
+                r"//./pipe/docker_engine",
+                r"//./pipe/dockerDesktopLinuxEngine",
+            ];
+            candidates
+                .iter()
+                .find_map(|pipe| {
+                    Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION).ok()
+                })
+                .ok_or_else(|| {
+                    anyhow!(
+                        "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                    )
+                })
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            Docker::connect_with_local_defaults()
+                .map_err(|e| anyhow!("Failed to connect to Docker: {}", e))
+        }
     }
 }
 
@@ -1081,9 +1081,11 @@ async fn sandbox_create(
         ));
     }
 
-    if !args.mounts.is_empty() {
+    let binds = if mounts.is_empty() {
+        None
+    } else {
         let mut binds = Vec::new();
-        for mount in args.mounts {
+        for mount in mounts {
             let host = resolve_workspace_path_for_read(ctx, &mount.host_path)?;
             let container_path = mount.container_path.trim().to_string();
             cratebay_core::validation::validate_mount_path(&container_path)
@@ -1094,8 +1096,15 @@ async fn sandbox_create(
             let mode = if mount.read_only { "ro" } else { "rw" };
             binds.push(format!("{}:{}:{}", host_str, container_path, mode));
         }
-        host_config.binds = Some(binds);
-    }
+        Some(binds)
+    };
+
+    let host_config = HostConfig {
+        nano_cpus: Some((cpu_cores as i64) * 1_000_000_000),
+        memory: Some((memory_mb as i64).saturating_mul(1024).saturating_mul(1024)),
+        binds,
+        ..Default::default()
+    };
 
     let config = Config::<String> {
         image: Some(image.clone()),

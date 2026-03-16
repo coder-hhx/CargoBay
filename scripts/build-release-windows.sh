@@ -21,7 +21,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION="0.1.0"
+VERSION="$(
+    grep -E '^version\\s*=\\s*\"' "$REPO_ROOT/crates/cratebay-cli/Cargo.toml" \
+        | head -n 1 \
+        | sed -E 's/.*\"([^\"]+)\".*/\\1/'
+)"
+if [[ -z "${VERSION}" ]]; then
+    echo "ERROR: Failed to resolve version from crates/cratebay-cli/Cargo.toml"
+    exit 1
+fi
 ARCH="x86_64"
 RUST_TARGET="x86_64-pc-windows-msvc"
 
@@ -42,6 +50,10 @@ echo "  Version : $VERSION"
 echo "  Arch    : $ARCH"
 echo "  Target  : $RUST_TARGET"
 echo ""
+
+# ── Step 0: Fetch bundled runtime assets (Windows WSL2) ──────────────────────
+echo "── [0/5] Fetching CrateBay WSL Runtime assets ──"
+bash scripts/fetch-wsl-runtime-assets.sh "$ARCH"
 
 # ── Step 1: Build daemon & CLI ───────────────────────────────────────────────
 echo "── [1/5] Building daemon and CLI (release) ──"

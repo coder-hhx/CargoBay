@@ -92,7 +92,7 @@ export function Assistant({ t }: AssistantProps) {
     return () => {
       active = false
     }
-  }, [])
+  }, [t])
 
   const handleGeneratePlan = async () => {
     if (!prompt.trim()) return

@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 use std::ffi::{CStr, CString};
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -54,6 +55,8 @@ extern "C" {
         size_bytes: u64,
         out_error: *mut *mut c_char,
     ) -> i32;
+
+    pub fn vz_vsock_connect(handle: VZVMHandle, port: u32, out_error: *mut *mut c_char) -> i32;
 
     pub fn vz_create_and_start_vm(
         config: *const VZVMConfig,
@@ -183,6 +186,24 @@ impl VmHandle {
             return Err(take_error(err).unwrap_or_else(|| "unknown console read error".into()));
         }
         Ok(bytes_read as usize)
+    }
+
+    /// Connect to a guest vsock port and return an owned file descriptor.
+    pub fn vsock_connect(&self, port: u32) -> Result<OwnedFd, String> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let fd = unsafe { vz_vsock_connect(self.raw, port, &mut err) };
+        if fd < 0 {
+            return Err(
+                take_error(err).unwrap_or_else(|| format!("vsock connect to port {} failed", port))
+            );
+        }
+
+        if let Some(msg) = take_error(err) {
+            tracing::warn!("vz_vsock_connect returned fd with error: {}", msg);
+        }
+
+        // SAFETY: Swift returns a dup()'d FD; we take ownership here.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
     }
 }
 

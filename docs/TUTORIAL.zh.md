@@ -53,11 +53,34 @@ nvm use 24
 
 ### Docker 运行时
 
-CrateBay 支持任意 Docker 兼容运行时：
+CrateBay 支持任意 Docker 兼容运行时。
 
-- **Colima**（推荐，免费）— `brew install colima && colima start`
+**macOS（推荐）：CrateBay Runtime（内置）**
+
+- GUI：点击 **启动运行时**
+- CLI：
+  - `cratebay runtime start`
+  - `cratebay runtime env`（输出 `DOCKER_HOST=unix://...`）
+- 运行时镜像随桌面应用打包（无需首次使用再下载）
+- Socket 路径：`~/.cratebay/run/docker.sock`
+- 实现细节：`docs/RUNTIME.zh.md`
+
+**Windows（推荐）：CrateBay Runtime（内置，WSL2）**
+
+- GUI：点击 **启动运行时**
+- CLI：
+  - `cratebay runtime start`
+  - `cratebay runtime env`（输出 `DOCKER_HOST=tcp://...`）
+- 需要 WSL2（若未启用，CrateBay 会提示；可能需要重启）。
+- 实现细节：`docs/RUNTIME.zh.md`
+
+其他选择（全平台通用）：
+
 - **Docker Desktop** — 常见 Docker 体验
-- **OrbStack** — CrateBay 也会自动识别其 socket
+- **OrbStack**（macOS）— CrateBay 也会自动识别其 socket
+- **Colima**（macOS，免费）— `brew install colima && colima start`
+
+> 注：CrateBay 直接连接 Docker Engine API，本身不依赖安装 `docker` 或 `docker compose`。终端工作流你可以直接使用 `cratebay docker ...`，或者通过 `DOCKER_HOST` 把 Docker CLI 指向该 socket。
 
 ---
 
@@ -153,7 +176,7 @@ cargo build --release --bin cratebay
 | 卡片 | 说明 |
 |------|-------------|
 | **Containers** | 容器总数，点击进入容器管理 |
-| **Virtual Machines** | 虚拟机数量（预览） |
+| **Virtual Machines** | 虚拟机数量（实验） |
 | **Images** | 镜像搜索结果数量（最近一次搜索） |
 | **System** | Docker 连接状态 |
 
@@ -205,7 +228,7 @@ Docker 存储卷管理：
 
 ### Virtual Machines（虚拟机）
 
-当前 pre-v1 预览构建已支持：
+实验特性（post-v1 track，不作为 v1 阻断项）：
 
 - **创建 / 启动 / 停止 / 删除 / 列表**，完整生命周期管理
 - 创建时可设置 **CPU / 内存 / 磁盘**
@@ -221,7 +244,7 @@ Docker 存储卷管理：
 
 ### Images（镜像）
 
-当前 pre-v1 预览构建同样支持：
+镜像功能支持：
 
 - **镜像搜索**：Docker Hub、Quay
 - **标签列表**：对带域名的镜像引用列出 tags（如 `quay.io/org/image`、`ghcr.io/org/image`）
@@ -240,7 +263,7 @@ Docker 存储卷管理：
 
 其中 GUI 偏好保存在 `localStorage`，AI 配置持久化在 `ai-settings.json`。
 
-当前 AI 开发能力（pre-v1）：
+v1.0 AI 能力：
 
 - **AI Hub** 页面标签：`Overview / Models / Sandboxes / MCP / Assistant`
 - **Models** 标签已支持 Ollama 运行状态、本地模型列表、拉取 / 删除与存储可见性
@@ -264,7 +287,7 @@ cratebay status
 
 示例输出：
 ```
-CrateBay v0.x
+CrateBay v1.0.0
 Platform: macOS aarch64 (Virtualization.framework available)
 Rosetta x86_64: available
 Docker: connected (~/.colima/default/docker.sock)
@@ -429,12 +452,13 @@ CrateBay 会按以下顺序自动识别 Docker socket：
 
 | 优先级 | 路径 | 运行时 |
 |----------|------|---------|
-| 1 | `~/.colima/default/docker.sock` | Colima |
-| 2 | `~/.orbstack/run/docker.sock` | OrbStack |
-| 3 | `/var/run/docker.sock` | Docker Desktop / 原生 |
-| 4 | `~/.docker/run/docker.sock` | Docker Desktop（备用） |
+| 1 | `~/.cratebay/run/docker.sock` | CrateBay Runtime |
+| 2 | `~/.colima/default/docker.sock` | Colima |
+| 3 | `~/.orbstack/run/docker.sock` | OrbStack |
+| 4 | `/var/run/docker.sock` | Docker Desktop / 原生 |
+| 5 | `~/.docker/run/docker.sock` | Docker Desktop（备用） |
 
-**Windows：** 也会尝试 `//./pipe/docker_engine` 与 `//./pipe/dockerDesktopLinuxEngine`。
+**Windows：** 优先尝试 `//./pipe/docker_engine` 与 `//./pipe/dockerDesktopLinuxEngine`；若不存在，CrateBay 会启动内置 WSL2 runtime，并为当前进程设置 `DOCKER_HOST=tcp://...`。
 
 ### 覆盖默认识别顺序
 

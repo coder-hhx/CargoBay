@@ -251,6 +251,16 @@ impl MacOSHypervisor {
             .arg("--console-log")
             .arg(&console_log);
 
+        if vm.name == crate::runtime::runtime_vm_name() {
+            let sock_path = crate::runtime::host_docker_socket_path();
+            let spec = format!(
+                "{}:{}",
+                crate::runtime::docker_vsock_port(),
+                sock_path.to_string_lossy()
+            );
+            cmd.arg("--vsock-forward").arg(spec);
+        }
+
         if let Some(initrd) = initrd {
             cmd.arg("--initrd").arg(initrd);
         }
