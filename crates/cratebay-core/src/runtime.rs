@@ -313,7 +313,7 @@ fn file_matches(src: &Path, dest: &Path) -> Result<bool, HypervisorError> {
 
     #[cfg(feature = "download")]
     {
-        return Ok(sha256_file(src)? == sha256_file(dest)?);
+        Ok(sha256_file(src)? == sha256_file(dest)?)
     }
 
     #[cfg(not(feature = "download"))]
