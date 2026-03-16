@@ -17,7 +17,7 @@ use reqwest::header::{ACCEPT, WWW_AUTHENTICATE};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use tonic::transport::Channel;
@@ -25,6 +25,9 @@ use tonic::transport::Channel;
 use cratebay_core::proto;
 use cratebay_core::proto::vm_service_client::VmServiceClient;
 use cratebay_core::validation;
+
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 
 #[derive(Parser)]
 #[command(
@@ -450,7 +453,7 @@ fn docker_ping_unix_socket(sock: &Path) -> Result<(), String> {
     ))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn wait_for_docker_socket_ready(sock: &Path, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -1490,7 +1493,6 @@ async fn handle_runtime(cmd: RuntimeCommands) {
             RuntimeCommands::Env => {
                 println!("PowerShell: $env:DOCKER_HOST=\"{}\"", host);
                 println!("CMD      : set DOCKER_HOST={}", host);
-                return;
             }
             RuntimeCommands::Status => {
                 println!("Runtime: CrateBay Runtime (WSL2)");
@@ -1512,7 +1514,6 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                         println!("Docker engine: failed to connect ({})", e);
                     }
                 }
-                return;
             }
             RuntimeCommands::Start => {
                 println!("Runtime: CrateBay Runtime (WSL2)");
@@ -1536,8 +1537,6 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                         std::process::exit(1);
                     }
                 }
-
-                return;
             }
             RuntimeCommands::Stop => {
                 if let Err(e) = cratebay_core::runtime::stop_runtime_wsl() {
