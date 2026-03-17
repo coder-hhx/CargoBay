@@ -221,12 +221,34 @@ jobs:
           ./scripts/docker-runtime-smoke.sh
 
   # -----------------------------------------------------------
+  # Prepare WSL runtime assets on Linux for Windows smoke tests
+  # -----------------------------------------------------------
+  wsl-runtime-assets:
+    name: WSL Runtime Assets (Linux)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build bundled WSL runtime assets
+        shell: bash
+        run: |
+          out_dir="${RUNNER_TEMP}/runtime-wsl"
+          bash scripts/build-runtime-assets-wsl.sh x86_64 "${out_dir}"
+
+      - name: Upload bundled WSL runtime assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-wsl-x86_64
+          path: ${{ runner.temp }}/runtime-wsl/cratebay-runtime-wsl-x86_64/rootfs.tar
+
+  # -----------------------------------------------------------
   # Built-in Windows runtime smoke — bundled WSL2 runtime
   # -----------------------------------------------------------
   builtin-runtime-windows:
     name: Built-in Runtime Smoke (Windows)
     runs-on: windows-latest
-    needs: check
+    needs: [check, wsl-runtime-assets]
     steps:
       - uses: actions/checkout@v5
 
@@ -241,9 +263,18 @@ jobs:
         with:
           shared-key: builtin-runtime-windows
 
-      - name: Fetch bundled WSL runtime assets
+      - name: Prepare bundled WSL runtime asset destination
         shell: bash
-        run: CRATEBAY_RUNTIME_FETCH_ONLY=1 bash scripts/fetch-wsl-runtime-assets.sh x86_64
+        run: |
+          dest="crates/cratebay-gui/src-tauri/runtime-wsl/cratebay-runtime-wsl-x86_64"
+          mkdir -p "${dest}"
+          rm -f "${dest}/rootfs.tar"
+
+      - name: Download bundled WSL runtime assets
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-wsl-x86_64
+          path: crates/cratebay-gui/src-tauri/runtime-wsl/cratebay-runtime-wsl-x86_64
 
       - name: Run built-in runtime smoke
         shell: bash
