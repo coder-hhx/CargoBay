@@ -13,6 +13,7 @@ search_query="${CRATEBAY_SMOKE_IMAGE_QUERY:-nginx}"
 runtime_image="${CRATEBAY_SMOKE_RUNTIME_IMAGE:-nginx:1.27-alpine}"
 env_key="CRATEBAY_E2E"
 env_value="smoke-${suffix}"
+container_id=""
 container_removed=0
 volume_removed=0
 
@@ -21,6 +22,10 @@ require_cmd() {
     echo "ERROR: required command '$1' not found"
     exit 1
   fi
+}
+
+resolve_container_id() {
+  docker ps -a --format '{{.ID}}\t{{.Names}}' | awk -F '\t' -v target="$container_name" '$2 == target { print $1; exit }'
 }
 
 assert_contains() {
@@ -79,14 +84,22 @@ printf '%s\n' "$ps_output"
 assert_contains "$ps_output" "$container_name" "docker ps should list the created container"
 assert_contains "$ps_output" "$runtime_image" "docker ps should show the runtime image"
 
+container_id="$(resolve_container_id)"
+if [[ -z "$container_id" ]]; then
+  echo "ERROR: failed to resolve container ID for $container_name"
+  docker ps -a
+  exit 1
+fi
+echo "Resolved container ID: $container_id"
+
 echo "== Verify runtime state =="
-running_state="$(docker inspect -f '{{.State.Running}}' "$container_name")"
+running_state="$(docker inspect -f '{{.State.Running}}' "$container_id")"
 if [[ "$running_state" != "true" ]]; then
-  echo "ERROR: container $container_name is not running"
+  echo "ERROR: container $container_name ($container_id) is not running"
   exit 1
 fi
 
-docker exec "$container_name" /bin/sh -lc 'echo CRATEBAY_CONTAINER_OK' | grep -Fq 'CRATEBAY_CONTAINER_OK'
+docker exec "$container_id" /bin/sh -lc 'echo CRATEBAY_CONTAINER_OK' | grep -Fq 'CRATEBAY_CONTAINER_OK'
 
 echo "== Verify env and login command =="
 env_output="$($cratebay_bin docker env "$container_name")"
@@ -105,7 +118,7 @@ assert_contains "$stop_output" "Stopped container $container_name" "docker stop 
 
 stopped_state="$(docker inspect -f '{{.State.Running}}' "$container_name")"
 if [[ "$stopped_state" != "false" ]]; then
-  echo "ERROR: container $container_name should be stopped"
+  echo "ERROR: container $container_name ($container_id) should be stopped"
   exit 1
 fi
 
@@ -157,8 +170,8 @@ printf '%s\n' "$rm_output"
 assert_contains "$rm_output" "Removed container $container_name" "docker rm should remove the container"
 container_removed=1
 
-if docker inspect "$container_name" >/dev/null 2>&1; then
-  echo "ERROR: container $container_name still exists after removal"
+if docker inspect "$container_id" >/dev/null 2>&1; then
+  echo "ERROR: container $container_name ($container_id) still exists after removal"
   exit 1
 fi
 
