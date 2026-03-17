@@ -254,7 +254,7 @@ describe("Images", () => {
     vi.mocked(invoke).mockResolvedValue([
       {
         id: "sha256:abc123",
-        repo_tags: ["nginx:latest"],
+        repo_tags: ["nginx:1.27-alpine"],
         size_bytes: 141000000,
         size_human: "141 MB",
         created: 1700000000,
@@ -268,9 +268,9 @@ describe("Images", () => {
     await user.click(removeBtn)
 
     expect(screen.getByText(t("confirmRemoveImage"))).toBeInTheDocument()
-    // The modal shows the image reference -- there will be multiple "nginx:latest"
+    // The modal shows the image reference -- there will be multiple "nginx:1.27-alpine"
     // (one in card, one in modal), so use getAllByText
-    const refs = screen.getAllByText("nginx:latest")
+    const refs = screen.getAllByText("nginx:1.27-alpine")
     expect(refs.length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(t("remove"))).toBeInTheDocument()
   })
@@ -282,7 +282,7 @@ describe("Images", () => {
         return [
           {
             id: "sha256:abc123",
-            repo_tags: ["nginx:latest"],
+            repo_tags: ["nginx:1.27-alpine"],
             size_bytes: 141000000,
             size_human: "141 MB",
             created: 1700000000,
@@ -302,7 +302,7 @@ describe("Images", () => {
     const confirmBtn = screen.getByText(t("remove"))
     await user.click(confirmBtn)
 
-    expect(invoke).toHaveBeenCalledWith("image_remove", { id: "nginx:latest" })
+    expect(invoke).toHaveBeenCalledWith("image_remove", { id: "nginx:1.27-alpine" })
   })
 
   it("shows source filter dropdown", async () => {

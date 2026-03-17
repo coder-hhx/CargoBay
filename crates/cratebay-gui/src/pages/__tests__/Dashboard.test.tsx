@@ -20,7 +20,7 @@ const t = (key: string) => messages.en[key] || key
 const mockContainer = (overrides?: Partial<ContainerInfo>): ContainerInfo => ({
   id: "abc123",
   name: "web-server",
-  image: "nginx:latest",
+  image: "nginx:1.27-alpine",
   state: "running",
   status: "Up 2 hours",
   ports: "0.0.0.0:80->80/tcp",

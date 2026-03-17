@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -27,6 +27,8 @@ pub struct MacOSHypervisor {
     next_id: Mutex<u64>,
     store: VmStore,
 }
+
+static ATTEMPTED_ORPHAN_RUNNER_VM_IDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 impl Default for MacOSHypervisor {
     fn default() -> Self {
@@ -130,6 +132,64 @@ fn vm_runner_processes(id: &str) -> Vec<u32> {
         .collect()
 }
 
+fn runner_vm_id_from_command(command: &str) -> Option<String> {
+    ["/disk.raw", "/runner.ready", "/console.log"]
+        .into_iter()
+        .find_map(|suffix| {
+            let end = command.find(suffix)?;
+            let prefix = &command[..end];
+            let vms_idx = prefix.rfind("/vms/")?;
+            let tail = &prefix[vms_idx + "/vms/".len()..];
+            let vm_id = tail.rsplit('/').next()?.trim();
+            if vm_id.is_empty() {
+                None
+            } else {
+                Some(vm_id.to_string())
+            }
+        })
+}
+
+fn runner_processes_from_ps_output(output: &str, current_uid: u32) -> HashMap<String, Vec<u32>> {
+    let mut processes = HashMap::<String, Vec<u32>>::new();
+    for line in output.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(pid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(uid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        if uid != current_uid {
+            continue;
+        }
+
+        let command = parts.collect::<Vec<_>>().join(" ");
+        if !command.contains("cratebay-vz") {
+            continue;
+        }
+
+        let Some(vm_id) = runner_vm_id_from_command(&command) else {
+            continue;
+        };
+        processes.entry(vm_id).or_default().push(pid);
+    }
+
+    processes
+}
+
+fn managed_vz_runner_processes() -> HashMap<String, Vec<u32>> {
+    let current_uid = unsafe { libc::geteuid() } as u32;
+    let output = match Command::new("ps")
+        .args(["-axww", "-o", "pid=,uid=,command="])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => return HashMap::new(),
+    };
+
+    runner_processes_from_ps_output(&String::from_utf8_lossy(&output.stdout), current_uid)
+}
+
 fn terminate_runner_pids(id: &str, pids: &[u32], reason: &str) {
     if pids.is_empty() {
         return;
@@ -175,6 +235,47 @@ fn cleanup_stray_runner_processes(id: &str, preserve_pid: Option<u32>, reason: &
         .collect::<Vec<_>>();
     terminate_runner_pids(id, &stray, reason);
     stray
+}
+
+fn orphan_runner_cleanup_state() -> &'static Mutex<HashSet<String>> {
+    ATTEMPTED_ORPHAN_RUNNER_VM_IDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn orphan_runner_marker_path(vm_id: &str) -> PathBuf {
+    data_dir()
+        .join("runtime")
+        .join("orphan-runner-markers")
+        .join(format!("{vm_id}.txt"))
+}
+
+fn orphan_runner_signature(pids: &[u32]) -> String {
+    let mut sorted = pids.to_vec();
+    sorted.sort_unstable();
+    sorted
+        .into_iter()
+        .map(|pid| pid.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn orphan_runner_marker_matches(vm_id: &str, pids: &[u32]) -> bool {
+    let path = orphan_runner_marker_path(vm_id);
+    let Ok(current) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    current.trim() == orphan_runner_signature(pids)
+}
+
+fn write_orphan_runner_marker(vm_id: &str, pids: &[u32]) {
+    let path = orphan_runner_marker_path(vm_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = crate::store::write_atomic(&path, orphan_runner_signature(pids).as_bytes());
+}
+
+fn clear_orphan_runner_marker(vm_id: &str) {
+    let _ = std::fs::remove_file(orphan_runner_marker_path(vm_id));
 }
 
 fn wait_for_child_exit(
@@ -389,6 +490,7 @@ impl MacOSHypervisor {
         };
 
         let mut map: HashMap<String, VmEntry> = HashMap::new();
+        let mut changed = false;
         for mut vm in loaded.iter().cloned() {
             let pid_path = vm_runner_pid_path(&vm.id);
             let ready_path = vm_runner_ready_path(&vm.id);
@@ -434,12 +536,85 @@ impl MacOSHypervisor {
             );
         }
 
+        let known_vm_ids = map.keys().cloned().collect::<HashSet<_>>();
+        for vm_id in &known_vm_ids {
+            let preserve_pid = map.get(vm_id).and_then(|entry| entry.runner_pid);
+            let cleaned =
+                cleanup_stray_runner_processes(vm_id, preserve_pid, "startup duplicate cleanup");
+            if cleaned.is_empty() {
+                continue;
+            }
+
+            if let Some(entry) = map.get_mut(vm_id) {
+                if entry.runner_pid.is_some_and(|pid| cleaned.contains(&pid)) {
+                    entry.runner_pid = None;
+                    entry.info.state = VmState::Stopped;
+                    let _ = std::fs::remove_file(vm_runner_pid_path(vm_id));
+                    let _ = std::fs::remove_file(vm_runner_ready_path(vm_id));
+                    changed = true;
+                }
+            }
+        }
+
+        for (vm_id, pids) in managed_vz_runner_processes() {
+            if !known_vm_ids.contains(&vm_id) {
+                if orphan_runner_marker_matches(&vm_id, &pids) {
+                    continue;
+                }
+                let already_attempted = {
+                    let mut attempted = crate::lock_or_recover(orphan_runner_cleanup_state());
+                    !attempted.insert(vm_id.clone())
+                };
+                if already_attempted {
+                    continue;
+                }
+                terminate_runner_pids(&vm_id, &pids, "startup orphan cleanup");
+                let remaining = pids
+                    .into_iter()
+                    .filter(|pid| pid_alive(*pid))
+                    .collect::<Vec<_>>();
+                if remaining.is_empty() {
+                    clear_orphan_runner_marker(&vm_id);
+                } else {
+                    write_orphan_runner_marker(&vm_id, &remaining);
+                }
+                continue;
+            }
+
+            let Some(entry) = map.get_mut(&vm_id) else {
+                continue;
+            };
+            if entry.runner_pid.is_some() {
+                continue;
+            }
+
+            if pids.len() == 1 {
+                let pid = pids[0];
+                entry.runner_pid = Some(pid);
+                entry.info.state = VmState::Running;
+                let _ = std::fs::write(vm_runner_pid_path(&vm_id), format!("{}\n", pid));
+                changed = true;
+                continue;
+            }
+
+            terminate_runner_pids(&vm_id, &pids, "startup duplicate recovery");
+            entry.runner_pid = None;
+            entry.info.state = VmState::Stopped;
+            let _ = std::fs::remove_file(vm_runner_pid_path(&vm_id));
+            let _ = std::fs::remove_file(vm_runner_ready_path(&vm_id));
+            changed = true;
+        }
+
         let next_id = next_id_for_prefix(&loaded, "vz-");
-        Self {
+        let hypervisor = Self {
             vms: Mutex::new(map),
             next_id: Mutex::new(next_id),
             store,
+        };
+        if changed {
+            let _ = hypervisor.persist();
         }
+        hypervisor
     }
 
     /// Check if Rosetta is available on this Mac.
@@ -597,12 +772,6 @@ impl MacOSHypervisor {
         let _ = std::fs::remove_file(&ready_file);
 
         let console_log = vm_console_log_path(&vm.id);
-        // The runtime VM uses TCP forwarding, which discovers the guest IP by scanning
-        // the serial console log for a `guest_ip=...` marker. Truncate the log on each
-        // start to avoid picking up stale IPs from previous boots.
-        if vm.name == crate::runtime::runtime_vm_name() {
-            let _ = std::fs::write(&console_log, b"");
-        }
         let console_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -638,7 +807,7 @@ impl MacOSHypervisor {
                 crate::runtime::docker_vsock_port(),
                 sock_path.to_string_lossy()
             );
-            cmd.arg("--tcp-forward").arg(spec);
+            cmd.arg("--vsock-forward").arg(spec);
             if let Some(forward) = runtime_http_proxy
                 .as_ref()
                 .and_then(|config| config.host_tcp_forward.as_deref())
@@ -1304,5 +1473,39 @@ impl Hypervisor for MacOSHypervisor {
             .get(vm_id)
             .ok_or(HypervisorError::NotFound(vm_id.into()))?;
         Ok(entry.info.port_forwards.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{runner_processes_from_ps_output, runner_vm_id_from_command};
+
+    #[test]
+    fn runner_vm_id_from_command_extracts_vm_id() {
+        let command = "/Applications/CrateBay.app/Contents/MacOS/cratebay-vz --kernel /Users/test/Library/Application Support/com.cratebay.app/images/cratebay-runtime-x86_64/vmlinuz --disk /Users/test/Library/Application Support/com.cratebay.app/vms/vz-3/disk.raw --console-log /Users/test/Library/Application Support/com.cratebay.app/vms/vz-3/console.log";
+        assert_eq!(runner_vm_id_from_command(command).as_deref(), Some("vz-3"));
+    }
+
+    #[test]
+    fn runner_vm_id_from_command_ignores_non_vm_processes() {
+        assert_eq!(
+            runner_vm_id_from_command("/tmp/cratebay-vz-signed-runtime --help"),
+            None
+        );
+        assert_eq!(runner_vm_id_from_command("rg cratebay-vz"), None);
+    }
+
+    #[test]
+    fn managed_vz_runner_processes_groups_by_vm_id() {
+        let output = "\
+123 501 /Applications/CrateBay.app/Contents/MacOS/cratebay-vz --disk /Users/test/Library/Application Support/com.cratebay.app/vms/vz-1/disk.raw
+456 501 /Applications/CrateBay.app/Contents/MacOS/cratebay-vz --console-log /Users/test/Library/Application Support/com.cratebay.app/vms/vz-1/console.log
+789 501 /Applications/CrateBay.app/Contents/MacOS/cratebay-vz --disk /Users/test/Library/Application Support/com.cratebay.app/vms/vz-2/disk.raw
+";
+        let grouped = runner_processes_from_ps_output(output, 501);
+
+        assert_eq!(grouped.get("vz-1"), Some(&vec![123, 456]));
+        assert_eq!(grouped.get("vz-2"), Some(&vec![789]));
+        assert!(!grouped.contains_key("vz-3"));
     }
 }

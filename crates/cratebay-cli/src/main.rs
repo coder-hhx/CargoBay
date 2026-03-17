@@ -250,12 +250,12 @@ enum ImageCommands {
     List,
     /// Remove a local Docker image
     Remove {
-        /// Image ID or reference (e.g. nginx:latest)
+        /// Image ID or reference (e.g. nginx:1.27-alpine)
         reference: String,
     },
     /// Tag a local Docker image with a new name
     Tag {
-        /// Source image reference (e.g. nginx:latest)
+        /// Source image reference (e.g. nginx:1.27-alpine)
         source: String,
         /// Target tag in repo:tag format (e.g. myrepo/nginx:v1)
         target: String,

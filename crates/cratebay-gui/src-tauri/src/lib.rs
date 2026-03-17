@@ -208,10 +208,8 @@ fn docker_ping_unix_socket(sock: &Path) -> Result<(), String> {
 fn wait_for_docker_socket_ready(sock: &Path, timeout: Duration) -> Result<(), String> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
-        if sock.exists() {
-            if docker_ping_unix_socket(sock).is_ok() {
-                return Ok(());
-            }
+        if sock.exists() && docker_ping_unix_socket(sock).is_ok() {
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
     }

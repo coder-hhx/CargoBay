@@ -825,7 +825,7 @@ export function Containers({
                       setShowImageDropdown(true)
                     }}
                     onFocus={() => setShowImageDropdown(true)}
-                    placeholder="nginx:latest"
+                    placeholder="nginx:1.27-alpine"
                     autoFocus
                   />
 

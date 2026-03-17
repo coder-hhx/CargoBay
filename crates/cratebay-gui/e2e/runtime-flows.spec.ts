@@ -9,7 +9,7 @@ test("runs container, image, and volume flows end-to-end", async ({ page }) => {
   const runContainerDialog = page.getByTestId("containers-dialog-run")
   await expect(runContainerDialog.getByTestId("containers-run-cpus")).toHaveValue("2")
   await expect(runContainerDialog.getByTestId("containers-run-memory")).toHaveValue("512")
-  await runContainerDialog.getByPlaceholder("nginx:latest").fill("redis:7")
+  await runContainerDialog.getByPlaceholder("nginx:1.27-alpine").fill("redis:7")
   await runContainerDialog.getByPlaceholder("my-container").fill("e2e-redis")
   await runContainerDialog.getByRole("button", { name: "Create" }).click()
   await expect(page.getByText("e2e-redis")).toBeVisible()

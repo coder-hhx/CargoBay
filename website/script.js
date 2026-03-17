@@ -14,7 +14,7 @@
       heroLead:
         "Managed sandboxes. Local models. MCP — all in one desktop app.",
       heroSub:
-        "Install the app and use the built-in runtime directly — with safer defaults and clearer runtime errors.",
+        "Install the app and use the built-in runtime directly — with pinned container defaults, macOS runtime recovery, and clearer runtime errors.",
       githubCta: "GitHub",
       summary1Label: "AI Sandboxes",
       summary1Title: "Run locally",
@@ -62,7 +62,7 @@
       heroLead:
         "托管沙箱、本地模型、MCP —— 全都放进一个桌面应用里。",
       heroSub:
-        "安装应用即可直接使用内置运行时：默认更安全，错误更清晰。",
+        "安装应用即可直接使用内置运行时：示例容器镜像固定版本、macOS 运行时会主动回收陈旧状态，错误反馈也更清晰。",
       githubCta: "GitHub",
       summary1Label: "AI Sandboxes",
       summary1Title: "本地运行，可视化管理",

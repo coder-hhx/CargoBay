@@ -252,7 +252,7 @@ Images support:
 - **Import custom images** from a local `.tar` archive (`docker load -i`)
 - **Push images** to a registry (`docker push`)
 
-> Tip: For Docker Hub images, use `docker run`-style references (e.g. `nginx:latest`). Tag listing currently requires a registry domain reference.
+> Tip: For Docker Hub images, use `docker run`-style references (e.g. `nginx:1.27-alpine`). Tag listing currently requires a registry domain reference.
 
 ### Settings (设置)
 
@@ -300,7 +300,7 @@ Docker: connected (~/.colima/default/docker.sock)
 cratebay docker ps
 
 # Run a new container (optional CPU/memory limits, optional pull)
-cratebay docker run nginx:latest --name web --cpus 2 --memory 512 --pull
+cratebay docker run nginx:1.27-alpine --name web --cpus 2 --memory 512 --pull
 
 # Start a container
 cratebay docker start <container_id>

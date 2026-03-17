@@ -517,7 +517,7 @@ async fn desktop_shell_runs_container_lifecycle() {
 
         clear_and_type_css(
             &client,
-            "[data-testid='containers-dialog-run'] input[placeholder='nginx:latest']",
+            "[data-testid='containers-dialog-run'] input[placeholder='nginx:1.27-alpine']",
             "nginx:1.27-alpine",
         )
         .await?;

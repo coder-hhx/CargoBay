@@ -252,7 +252,7 @@ Docker 存储卷管理：
 - **导入自定义镜像**：从本地 `.tar` 归档导入（`docker load -i`）
 - **上传镜像到仓库**：`docker push`
 
-> 提示：Docker Hub 的镜像一般使用 `docker run` 风格引用（如 `nginx:latest`）。tags 列表目前需要带域名的引用。
+> 提示：Docker Hub 的镜像一般使用 `docker run` 风格引用（如 `nginx:1.27-alpine`）。tags 列表目前需要带域名的引用。
 
 ### Settings（设置）
 
@@ -300,7 +300,7 @@ Docker: connected (~/.colima/default/docker.sock)
 cratebay docker ps
 
 # 运行一个新容器（可选 CPU/内存限制，可选拉取镜像）
-cratebay docker run nginx:latest --name web --cpus 2 --memory 512 --pull
+cratebay docker run nginx:1.27-alpine --name web --cpus 2 --memory 512 --pull
 
 # 启动容器
 cratebay docker start <container_id>

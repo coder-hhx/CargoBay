@@ -59,7 +59,7 @@ export const defaultMockState = (): MockState => ({
     {
       id: "ctr-web",
       name: "web",
-      image: "nginx:latest",
+      image: "nginx:1.27-alpine",
       state: "running",
       status: "Up 2 minutes",
       ports: "0.0.0.0:8080->80/tcp",
@@ -74,7 +74,7 @@ export const defaultMockState = (): MockState => ({
   localImages: [
     {
       id: "img-nginx",
-      repo_tags: ["nginx:latest"],
+      repo_tags: ["nginx:1.27-alpine"],
       size_bytes: 145000000,
       size_human: "145 MB",
       created: 1709800000,
@@ -666,7 +666,7 @@ export async function installTauriMock(page: Page, options: InstallOptions = {})
           case "image_tags":
             return clone((state.imageTags as Record<string, unknown>)[String(args.reference)] ?? ["latest"])
           case "docker_run": {
-            const result = createContainer(String(args.image ?? "nginx:latest"), (args.name as string | null) ?? null)
+            const result = createContainer(String(args.image ?? "nginx:1.27-alpine"), (args.name as string | null) ?? null)
             return {
               id: result.id,
               name: result.name,

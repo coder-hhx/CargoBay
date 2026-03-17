@@ -11,7 +11,7 @@ const t = (key: string) => messages.en[key] || key
 const mockContainer = (overrides?: Partial<ContainerInfo>): ContainerInfo => ({
   id: "abc123",
   name: "web-server",
-  image: "nginx:latest",
+  image: "nginx:1.27-alpine",
   state: "running",
   status: "Up 2 hours",
   ports: "0.0.0.0:80->80/tcp",
@@ -110,7 +110,7 @@ describe("Containers", () => {
     render(<Containers {...defaultProps} containers={[c]} groups={groups} />)
 
     expect(screen.getByText("web-server")).toBeInTheDocument()
-    expect(screen.getByText(/nginx:latest/)).toBeInTheDocument()
+    expect(screen.getByText(/nginx:1.27-alpine/)).toBeInTheDocument()
     expect(screen.getByText("Up 2 hours")).toBeInTheDocument()
   })
 
@@ -238,7 +238,7 @@ describe("Containers", () => {
     await user.click(runBtn)
 
     expect(screen.getByText(t("runContainer"))).toBeInTheDocument()
-    expect(screen.getByPlaceholderText("nginx:latest")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText("nginx:1.27-alpine")).toBeInTheDocument()
   })
 
   it("renders container groups with collapsible headers", () => {
@@ -357,7 +357,7 @@ describe("Containers", () => {
     await user.click(screen.getByText(t("runNewContainer")))
 
     // Fill image name
-    const imageInput = screen.getByPlaceholderText("nginx:latest")
+    const imageInput = screen.getByPlaceholderText("nginx:1.27-alpine")
     await user.type(imageInput, "redis:latest")
 
     // Click create

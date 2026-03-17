@@ -527,7 +527,7 @@ export function Images({
           <div className="grid gap-4">
             <div className="grid gap-2">
               <div className="text-sm font-medium">{t("image")}</div>
-              <Input value={runImage} onChange={(e) => setRunImage(e.target.value)} placeholder="nginx:latest" />
+              <Input value={runImage} onChange={(e) => setRunImage(e.target.value)} placeholder="nginx:1.27-alpine" />
             </div>
             <div className="grid gap-2">
               <div className="text-sm font-medium">{t("nameOptional")}</div>

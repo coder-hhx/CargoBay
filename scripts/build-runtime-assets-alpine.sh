@@ -541,8 +541,8 @@ if command -v ctr >/dev/null 2>&1; then
 fi
 
 if [ -x /usr/local/bin/cratebay-guest-agent ]; then
-  log "starting cratebay-guest-agent (tcp -> /var/run/docker.sock)"
-  /usr/local/bin/cratebay-guest-agent --tcp --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
+  log "starting cratebay-guest-agent (vsock -> /var/run/docker.sock)"
+  /usr/local/bin/cratebay-guest-agent --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
   agent_pid="$!"
   sleep 0.2
   if ! kill -0 "$agent_pid" >/dev/null 2>&1; then
