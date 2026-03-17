@@ -1724,7 +1724,9 @@ mod tests {
             Some("172.28.245.112".to_string())
         );
         assert_eq!(
-            extract_first_non_loopback_ipv4("2: eth0    inet 172.28.245.112/20 brd 172.28.255.255 scope global eth0"),
+            extract_first_non_loopback_ipv4(
+                "2: eth0    inet 172.28.245.112/20 brd 172.28.255.255 scope global eth0"
+            ),
             Some("172.28.245.112".to_string())
         );
     }
