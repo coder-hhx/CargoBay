@@ -84,6 +84,13 @@ enum Commands {
         /// Target shell (bash, zsh, fish, elvish, powershell)
         shell: clap_complete::Shell,
     },
+    #[command(hide = true)]
+    InternalRuntimeProxy {
+        #[arg(long)]
+        guest_ip: String,
+        #[arg(long)]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]
@@ -612,6 +619,80 @@ fn parse_docker_host_target(host: &str) -> DockerHostTarget {
     DockerHostTarget::Unsupported(trimmed.to_string())
 }
 
+#[cfg(windows)]
+fn parse_tcp_docker_host_endpoint(host: &str) -> Option<(String, u16)> {
+    let endpoint = host.strip_prefix("tcp://")?;
+
+    if endpoint.starts_with('[') {
+        let end = endpoint.find(']')?;
+        let host_part = endpoint.get(1..end)?.to_string();
+        let port = endpoint.get(end + 1..)?.strip_prefix(':')?.parse().ok()?;
+        return Some((host_part, port));
+    }
+
+    let (host_part, port_part) = endpoint.rsplit_once(':')?;
+    let port = port_part.parse().ok()?;
+    if host_part.trim().is_empty() {
+        return None;
+    }
+    Some((host_part.to_string(), port))
+}
+
+#[cfg(windows)]
+async fn wait_for_docker_http_ready(host: &str, timeout: Duration) -> Result<(), String> {
+    let docker = Docker::connect_with_http(host, 120, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_error = None::<String>;
+
+    loop {
+        match docker.version().await {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error.to_string()),
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Docker runtime at {} did not become ready within {} seconds: {}",
+                host,
+                timeout.as_secs(),
+                last_error.unwrap_or_else(|| "Docker runtime is still starting".to_string())
+            ));
+        }
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+#[cfg(windows)]
+async fn ensure_windows_runtime_terminal_host() -> Result<String, String> {
+    let guest = cratebay_core::runtime::ensure_runtime_wsl_guest_host()
+        .map_err(|e| format!("Failed to start CrateBay Runtime (WSL2): {}", e))?;
+    let (guest_ip, port) = parse_tcp_docker_host_endpoint(&guest)
+        .ok_or_else(|| format!("Invalid WSL Docker host '{}'", guest))?;
+    let localhost = format!("tcp://127.0.0.1:{port}");
+
+    if wait_for_docker_http_ready(&localhost, Duration::from_secs(2))
+        .await
+        .is_ok()
+    {
+        return Ok(localhost);
+    }
+
+    let _ = kill_runtime_proxy_process();
+    spawn_runtime_proxy_detached(&guest_ip, port)?;
+
+    if wait_for_docker_http_ready(&localhost, Duration::from_secs(20))
+        .await
+        .is_ok()
+    {
+        return Ok(localhost);
+    }
+
+    wait_for_docker_http_ready(&guest, Duration::from_secs(5)).await?;
+    Ok(guest)
+}
+
 fn connect_docker_with_host(host: &str) -> Result<Docker, String> {
     match parse_docker_host_target(host) {
         DockerHostTarget::Tcp(endpoint) => {
@@ -768,6 +849,24 @@ async fn run_cli(cli: Cli) {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "cratebay", &mut std::io::stdout());
         }
+        Commands::InternalRuntimeProxy { guest_ip, port } => {
+            #[cfg(windows)]
+            {
+                if let Err(error) =
+                    cratebay_core::runtime::run_wsl_host_relay_server(port, &guest_ip, port)
+                {
+                    eprintln!("Error: {}", error);
+                    std::process::exit(1);
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                let _ = (guest_ip, port);
+                eprintln!("Error: internal runtime proxy is only available on Windows.");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -852,6 +951,70 @@ fn spawn_daemon_detached() -> Result<u32, String> {
     let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", daemon.display(), e))?;
+    Ok(child.id())
+}
+
+#[cfg(windows)]
+fn runtime_proxy_pid_path() -> PathBuf {
+    cratebay_core::data_dir()
+        .join("run")
+        .join("wsl-docker-proxy.pid")
+}
+
+#[cfg(windows)]
+fn kill_runtime_proxy_process() -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command as ProcessCommand;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let pid_path = runtime_proxy_pid_path();
+    let Some(pid) = std::fs::read_to_string(&pid_path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+    else {
+        let _ = std::fs::remove_file(&pid_path);
+        return Ok(());
+    };
+
+    let _ = ProcessCommand::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = std::fs::remove_file(pid_path);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_runtime_proxy_detached(guest_ip: &str, port: u16) -> Result<u32, String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command as ProcessCommand, Stdio};
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to resolve current executable: {}", e))?;
+    let pid_path = runtime_proxy_pid_path();
+    if let Some(parent) = pid_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create runtime proxy directory: {}", e))?;
+    }
+
+    let child = ProcessCommand::new(exe)
+        .arg("internal-runtime-proxy")
+        .arg("--guest-ip")
+        .arg(guest_ip)
+        .arg("--port")
+        .arg(port.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn detached runtime proxy: {}", e))?;
+
+    std::fs::write(&pid_path, child.id().to_string())
+        .map_err(|e| format!("Failed to record runtime proxy PID: {}", e))?;
     Ok(child.id())
 }
 
@@ -1559,7 +1722,7 @@ async fn handle_runtime(cmd: RuntimeCommands) {
     {
         let host = match &cmd {
             RuntimeCommands::Stop => String::new(),
-            _ => match cratebay_core::runtime::ensure_runtime_wsl_running() {
+            _ => match ensure_windows_runtime_terminal_host().await {
                 Ok(h) => h,
                 Err(e) => {
                     eprintln!("Error: {}", e);
@@ -1618,6 +1781,7 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                 }
             }
             RuntimeCommands::Stop => {
+                let _ = kill_runtime_proxy_process();
                 if let Err(e) = cratebay_core::runtime::stop_runtime_wsl() {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
