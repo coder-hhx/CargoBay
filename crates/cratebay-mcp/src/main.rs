@@ -295,10 +295,9 @@ fn connect_docker() -> Result<Docker> {
                             anyhow!("Failed to start CrateBay Runtime (Linux/QEMU): {}", e)
                         })?;
                     std::env::set_var("DOCKER_HOST", &host);
-                    return Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
-                        .map_err(|e| {
-                            anyhow!("Failed to connect to CrateBay Runtime at {}: {}", host, e)
-                        });
+                    Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION).map_err(
+                        |e| anyhow!("Failed to connect to CrateBay Runtime at {}: {}", host, e),
+                    )
                 }
 
                 #[cfg(not(target_os = "linux"))]
