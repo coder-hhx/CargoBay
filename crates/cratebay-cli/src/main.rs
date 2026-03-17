@@ -640,26 +640,64 @@ fn parse_tcp_docker_host_endpoint(host: &str) -> Option<(String, u16)> {
 
 #[cfg(windows)]
 async fn wait_for_docker_http_ready(host: &str, timeout: Duration) -> Result<(), String> {
-    let docker = Docker::connect_with_http(host, 120, bollard::API_DEFAULT_VERSION)
-        .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
+    let request_timeout = timeout
+        .min(Duration::from_secs(2))
+        .max(Duration::from_secs(1));
+    let docker = Docker::connect_with_http(
+        host,
+        request_timeout.as_secs(),
+        bollard::API_DEFAULT_VERSION,
+    )
+    .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
     let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_error = "Docker API is still starting".to_string();
 
     loop {
-        match docker.version().await {
-            Ok(_) => return Ok(()),
-            Err(error) => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(format!(
-                        "Docker runtime at {} did not become ready within {} seconds: {}",
-                        host,
-                        timeout.as_secs(),
-                        error
-                    ));
-                }
+        match tokio::time::timeout(request_timeout, docker.version()).await {
+            Ok(Ok(_)) => return Ok(()),
+            Ok(Err(error)) => {
+                last_error = error.to_string();
+            }
+            Err(_) => {
+                last_error = format!(
+                    "timed out waiting {} seconds for Docker at {}",
+                    request_timeout.as_secs(),
+                    host
+                );
             }
         }
 
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Docker runtime at {} did not become ready within {} seconds: {}",
+                host,
+                timeout.as_secs(),
+                last_error
+            ));
+        }
+
         tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+#[cfg(windows)]
+async fn docker_http_engine_version(host: &str, timeout: Duration) -> Result<String, String> {
+    let request_timeout = timeout.max(Duration::from_secs(1));
+    let docker = Docker::connect_with_http(
+        host,
+        request_timeout.as_secs(),
+        bollard::API_DEFAULT_VERSION,
+    )
+    .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
+
+    match tokio::time::timeout(timeout, docker.version()).await {
+        Ok(Ok(version)) => Ok(version.version.unwrap_or_else(|| "unknown".into())),
+        Ok(Err(error)) => Err(format!("Docker engine check failed: {}", error)),
+        Err(_) => Err(format!(
+            "Docker engine check timed out after {} seconds at {}",
+            timeout.as_secs(),
+            host
+        )),
     }
 }
 
@@ -1780,42 +1818,19 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                 println!("Runtime: CrateBay Runtime (WSL2)");
                 println!("DOCKER_HOST: {}", host);
 
-                match Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION) {
-                    Ok(docker) => match docker.version().await {
-                        Ok(v) => {
-                            println!(
-                                "Docker engine: {}",
-                                v.version.unwrap_or_else(|| "unknown".into())
-                            );
-                        }
-                        Err(e) => {
-                            println!("Docker engine: not responding ({})", e);
-                        }
-                    },
-                    Err(e) => {
-                        println!("Docker engine: failed to connect ({})", e);
-                    }
+                match docker_http_engine_version(&host, Duration::from_secs(15)).await {
+                    Ok(version) => println!("Docker engine: {}", version),
+                    Err(error) => println!("Docker engine: not responding ({})", error),
                 }
             }
             RuntimeCommands::Start => {
                 println!("Runtime: CrateBay Runtime (WSL2)");
                 println!("DOCKER_HOST: {}", host);
 
-                match Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION) {
-                    Ok(docker) => match docker.version().await {
-                        Ok(v) => {
-                            println!(
-                                "Docker engine: {}",
-                                v.version.unwrap_or_else(|| "unknown".into())
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("Docker engine check failed: {}", e);
-                            std::process::exit(1);
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("Docker engine connect failed: {}", e);
+                match docker_http_engine_version(&host, Duration::from_secs(15)).await {
+                    Ok(version) => println!("Docker engine: {}", version),
+                    Err(error) => {
+                        eprintln!("{}", error);
                         std::process::exit(1);
                     }
                 }
