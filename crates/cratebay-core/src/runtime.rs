@@ -1525,6 +1525,40 @@ fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
 }
 
 #[cfg(target_os = "windows")]
+fn wsl_runtime_diagnostics(distro: &str) -> String {
+    let probes = [
+        (
+            "ip -4 -o addr show",
+            "ip -4 -o addr show 2>/dev/null || true",
+        ),
+        ("hostname -I", "hostname -I 2>/dev/null || true"),
+        ("which dockerd", "command -v dockerd 2>/dev/null || true"),
+        ("dockerd --version", "dockerd --version 2>/dev/null || true"),
+        (
+            "ps -ef | grep dockerd",
+            "ps -ef | grep '[d]ockerd' 2>/dev/null || true",
+        ),
+        (
+            "dockerd.log",
+            "tail -n 80 /var/log/dockerd.log 2>/dev/null || true",
+        ),
+    ];
+
+    let mut diagnostics = Vec::new();
+    for (label, command) in probes {
+        match wsl_exec(distro, command) {
+            Ok(output) if !output.trim().is_empty() => {
+                diagnostics.push(format!("{label}:\n{}", output.trim()));
+            }
+            Ok(_) => {}
+            Err(error) => diagnostics.push(format!("{label}: <probe failed: {error}>")),
+        }
+    }
+
+    diagnostics.join("\n\n")
+}
+
+#[cfg(target_os = "windows")]
 fn wait_for_wsl_docker_ready(distro: &str, port: u16) -> Result<String, HypervisorError> {
     let localhost = format!("tcp://127.0.0.1:{port}");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
@@ -1547,22 +1581,18 @@ fn wait_for_wsl_docker_ready(distro: &str, port: u16) -> Result<String, Hypervis
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
-    let dockerd_log = wsl_exec(
-        distro,
-        "tail -n 80 /var/log/dockerd.log 2>/dev/null || true",
-    )
-    .unwrap_or_default();
+    let diagnostics = wsl_runtime_diagnostics(distro);
 
-    let message = if dockerd_log.trim().is_empty() {
+    let message = if diagnostics.trim().is_empty() {
         format!(
             "CrateBay Runtime (WSL2) did not become ready within 120 seconds: {}",
             last_error
         )
     } else {
         format!(
-            "CrateBay Runtime (WSL2) did not become ready within 120 seconds: {}\ndockerd.log:\n{}",
+            "CrateBay Runtime (WSL2) did not become ready within 120 seconds: {}\n{}",
             last_error,
-            dockerd_log.trim()
+            diagnostics.trim()
         )
     };
 
