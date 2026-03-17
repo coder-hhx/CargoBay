@@ -302,6 +302,7 @@ fn run(args: Args) -> Result<(), String> {
         cpus: args.cpus,
         memory_mb: args.memory_mb,
         rosetta: args.rosetta,
+        enable_vsock: !args.vsock_forwards.is_empty(),
         shared_dirs,
     };
 
@@ -370,11 +371,15 @@ fn run(args: Args) -> Result<(), String> {
         let console_log = args.console_log.as_ref().ok_or_else(|| {
             "--tcp-forward requires --console-log for guest IP discovery".to_string()
         })?;
-        let guest_ip = wait_for_guest_ip(console_log, std::time::Duration::from_secs(30))?;
+        wait_for_guest_ip(console_log, std::time::Duration::from_secs(30))?;
         for spec in &args.tcp_forwards {
             let (guest_port, sock_path) = parse_vsock_forward(spec)?;
-            let thread =
-                start_tcp_forward(guest_ip, guest_port, sock_path, shutdown_requested.clone())?;
+            let thread = start_tcp_forward(
+                console_log.clone(),
+                guest_port,
+                sock_path,
+                shutdown_requested.clone(),
+            )?;
             forward_threads.push(thread);
         }
     }
@@ -573,15 +578,21 @@ fn start_vsock_forward(
                 Ok((stream, _addr)) => {
                     let handle = handle.clone();
                     std::thread::spawn(move || {
-                        let vsock_fd = match handle.vsock_connect(guest_port) {
-                            Ok(fd) => fd,
+                        let connection = match handle.vsock_connect(guest_port) {
+                            Ok(connection) => connection,
                             Err(e) => {
                                 tracing::warn!("vsock connect failed: {}", e);
                                 return;
                             }
                         };
 
-                        let vsock: std::fs::File = vsock_fd.into();
+                        let vsock = match connection.try_clone_file() {
+                            Ok(file) => file,
+                            Err(e) => {
+                                tracing::warn!("vsock clone failed: {}", e);
+                                return;
+                            }
+                        };
                         if let Err(e) = proxy_bidirectional(stream, vsock) {
                             tracing::debug!("vsock proxy ended: {}", e);
                         }
@@ -612,18 +623,9 @@ fn wait_for_guest_ip(
 ) -> Result<std::net::IpAddr, String> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
-        if let Ok(content) = std::fs::read_to_string(console_log_path) {
-            for line in content.lines().rev().take(300) {
-                let Some(idx) = line.find("guest_ip=") else {
-                    continue;
-                };
-                let rest = &line[idx + "guest_ip=".len()..];
-                let token = rest.split_whitespace().next().unwrap_or_default();
-                if let Ok(ip) = token.parse::<std::net::IpAddr>() {
-                    tracing::info!("guest ip discovered: {}", ip);
-                    return Ok(ip);
-                }
-            }
+        if let Some(ip) = latest_guest_ip_from_console(console_log_path) {
+            tracing::info!("guest ip discovered: {}", ip);
+            return Ok(ip);
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -635,8 +637,24 @@ fn wait_for_guest_ip(
 }
 
 #[cfg(target_os = "macos")]
+fn latest_guest_ip_from_console(console_log_path: &std::path::Path) -> Option<std::net::IpAddr> {
+    let content = std::fs::read_to_string(console_log_path).ok()?;
+    for line in content.lines().rev().take(300) {
+        let Some(idx) = line.find("guest_ip=") else {
+            continue;
+        };
+        let rest = &line[idx + "guest_ip=".len()..];
+        let token = rest.split_whitespace().next().unwrap_or_default();
+        if let Ok(ip) = token.parse::<std::net::IpAddr>() {
+            return Some(ip);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
 fn start_tcp_forward(
-    guest_ip: std::net::IpAddr,
+    console_log_path: std::path::PathBuf,
     guest_port: u32,
     sock_path: std::path::PathBuf,
     shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -666,10 +684,14 @@ fn start_tcp_forward(
         .set_nonblocking(true)
         .map_err(|e| format!("Failed to set socket nonblocking: {}", e))?;
 
+    let initial_guest_ip = wait_for_guest_ip(&console_log_path, std::time::Duration::from_secs(5))
+        .map_err(|e| format!("Failed to discover guest IP for TCP forward: {}", e))?;
+    let current_guest_ip = std::sync::Arc::new(std::sync::Mutex::new(initial_guest_ip));
+
     tracing::info!(
         "tcp forward enabled: {} -> guest tcp:{}:{}",
         sock_path.display(),
-        guest_ip,
+        initial_guest_ip,
         port
     );
 
@@ -677,14 +699,57 @@ fn start_tcp_forward(
         while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _addr)) => {
+                    let console_log_path = console_log_path.clone();
+                    let current_guest_ip = current_guest_ip.clone();
                     std::thread::spawn(move || {
-                        let tcp = match TcpStream::connect_timeout(
-                            &std::net::SocketAddr::new(guest_ip, port),
-                            Duration::from_secs(2),
-                        ) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!("tcp connect failed ({}:{}): {}", guest_ip, port, e);
+                        let latest_guest_ip = latest_guest_ip_from_console(&console_log_path);
+                        let fallback_guest_ip = *current_guest_ip
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+                        let mut candidate_ips = Vec::new();
+                        if let Some(ip) = latest_guest_ip {
+                            if ip != fallback_guest_ip {
+                                tracing::info!(
+                                    "tcp forward guest ip updated: {} -> {}",
+                                    fallback_guest_ip,
+                                    ip
+                                );
+                            }
+                            *current_guest_ip
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = ip;
+                            candidate_ips.push(ip);
+                        }
+                        if !candidate_ips.contains(&fallback_guest_ip) {
+                            candidate_ips.push(fallback_guest_ip);
+                        }
+
+                        let mut tcp = None;
+                        let mut last_error = None;
+                        for guest_ip in candidate_ips {
+                            match TcpStream::connect_timeout(
+                                &std::net::SocketAddr::new(guest_ip, port),
+                                Duration::from_secs(2),
+                            ) {
+                                Ok(stream) => {
+                                    tcp = Some(stream);
+                                    break;
+                                }
+                                Err(error) => {
+                                    last_error = Some(format!("{}:{}: {}", guest_ip, port, error));
+                                }
+                            }
+                        }
+
+                        let tcp = match tcp {
+                            Some(stream) => stream,
+                            None => {
+                                tracing::warn!(
+                                    "tcp connect failed (port {}): {}",
+                                    port,
+                                    last_error.unwrap_or_else(|| "unknown error".to_string())
+                                );
                                 return;
                             }
                         };

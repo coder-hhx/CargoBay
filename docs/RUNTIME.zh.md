@@ -9,6 +9,10 @@ CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS
 - 传输：**通过 guest NAT IP 的 TCP 转发**
   - Host 侧创建 Unix socket；每次有连接时，Host 会连接到 guest（NAT IP）的 TCP `6237` 并做转发。
   - Guest 侧运行 `cratebay-guest-agent`，监听 TCP `0.0.0.0:6237`，把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
+- 默认传输选择：
+  - Intel macOS（`x86_64`）默认走 TCP 转发，因为 Apple Virtualization 的 virtio-vsock 路径在该平台上稳定性不足。
+  - Apple Silicon 默认继续走开销更低的 vsock。
+  - 如需调试，可通过 `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` 覆盖默认值。
 
 ### macOS 签名说明（较新 macOS 版本必需）
 
@@ -75,6 +79,7 @@ CrateBay 将 Runtime VM 视作一种 OS image：
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`：覆盖使用哪个 OS image id
 - `CRATEBAY_RUNTIME_ASSETS_DIR`：覆盖内置 runtime 资产目录
 - `CRATEBAY_RUNTIME_HTTP_PROXY`：覆盖 runtime 拉取镜像时使用的代理（macOS 在未显式设置时也会回退读取 `scutil --proxy` 的系统代理）
+- `CRATEBAY_RUNTIME_SOCKET_FORWARD`：覆盖 macOS runtime socket 桥接方式（`tcp` 或 `vsock`）
 - `CRATEBAY_VZ_RUNNER_PATH`：覆盖 macOS VM runner 二进制路径
 - `CRATEBAY_WSL_DOCKER_PORT`：覆盖 WSL 内 dockerd 的 TCP 端口（仅 Windows）
 - `CRATEBAY_WSL_ROOTFS_TAR`：覆盖 WSL rootfs tar 的路径（仅 Windows）

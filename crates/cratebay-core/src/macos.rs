@@ -54,6 +54,33 @@ struct RuntimeHttpProxyConfig {
     host_tcp_forward: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeSocketForwardMode {
+    Vsock,
+    Tcp,
+}
+
+fn runtime_socket_forward_mode() -> RuntimeSocketForwardMode {
+    match std::env::var("CRATEBAY_RUNTIME_SOCKET_FORWARD")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        Some(value) if value == "vsock" => RuntimeSocketForwardMode::Vsock,
+        Some(value) if value == "tcp" => RuntimeSocketForwardMode::Tcp,
+        _ => {
+            #[cfg(target_arch = "x86_64")]
+            {
+                RuntimeSocketForwardMode::Tcp
+            }
+
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                RuntimeSocketForwardMode::Vsock
+            }
+        }
+    }
+}
+
 fn vm_dir(id: &str) -> PathBuf {
     data_dir().join("vms").join(id)
 }
@@ -774,7 +801,8 @@ impl MacOSHypervisor {
         let console_log = vm_console_log_path(&vm.id);
         let console_file = std::fs::OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
+            .truncate(true)
             .open(&console_log)?;
         let console_err = console_file.try_clone()?;
 
@@ -807,7 +835,14 @@ impl MacOSHypervisor {
                 crate::runtime::docker_vsock_port(),
                 sock_path.to_string_lossy()
             );
-            cmd.arg("--vsock-forward").arg(spec);
+            match runtime_socket_forward_mode() {
+                RuntimeSocketForwardMode::Vsock => {
+                    cmd.arg("--vsock-forward").arg(spec);
+                }
+                RuntimeSocketForwardMode::Tcp => {
+                    cmd.arg("--tcp-forward").arg(spec);
+                }
+            }
             if let Some(forward) = runtime_http_proxy
                 .as_ref()
                 .and_then(|config| config.host_tcp_forward.as_deref())

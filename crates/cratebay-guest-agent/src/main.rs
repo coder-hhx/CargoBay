@@ -14,12 +14,36 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 fn run() -> Result<(), String> {
+    raise_nofile_limit();
     let cfg = Config::from_env_and_args()?;
 
     match cfg.listen {
         ListenMode::Vsock { port } => run_vsock(port, cfg.docker_socket),
         ListenMode::Tcp { addr } => run_tcp(addr, cfg.docker_socket),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn raise_nofile_limit() {
+    let desired: libc::rlim_t = 65_536;
+    let mut current = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut current) };
+    if rc != 0 {
+        return;
+    }
+
+    let target_max = current.rlim_max.max(desired);
+    let target_cur = current.rlim_cur.max(desired).min(target_max);
+    let updated = libc::rlimit {
+        rlim_cur: target_cur,
+        rlim_max: target_max,
+    };
+
+    let _ = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &updated) };
 }
 
 #[cfg(target_os = "linux")]

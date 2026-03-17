@@ -9,6 +9,10 @@ CrateBay Runtime is CrateBay’s built-in Docker-compatible engine path. On macO
 - Transport: **TCP forwarding over the guest NAT IP**
   - Host side creates the Unix socket and, for each connection, opens a TCP connection to the guest (NAT IP) on port `6237`.
   - Guest side runs `cratebay-guest-agent`, listening on TCP `0.0.0.0:6237`, proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
+- Default transport selection:
+  - Intel macOS (`x86_64`) defaults to TCP forwarding because Apple Virtualization's virtio-vsock path is not stable enough there.
+  - Apple Silicon keeps the lower-overhead vsock path by default.
+  - `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` can override the default for debugging.
 
 ### macOS signing note (required on newer macOS)
 
@@ -77,6 +81,7 @@ Shipping an install-and-use runtime means the desktop app must include a Linux k
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`: override which OS image id to use
 - `CRATEBAY_RUNTIME_ASSETS_DIR`: override the bundled runtime assets location
 - `CRATEBAY_RUNTIME_HTTP_PROXY`: override the runtime image-pull proxy (macOS also falls back to the system proxy from `scutil --proxy` when present)
+- `CRATEBAY_RUNTIME_SOCKET_FORWARD`: override the macOS runtime socket bridge (`tcp` or `vsock`)
 - `CRATEBAY_VZ_RUNNER_PATH`: override the macOS VM runner binary path
 - `CRATEBAY_WSL_DOCKER_PORT`: override the WSL dockerd TCP port (Windows only)
 - `CRATEBAY_WSL_ROOTFS_TAR`: override the WSL rootfs tar path (Windows only)

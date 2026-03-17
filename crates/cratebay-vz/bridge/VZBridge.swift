@@ -54,6 +54,27 @@ private func unregisterVM(_ handle: UnsafeMutableRawPointer?) {
     registryLock.unlock()
 }
 
+private func retainVsockConnection(_ connection: VZVirtioSocketConnection) -> UnsafeMutableRawPointer {
+    Unmanaged.passRetained(connection).toOpaque()
+}
+
+private func lookupVsockConnection(
+    _ handle: UnsafeMutableRawPointer?
+) -> VZVirtioSocketConnection? {
+    guard let handle = handle else { return nil }
+    return Unmanaged<VZVirtioSocketConnection>
+        .fromOpaque(handle)
+        .takeUnretainedValue()
+}
+
+private func releaseVsockConnection(_ handle: UnsafeMutableRawPointer?) {
+    guard let handle = handle else { return }
+    let connection = Unmanaged<VZVirtioSocketConnection>
+        .fromOpaque(handle)
+        .takeRetainedValue()
+    connection.close()
+}
+
 // MARK: - Helpers
 
 private func makeError(_ msg: String) -> UnsafeMutablePointer<CChar> {
@@ -214,7 +235,9 @@ public func vz_create_and_start_vm(
     vzConfig.networkDevices = [networkDevice]
 
     // --- Virtio socket (vsock) ---
-    vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+    if cfg.enable_vsock {
+        vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+    }
 
     // --- Memory balloon (allows guest to report unused memory) ---
     vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
@@ -526,19 +549,19 @@ public func vz_vm_state(_ handle: UnsafeMutableRawPointer?) -> Int32 {
 
 // MARK: - Virtio-vsock connect (host -> guest)
 
-@_cdecl("vz_vsock_connect")
-public func vz_vsock_connect(
+@_cdecl("vz_vsock_connect_handle")
+public func vz_vsock_connect_handle(
     _ handle: UnsafeMutableRawPointer?,
     _ port: UInt32,
     _ outError: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-) -> Int32 {
+) -> UnsafeMutableRawPointer? {
     guard let instance = lookupVM(handle) else {
         setError(outError, "Invalid VM handle")
-        return -1
+        return nil
     }
 
     let semaphore = DispatchSemaphore(value: 0)
-    var outFd: Int32 = -1
+    var outHandle: UnsafeMutableRawPointer? = nil
     var errMsg: String? = nil
 
     instance.queue.async {
@@ -551,22 +574,12 @@ public func vz_vsock_connect(
         socketDevice.connect(toPort: port) { result in
             switch result {
             case .success(let connection):
-                let fd = connection.fileDescriptor
-                if fd < 0 {
+                if connection.fileDescriptor < 0 {
                     errMsg = "vsock connect to port \(port) failed: connection closed"
                     semaphore.signal()
                     return
                 }
-
-                let dupFd = Darwin.dup(fd)
-                if dupFd < 0 {
-                    errMsg = "vsock connect to port \(port) failed: dup() error"
-                    semaphore.signal()
-                    return
-                }
-
-                outFd = Int32(dupFd)
-                connection.close()
+                outHandle = retainVsockConnection(connection)
                 semaphore.signal()
             case .failure(let error):
                 errMsg = "vsock connect to port \(port) failed: \(error.localizedDescription)"
@@ -578,20 +591,50 @@ public func vz_vsock_connect(
     let waitResult = semaphore.wait(timeout: .now() + 10.0)
     if waitResult == .timedOut {
         setError(outError, "vsock connect to port \(port) timed out")
-        return -1
+        return nil
     }
 
     if let msg = errMsg {
         setError(outError, msg)
-        return -1
+        return nil
     }
 
-    if outFd < 0 {
+    if outHandle == nil {
         setError(outError, "vsock connect to port \(port) failed")
+        return nil
+    }
+
+    return outHandle
+}
+
+@_cdecl("vz_vsock_connection_dup_fd")
+public func vz_vsock_connection_dup_fd(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outError: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard let connection = lookupVsockConnection(handle) else {
+        setError(outError, "Invalid vsock connection handle")
         return -1
     }
 
-    return outFd
+    let fd = connection.fileDescriptor
+    if fd < 0 {
+        setError(outError, "vsock connection is closed")
+        return -1
+    }
+
+    let dupFd = Darwin.dup(fd)
+    if dupFd < 0 {
+        setError(outError, "vsock connection dup() failed")
+        return -1
+    }
+
+    return Int32(dupFd)
+}
+
+@_cdecl("vz_vsock_connection_close")
+public func vz_vsock_connection_close(_ handle: UnsafeMutableRawPointer?) {
+    releaseVsockConnection(handle)
 }
 
 // MARK: - Console read-back

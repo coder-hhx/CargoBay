@@ -31,6 +31,9 @@ void vz_free_string(char *s);
 /// Opaque handle to a running VZ virtual machine.
 typedef void *VZVMHandle;
 
+/// Opaque handle to a connected VZ virtio-vsock connection.
+typedef void *VZVsockConnectionHandle;
+
 // ---------------------------------------------------------------------------
 // Shared directory descriptor (passed from Rust to Swift).
 // ---------------------------------------------------------------------------
@@ -54,6 +57,7 @@ typedef struct {
     uint32_t cpus;
     uint64_t memory_mb;
     bool rosetta;
+    bool enable_vsock;
     const VZSharedDir *shared_dirs;
     uint32_t shared_dirs_count;
 } VZVMConfig;
@@ -114,14 +118,22 @@ int32_t vz_create_disk_image(const char *path, uint64_t size_bytes,
 // Virtio-vsock utilities
 // ---------------------------------------------------------------------------
 
-/// Connect from host to a guest vsock port.
+/// Connect from host to a guest vsock port and retain the connection object.
 ///
-/// On success returns a *dup()*'d file descriptor for the connection. The
-/// caller owns the returned FD and must close it.
+/// The returned handle must be released with vz_vsock_connection_close().
+/// Returns NULL on failure (with *out_error set).
+VZVsockConnectionHandle vz_vsock_connect_handle(VZVMHandle handle, uint32_t port,
+                                                VZErrorString *out_error);
+
+/// Duplicate the underlying file descriptor for a retained vsock connection.
 ///
+/// The caller owns the returned FD and must close it.
 /// Returns -1 on failure (with *out_error set).
-int32_t vz_vsock_connect(VZVMHandle handle, uint32_t port,
-                          VZErrorString *out_error);
+int32_t vz_vsock_connection_dup_fd(VZVsockConnectionHandle handle,
+                                   VZErrorString *out_error);
+
+/// Close and release a retained vsock connection handle.
+void vz_vsock_connection_close(VZVsockConnectionHandle handle);
 
 #ifdef __cplusplus
 }

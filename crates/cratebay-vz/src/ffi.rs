@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::ffi::{CStr, CString};
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::FromRawFd;
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -17,6 +17,9 @@ use std::ptr;
 
 /// Opaque handle to a running VM.
 pub type VZVMHandle = *mut std::ffi::c_void;
+
+/// Opaque handle to a connected vsock connection.
+pub type VZVsockConnectionHandle = *mut std::ffi::c_void;
 
 /// Descriptor for a shared directory passed to the bridge.
 #[repr(C)]
@@ -37,6 +40,7 @@ pub struct VZVMConfig {
     pub cpus: u32,
     pub memory_mb: u64,
     pub rosetta: bool,
+    pub enable_vsock: bool,
     pub shared_dirs: *const VZSharedDir,
     pub shared_dirs_count: u32,
 }
@@ -56,7 +60,18 @@ extern "C" {
         out_error: *mut *mut c_char,
     ) -> i32;
 
-    pub fn vz_vsock_connect(handle: VZVMHandle, port: u32, out_error: *mut *mut c_char) -> i32;
+    pub fn vz_vsock_connect_handle(
+        handle: VZVMHandle,
+        port: u32,
+        out_error: *mut *mut c_char,
+    ) -> VZVsockConnectionHandle;
+
+    pub fn vz_vsock_connection_dup_fd(
+        handle: VZVsockConnectionHandle,
+        out_error: *mut *mut c_char,
+    ) -> i32;
+
+    pub fn vz_vsock_connection_close(handle: VZVsockConnectionHandle);
 
     pub fn vz_create_and_start_vm(
         config: *const VZVMConfig,
@@ -188,22 +203,53 @@ impl VmHandle {
         Ok(bytes_read as usize)
     }
 
-    /// Connect to a guest vsock port and return an owned file descriptor.
-    pub fn vsock_connect(&self, port: u32) -> Result<OwnedFd, String> {
+    /// Connect to a guest vsock port and retain the underlying connection object.
+    pub fn vsock_connect(&self, port: u32) -> Result<VsockConnection, String> {
         let mut err: *mut c_char = ptr::null_mut();
-        let fd = unsafe { vz_vsock_connect(self.raw, port, &mut err) };
+        let handle = unsafe { vz_vsock_connect_handle(self.raw, port, &mut err) };
+        if handle.is_null() {
+            return Err(
+                take_error(err).unwrap_or_else(|| format!("vsock connect to port {} failed", port))
+            );
+        }
+
+        let fd = unsafe { vz_vsock_connection_dup_fd(handle, &mut err) };
         if fd < 0 {
+            unsafe { vz_vsock_connection_close(handle) };
             return Err(
                 take_error(err).unwrap_or_else(|| format!("vsock connect to port {} failed", port))
             );
         }
 
         if let Some(msg) = take_error(err) {
-            tracing::warn!("vz_vsock_connect returned fd with error: {}", msg);
+            tracing::warn!("vz_vsock_connect returned connection with warning: {}", msg);
         }
 
-        // SAFETY: Swift returns a dup()'d FD; we take ownership here.
-        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        Ok(VsockConnection {
+            raw: handle,
+            file: unsafe { std::fs::File::from_raw_fd(fd) },
+        })
+    }
+}
+
+/// Retained vsock connection handle plus a dup()'d file descriptor used for I/O.
+pub struct VsockConnection {
+    raw: VZVsockConnectionHandle,
+    file: std::fs::File,
+}
+
+impl VsockConnection {
+    pub fn try_clone_file(&self) -> std::io::Result<std::fs::File> {
+        self.file.try_clone()
+    }
+}
+
+impl Drop for VsockConnection {
+    fn drop(&mut self) {
+        if !self.raw.is_null() {
+            unsafe { vz_vsock_connection_close(self.raw) };
+            self.raw = ptr::null_mut();
+        }
     }
 }
 
@@ -225,6 +271,7 @@ pub struct VmCreateConfig {
     pub cpus: u32,
     pub memory_mb: u64,
     pub rosetta: bool,
+    pub enable_vsock: bool,
     pub shared_dirs: Vec<SharedDirFFI>,
 }
 
@@ -269,6 +316,7 @@ pub fn create_and_start_vm(cfg: &VmCreateConfig) -> Result<VmHandle, String> {
         cpus: cfg.cpus,
         memory_mb: cfg.memory_mb,
         rosetta: cfg.rosetta,
+        enable_vsock: cfg.enable_vsock,
         shared_dirs: if c_dirs.is_empty() {
             ptr::null()
         } else {

@@ -541,12 +541,23 @@ if command -v ctr >/dev/null 2>&1; then
 fi
 
 if [ -x /usr/local/bin/cratebay-guest-agent ]; then
-  log "starting cratebay-guest-agent (vsock -> /var/run/docker.sock)"
-  /usr/local/bin/cratebay-guest-agent --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
-  agent_pid="$!"
+  if [ -e /proc/net/vsock ]; then
+    log "starting cratebay-guest-agent (vsock -> /var/run/docker.sock)"
+    /usr/local/bin/cratebay-guest-agent --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
+    agent_pid="$!"
+  else
+    agent_pid=""
+    log "skipping cratebay-guest-agent (vsock): no vsock device"
+  fi
+  log "starting cratebay-guest-agent (tcp -> /var/run/docker.sock)"
+  /usr/local/bin/cratebay-guest-agent --tcp --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
+  agent_tcp_pid="$!"
   sleep 0.2
-  if ! kill -0 "$agent_pid" >/dev/null 2>&1; then
-    log "WARN: cratebay-guest-agent exited early"
+  if [ -n "$agent_pid" ] && ! kill -0 "$agent_pid" >/dev/null 2>&1; then
+    log "WARN: cratebay-guest-agent (vsock) exited early"
+  fi
+  if ! kill -0 "$agent_tcp_pid" >/dev/null 2>&1; then
+    log "WARN: cratebay-guest-agent (tcp) exited early"
   fi
 fi
 
