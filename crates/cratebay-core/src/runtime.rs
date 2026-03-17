@@ -1370,15 +1370,54 @@ fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+#[cfg(any(test, target_os = "windows"))]
+fn extract_first_non_loopback_ipv4(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() {
+            return None;
+        }
+
+        if trimmed_line.contains(" lo") && trimmed_line.contains("inet ") {
+            return None;
+        }
+
+        trimmed_line.split_whitespace().find_map(|token| {
+            let candidate = token
+                .trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';')
+                .split('/')
+                .next()
+                .unwrap_or(token)
+                .trim();
+
+            if candidate.is_empty() || candidate.starts_with("127.") || candidate == "0.0.0.0" {
+                return None;
+            }
+
+            let octets = candidate
+                .split('.')
+                .map(str::parse::<u8>)
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
+
+            if octets.len() == 4 {
+                Some(candidate.to_string())
+            } else {
+                None
+            }
+        })
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
     let out = wsl_exec(
         distro,
-        "ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1",
+        "ip -4 -o addr show 2>/dev/null | awk '$2 != \"lo\" {print $4}' | cut -d/ -f1 | head -n1",
     )
     .unwrap_or_default();
-    if !out.trim().is_empty() {
-        return Ok(out.trim().to_string());
+    if let Some(ip) = extract_first_non_loopback_ipv4(&out) {
+        return Ok(ip);
     }
 
     let out = wsl_exec(
@@ -1386,8 +1425,8 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
         "hostname -I 2>/dev/null | awk '{print $1}' | tr -d '\\r'",
     )
     .unwrap_or_default();
-    if !out.trim().is_empty() {
-        return Ok(out.trim().to_string());
+    if let Some(ip) = extract_first_non_loopback_ipv4(&out) {
+        return Ok(ip);
     }
 
     Err(HypervisorError::CreateFailed(
@@ -1664,5 +1703,29 @@ mod tests {
         );
         assert_eq!(docker_host_tcp_endpoint("tcp://:2375"), None);
         assert_eq!(docker_host_tcp_endpoint("tcp://127.0.0.1"), None);
+    }
+
+    #[test]
+    fn extract_first_non_loopback_ipv4_skips_loopback_lines() {
+        assert_eq!(
+            extract_first_non_loopback_ipv4("1: lo    inet 10.255.255.254/32 scope global lo"),
+            None
+        );
+        assert_eq!(
+            extract_first_non_loopback_ipv4("inet 127.0.0.1/8 scope host lo"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_first_non_loopback_ipv4_reads_hostname_output() {
+        assert_eq!(
+            extract_first_non_loopback_ipv4("172.28.245.112  fd00::1"),
+            Some("172.28.245.112".to_string())
+        );
+        assert_eq!(
+            extract_first_non_loopback_ipv4("2: eth0    inet 172.28.245.112/20 brd 172.28.255.255 scope global eth0"),
+            Some("172.28.245.112".to_string())
+        );
     }
 }
