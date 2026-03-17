@@ -1704,19 +1704,14 @@ fn run_wsl_host_relay_listener(
     listener: std::net::TcpListener,
     target: std::sync::Arc<std::sync::Mutex<String>>,
 ) {
-    loop {
-        match listener.accept() {
-            Ok((inbound, _peer)) => {
-                let target_addr = target
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .clone();
-                std::thread::spawn(move || {
-                    let _ = proxy_wsl_host_connection(inbound, target_addr);
-                });
-            }
-            Err(_) => break,
-        }
+    while let Ok((inbound, _peer)) = listener.accept() {
+        let target_addr = target
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        std::thread::spawn(move || {
+            let _ = proxy_wsl_host_connection(inbound, target_addr);
+        });
     }
 }
 
