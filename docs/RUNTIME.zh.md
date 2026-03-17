@@ -76,6 +76,7 @@ Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `roo
 
 CrateBay 只有在 Docker API 实际可达后，才会把 Windows runtime 标记为 ready；如果上一次失败导入留下了脏的 WSL 安装目录，它也会先自动清理再重新导入内置 distro。
 当 Windows 需要从 `127.0.0.1` 回退到 guest IP 时，CrateBay 现在会优先选择宿主可达的 WSL NAT 地址，并跳过 Docker `172.17.0.1` 这类仅桥接可见的地址。
+如果启动过程中某个 `wsl.exe` 探测卡住，CrateBay 现在会在限定超时后直接报错，而不是让整个 `cratebay runtime start` 一直挂住。
 
 ## 运行时镜像
 

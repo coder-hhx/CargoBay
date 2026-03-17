@@ -1209,17 +1209,95 @@ fn wsl_list_distros() -> Result<Vec<String>, HypervisorError> {
 }
 
 #[cfg(target_os = "windows")]
+fn read_windows_command_capture(path: &Path) -> Vec<u8> {
+    std::fs::read(path).unwrap_or_default()
+}
+
+#[cfg(target_os = "windows")]
+fn format_windows_command_capture_detail(stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return Some(stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return Some(stdout);
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn cleanup_windows_command_capture(stdout_path: &Path, stderr_path: &Path) {
+    let _ = std::fs::remove_file(stdout_path);
+    let _ = std::fs::remove_file(stderr_path);
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_windows_command_without_blocking(child: &mut std::process::Child) {
+    let _ = child.kill();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn run_windows_command_with_timeout(
     command: &mut std::process::Command,
     timeout: std::time::Duration,
     description: &str,
 ) -> Result<std::process::Output, HypervisorError> {
+    use std::fs::OpenOptions;
     use std::process::Stdio;
+
+    let capture_suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let stdout_path =
+        std::env::temp_dir().join(format!("cratebay-windows-command-{capture_suffix}.stdout"));
+    let stderr_path =
+        std::env::temp_dir().join(format!("cratebay-windows-command-{capture_suffix}.stderr"));
+
+    let stdout_file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(&stdout_path)
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!(
+                "Failed to prepare stdout capture for {}: {}",
+                description, error
+            ))
+        })?;
+    let stderr_file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(&stderr_path)
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!(
+                "Failed to prepare stderr capture for {}: {}",
+                description, error
+            ))
+        })?;
 
     let mut child = command
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
         .spawn()
         .map_err(|error| {
             HypervisorError::CreateFailed(format!("Failed to start {}: {}", description, error))
@@ -1228,33 +1306,49 @@ fn run_windows_command_with_timeout(
     let deadline = std::time::Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                return child.wait_with_output().map_err(|error| {
-                    HypervisorError::CreateFailed(format!(
-                        "Failed to collect output for {}: {}",
-                        description, error
-                    ))
-                });
+            Ok(Some(status)) => {
+                let output = std::process::Output {
+                    status,
+                    stdout: read_windows_command_capture(&stdout_path),
+                    stderr: read_windows_command_capture(&stderr_path),
+                };
+                cleanup_windows_command_capture(&stdout_path, &stderr_path);
+                return Ok(output);
             }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(HypervisorError::CreateFailed(format!(
+                terminate_windows_command_without_blocking(&mut child);
+                let stdout = read_windows_command_capture(&stdout_path);
+                let stderr = read_windows_command_capture(&stderr_path);
+                cleanup_windows_command_capture(&stdout_path, &stderr_path);
+
+                let mut message = format!(
                     "{} timed out after {} seconds",
                     description,
                     timeout.as_secs()
-                )));
+                );
+                if let Some(detail) = format_windows_command_capture_detail(&stdout, &stderr) {
+                    message.push_str(": ");
+                    message.push_str(&detail);
+                }
+
+                return Err(HypervisorError::CreateFailed(message));
             }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(HypervisorError::CreateFailed(format!(
-                    "Failed while waiting for {}: {}",
-                    description, error
-                )));
+                terminate_windows_command_without_blocking(&mut child);
+                let stdout = read_windows_command_capture(&stdout_path);
+                let stderr = read_windows_command_capture(&stderr_path);
+                cleanup_windows_command_capture(&stdout_path, &stderr_path);
+
+                let mut message = format!("Failed while waiting for {}: {}", description, error);
+                if let Some(detail) = format_windows_command_capture_detail(&stdout, &stderr) {
+                    message.push_str(": ");
+                    message.push_str(&detail);
+                }
+
+                return Err(HypervisorError::CreateFailed(message));
             }
         }
     }
