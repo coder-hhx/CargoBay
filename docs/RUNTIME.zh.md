@@ -52,6 +52,8 @@ export DOCKER_HOST=unix://$HOME/.cratebay/run/docker.sock
 
 Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `rootfs.tar`，再把它嵌入安装包，因此终端用户不会在首次运行时再触发运行时下载。
 
+CrateBay 只有在 Docker API 实际可达后，才会把 Windows runtime 标记为 ready；如果上一次失败导入留下了脏的 WSL 安装目录，它也会先自动清理再重新导入内置 distro。
+
 ## 运行时镜像
 
 CrateBay 将 Runtime VM 视作一种 OS image：

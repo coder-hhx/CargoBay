@@ -166,7 +166,7 @@ enum PortCommands {
 
 #[derive(Subcommand)]
 enum RuntimeCommands {
-    /// Start CrateBay Runtime (downloads the runtime OS image if needed)
+    /// Start CrateBay Runtime
     Start,
     /// Stop CrateBay Runtime
     Stop,

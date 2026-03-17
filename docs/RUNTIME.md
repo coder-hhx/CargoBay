@@ -52,6 +52,8 @@ Runtime assets are bundled into the desktop app as `runtime-wsl/<arch>/rootfs.ta
 
 Release builds generate that `rootfs.tar` locally from Alpine packages during packaging, then embed it into the Windows installer so end users do not hit a first-run runtime download.
 
+CrateBay waits until the Docker API is actually reachable before reporting the Windows runtime as ready, and it auto-recovers a stale partial WSL import directory before re-importing the bundled distro.
+
 ## Runtime images
 
 CrateBay treats the runtime VM like an OS image:

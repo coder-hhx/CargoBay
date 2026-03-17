@@ -709,22 +709,31 @@ fn runtime_wsl_rootfs_tar_path() -> Result<PathBuf, HypervisorError> {
 }
 
 #[cfg(target_os = "windows")]
+fn wsl_install_dir(distro: &str) -> PathBuf {
+    crate::store::data_dir().join("wsl").join(distro)
+}
+
+#[cfg(target_os = "windows")]
+fn prepare_wsl_install_dir(distro: &str) -> Result<PathBuf, HypervisorError> {
+    let install_dir = wsl_install_dir(distro);
+
+    if install_dir.exists() {
+        let mut entries = std::fs::read_dir(&install_dir)?;
+        if entries.next().is_some() {
+            std::fs::remove_dir_all(&install_dir)?;
+        }
+    }
+
+    std::fs::create_dir_all(&install_dir)?;
+    Ok(install_dir)
+}
+
+#[cfg(target_os = "windows")]
 fn wsl_import_runtime_distro(distro: &str) -> Result<(), HypervisorError> {
     use std::process::Command;
 
     let rootfs = runtime_wsl_rootfs_tar_path()?;
-    let install_dir = crate::store::data_dir().join("wsl").join(distro);
-    std::fs::create_dir_all(&install_dir)?;
-
-    // WSL requires the install directory to be empty.
-    if let Ok(mut it) = std::fs::read_dir(&install_dir) {
-        if it.next().is_some() {
-            return Err(HypervisorError::CreateFailed(format!(
-                "WSL install directory is not empty: {}",
-                install_dir.display()
-            )));
-        }
-    }
+    let install_dir = prepare_wsl_install_dir(distro)?;
 
     let out = Command::new("wsl.exe")
         .args([
@@ -796,13 +805,122 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
     ))
 }
 
+#[cfg(any(test, target_os = "windows"))]
+fn docker_host_tcp_endpoint(host: &str) -> Option<(String, u16)> {
+    let endpoint = host.strip_prefix("tcp://")?;
+
+    if endpoint.starts_with('[') {
+        let end = endpoint.find(']')?;
+        let host_part = endpoint.get(1..end)?.to_string();
+        let port = endpoint.get(end + 1..)?.strip_prefix(':')?.parse().ok()?;
+        return Some((host_part, port));
+    }
+
+    let (host_part, port_part) = endpoint.rsplit_once(':')?;
+    let port = port_part.parse().ok()?;
+    if host_part.trim().is_empty() {
+        return None;
+    }
+    Some((host_part.to_string(), port))
+}
+
 #[cfg(target_os = "windows")]
-fn local_port_open(port: u16) -> bool {
-    use std::net::{SocketAddr, TcpStream};
+fn docker_http_ping_host(host: &str) -> Result<(), String> {
+    use std::io::{Read, Write};
+    use std::net::ToSocketAddrs;
     use std::time::Duration;
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+    let (tcp_host, port) =
+        docker_host_tcp_endpoint(host).ok_or_else(|| format!("invalid Docker host '{}'", host))?;
+
+    let mut addresses = (tcp_host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|error| format!("resolve {}:{}: {}", tcp_host, port, error))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err(format!(
+            "resolve {}:{}: no addresses returned",
+            tcp_host, port
+        ));
+    }
+    addresses.sort_by_key(|address| if address.is_ipv4() { 0 } else { 1 });
+
+    let mut last_error = None;
+    for address in addresses {
+        match std::net::TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
+            Ok(mut stream) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+
+                stream
+                    .write_all(b"GET /_ping HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n")
+                    .map_err(|error| format!("write {}: {}", address, error))?;
+
+                let mut buf = [0_u8; 512];
+                let n = stream
+                    .read(&mut buf)
+                    .map_err(|error| format!("read {}: {}", address, error))?;
+                let response = String::from_utf8_lossy(&buf[..n]);
+                if response.contains("200 OK") || response.ends_with("OK") {
+                    return Ok(());
+                }
+
+                last_error = Some(format!("{} returned unexpected response", address));
+            }
+            Err(error) => {
+                last_error = Some(format!("connect {}: {}", address, error));
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "unknown error".to_string()))
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
+    let cmd = format!(
+        "mkdir -p /var/lib/docker /var/run /var/log; \
+         ulimit -n 65536 >/dev/null 2>&1 || true; \
+         if [ -f /var/run/dockerd.pid ] && kill -0 \"$(cat /var/run/dockerd.pid)\" 2>/dev/null; then \
+           exit 0; \
+         fi; \
+         rm -f /var/run/dockerd.pid; \
+         nohup dockerd --pidfile /var/run/dockerd.pid \
+           -H unix:///var/run/docker.sock \
+           -H tcp://0.0.0.0:{port} \
+           > /var/log/dockerd.log 2>&1 &"
+    );
+    let _ = wsl_exec(distro, &cmd)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_wsl_docker_ready(distro: &str, port: u16) -> Result<String, HypervisorError> {
+    let localhost = format!("tcp://127.0.0.1:{port}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let mut last_error = "Docker runtime is still starting".to_string();
+
+    while std::time::Instant::now() < deadline {
+        match docker_http_ping_host(&localhost) {
+            Ok(()) => return Ok(localhost),
+            Err(error) => last_error = error,
+        }
+
+        if let Ok(ip) = wsl_guest_ip(distro) {
+            let guest = format!("tcp://{ip}:{port}");
+            match docker_http_ping_host(&guest) {
+                Ok(()) => return Ok(guest),
+                Err(error) => last_error = error,
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Err(HypervisorError::CreateFailed(format!(
+        "CrateBay Runtime (WSL2) did not become ready within 45 seconds: {}",
+        last_error
+    )))
 }
 
 /// Ensure CrateBay Runtime is running on Windows via a WSL2 distro.
@@ -818,23 +936,11 @@ pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
         wsl_import_runtime_distro(distro)?;
     }
 
-    // 2) Ensure dockerd is running inside WSL.
-    // Start is idempotent enough: if already running, dockerd will keep the socket/port.
-    let cmd = format!(
-        "mkdir -p /var/lib/docker /var/run; \
-         (nohup dockerd -H unix:///var/run/docker.sock -H tcp://0.0.0.0:{port} \
-           > /var/log/dockerd.log 2>&1 &) || true"
-    );
-    let _ = wsl_exec(distro, &cmd);
-
-    // 3) Prefer localhost forwarding (fast + stable when available).
-    if local_port_open(port) {
-        return Ok(format!("tcp://127.0.0.1:{port}"));
-    }
-
-    // 4) Fallback: connect directly to the WSL guest IP.
-    let ip = wsl_guest_ip(distro)?;
-    Ok(format!("tcp://{ip}:{port}"))
+    // 2) Ensure dockerd is running inside WSL and only return once the Docker
+    // API is actually responding, so the first CLI/GUI action after setup can
+    // succeed immediately.
+    wsl_start_dockerd(distro, port)?;
+    wait_for_wsl_docker_ready(distro, port)
 }
 
 /// Stop CrateBay Runtime on Windows (terminates the WSL distro).
@@ -930,5 +1036,31 @@ mod tests {
 
         let root = runtime_assets_root_dir_from_exe_dir(&macos_dir).unwrap();
         assert_eq!(root, resources_dir);
+    }
+
+    #[test]
+    fn docker_host_tcp_endpoint_parses_ipv4_hosts() {
+        assert_eq!(
+            docker_host_tcp_endpoint("tcp://127.0.0.1:2375"),
+            Some(("127.0.0.1".to_string(), 2375))
+        );
+    }
+
+    #[test]
+    fn docker_host_tcp_endpoint_parses_ipv6_hosts() {
+        assert_eq!(
+            docker_host_tcp_endpoint("tcp://[::1]:2375"),
+            Some(("::1".to_string(), 2375))
+        );
+    }
+
+    #[test]
+    fn docker_host_tcp_endpoint_rejects_invalid_hosts() {
+        assert_eq!(
+            docker_host_tcp_endpoint("unix:///var/run/docker.sock"),
+            None
+        );
+        assert_eq!(docker_host_tcp_endpoint("tcp://:2375"), None);
+        assert_eq!(docker_host_tcp_endpoint("tcp://127.0.0.1"), None);
     }
 }
