@@ -7762,11 +7762,40 @@ exec "$target" "$@"
                     }
                 }
             });
-            Self {
+            let server = Self {
                 stop,
                 handle: Some(handle),
                 base_url: format!("http://127.0.0.1:{}", port),
+            };
+            server.wait_until_ready();
+            server
+        }
+
+        fn wait_until_ready(&self) {
+            let addr = self
+                .base_url
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .to_string();
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                if let Ok(mut stream) = TcpStream::connect(&addr) {
+                    let _ = stream.write_all(
+                        b"GET /api/version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                    let mut response = Vec::new();
+                    let _ = stream.read_to_end(&mut response);
+                    if String::from_utf8_lossy(&response).contains("200 OK") {
+                        return;
+                    }
+                }
+                thread::sleep(Duration::from_millis(25));
             }
+            panic!(
+                "fake ollama server did not become ready at {}",
+                self.base_url
+            );
         }
     }
 
