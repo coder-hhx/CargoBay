@@ -65,6 +65,16 @@ CrateBay works with any Docker-compatible runtime.
 - Socket path: `~/.cratebay/run/docker.sock`
 - Implementation details: `docs/RUNTIME.md`
 
+**Linux (recommended): CrateBay Runtime (built-in, QEMU/KVM)**
+
+- GUI: click **Start Runtime**
+- CLI:
+  - `cratebay runtime start`
+  - `cratebay runtime env` (prints `DOCKER_HOST=tcp://...`)
+- The runtime image and Linux helper are bundled with the desktop app (no first-use download).
+- Uses KVM automatically when `/dev/kvm` is available; otherwise falls back to QEMU TCG.
+- Implementation details: `docs/RUNTIME.md`
+
 **Windows (recommended): CrateBay Runtime (built-in, WSL2)**
 
 - GUI: click **Start Runtime**
@@ -80,7 +90,7 @@ Other options (all platforms):
 - **OrbStack** (macOS) — CrateBay auto-detects its socket too
 - **Colima** (macOS, free) — `brew install colima && colima start`
 
-> Note: CrateBay talks to the Docker Engine API directly. You do **not** need to install `docker` or `docker compose` to use CrateBay itself. For terminal workflows you can either use `cratebay docker ...`, or point a Docker CLI at the socket via `DOCKER_HOST`.
+> Note: CrateBay talks to the Docker Engine API directly. You do **not** need to install `docker` or `docker compose` to use CrateBay itself. For terminal workflows you can either use `cratebay docker ...`, or point a Docker CLI at the runtime via `DOCKER_HOST`.
 
 ---
 
@@ -458,6 +468,8 @@ CrateBay auto-detects Docker sockets in this order:
 | 4 | `/var/run/docker.sock` | Docker Desktop / native |
 | 5 | `~/.docker/run/docker.sock` | Docker Desktop (alt) |
 
+**Linux:** Checks Unix sockets first; if none are available, CrateBay will start its built-in QEMU runtime and set `DOCKER_HOST=tcp://127.0.0.1:2475` for the current process.
+
 **Windows:** Checks `//./pipe/docker_engine` and `//./pipe/dockerDesktopLinuxEngine` first; if missing, CrateBay will start its built-in WSL2 runtime and set `DOCKER_HOST=tcp://...` for the current process.
 
 ### Override
@@ -484,6 +496,9 @@ cratebay docker ps
 | `CRATEBAY_LOG_DIR` | Override log directory |
 | `CRATEBAY_OLLAMA_BASE_URL` | Override the local Ollama-compatible HTTP endpoint used by AI Hub models |
 | `CRATEBAY_LOG_RETENTION_DAYS` | Keep error logs for N days (default: 7) |
+| `CRATEBAY_RUNTIME_QEMU_PATH` | Override the Linux QEMU helper path |
+| `CRATEBAY_LINUX_DOCKER_PORT` | Override the Linux built-in runtime TCP port |
+| `CRATEBAY_LINUX_RUNTIME_CMDLINE` | Override the Linux built-in runtime kernel cmdline |
 | `CRATEBAY_VZ_RUNNER_PATH` | Override `cratebay-vz` path (macOS VZ PoC) |
 | `CRATEBAY_VZ_KERNEL` | Linux kernel path (macOS VZ PoC) |
 | `CRATEBAY_VZ_INITRD` | Linux initrd path (optional, macOS VZ PoC) |

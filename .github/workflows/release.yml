@@ -234,7 +234,29 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            qemu-system-x86 \
+            squashfs-tools \
+            zig
+
+      - name: Install cargo-zigbuild (Linux only)
+        if: runner.os == 'Linux'
+        run: cargo install cargo-zigbuild --locked --force
+
+      - name: Add Linux musl target for bundled runtime (Linux only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
+          rustup target add "${arch}-unknown-linux-musl"
+
+      - name: Build CrateBay Runtime assets (Linux only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          arch="$(echo '${{ matrix.target }}' | cut -d- -f1)"
+          bash scripts/build-runtime-assets-alpine.sh "${arch}"
+          bash scripts/build-runtime-assets-linux.sh "${arch}"
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2

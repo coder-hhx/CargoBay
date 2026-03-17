@@ -42,6 +42,8 @@
     "resources": [
       "runtime-images/README.md",
       "runtime-images/*/*",
+      "runtime-linux/README.md",
+      "runtime-linux/**/*",
       "runtime-wsl/README.md",
       "runtime-wsl/*/*"
     ],

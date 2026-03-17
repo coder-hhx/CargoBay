@@ -14,7 +14,7 @@
       heroLead:
         "Managed sandboxes. Local models. MCP — all in one desktop app.",
       heroSub:
-        "Install the app and use the built-in runtime directly — with pinned container defaults, Intel-safe macOS runtime startup, and clearer runtime errors.",
+        "Install the app and use the built-in runtime directly — with bundled macOS, Linux, and Windows runtime paths, pinned container defaults, and clearer runtime errors.",
       githubCta: "GitHub",
       summary1Label: "AI Sandboxes",
       summary1Title: "Run locally",
@@ -27,7 +27,7 @@
       summary3Label: "Built-in Runtime",
       summary3Title: "Install-and-use",
       summary3Body:
-        "A Docker-compatible runtime is built in on macOS (lightweight VM) and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, or compose required, with first-boot runtime recovery built in.",
+        "A Docker-compatible runtime is built in on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required.",
       sectionKicker: "Why It Hits",
       sectionTitle: "Local AI is hot. The workflow is still broken.",
       sectionBody:
@@ -62,7 +62,7 @@
       heroLead:
         "托管沙箱、本地模型、MCP —— 全都放进一个桌面应用里。",
       heroSub:
-        "安装应用即可直接使用内置运行时：示例容器镜像固定版本、Intel macOS 启动路径更稳定，错误反馈也更清晰。",
+        "安装应用即可直接使用内置运行时：macOS、Linux、Windows 都带内置 runtime，示例容器镜像固定版本，错误反馈也更清晰。",
       githubCta: "GitHub",
       summary1Label: "AI Sandboxes",
       summary1Title: "本地运行，可视化管理",
@@ -75,7 +75,7 @@
       summary3Label: "内置运行时",
       summary3Title: "安装即用",
       summary3Body:
-        "macOS 内置轻量 VM、Windows 内置 WSL2 的 Docker 兼容运行时；CrateBay 自身无需再安装 Docker Desktop、Colima、docker-cli 或 compose，并且内置首次启动恢复能力。",
+        "macOS 内置轻量 VM、Linux 内置打包 QEMU/KVM guest、Windows 内置 WSL2 的 Docker 兼容运行时；CrateBay 自身无需再安装 Docker Desktop、Colima、docker-cli、compose 或系统 QEMU。",
       sectionKicker: "为什么它有吸引力",
       sectionTitle: "本地 AI 很火，但真正顺手的工作流还不多。",
       sectionBody:

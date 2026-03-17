@@ -1,6 +1,6 @@
 # CrateBay Runtime (Built-in Docker Engine)
 
-CrateBay Runtime is CrateBay’s built-in Docker-compatible engine path. On macOS it runs as a lightweight Linux VM; on Windows it runs as a bundled WSL2 distro. CrateBay GUI + CLI can use it without requiring users to install Docker Desktop, Colima, `docker`, or `docker compose`.
+CrateBay Runtime is CrateBay’s built-in Docker-compatible engine path. On macOS it runs as a lightweight Linux VM; on Linux it runs as a bundled QEMU guest; on Windows it runs as a bundled WSL2 distro. CrateBay GUI + CLI can use it without requiring users to install Docker Desktop, Colima, `docker`, or `docker compose`.
 
 ## macOS architecture (Virtualization.framework)
 
@@ -35,6 +35,24 @@ CrateBay exposes the host-side socket via `docker`-compatible clients by setting
 ```bash
 export DOCKER_HOST=unix://$HOME/.cratebay/run/docker.sock
 ```
+
+## Linux architecture (bundled QEMU / KVM)
+
+On Linux, CrateBay Runtime is implemented as a bundled **QEMU** runner that boots the same minimal CrateBay runtime guest image.
+
+- Host helper: `runtime-linux/<arch>/qemu-system-*`
+- Guest image: `cratebay-runtime-aarch64` / `cratebay-runtime-x86_64`
+- Host connection:
+  - Default: `DOCKER_HOST=tcp://127.0.0.1:2475`
+  - Override: `CRATEBAY_LINUX_DOCKER_PORT=<port>`
+- Networking:
+  - QEMU user-mode NAT for guest egress
+  - Host TCP forward `127.0.0.1:<host-port>` → guest TCP `6237`
+- Acceleration:
+  - Uses `/dev/kvm` automatically when available
+  - Falls back to QEMU TCG when KVM is unavailable
+
+Linux release builds stage that helper into `runtime-linux/<arch>/` together with the shared libraries and QEMU data files it needs, so end users do not need to install `qemu-system-*` separately.
 
 ## Windows architecture (WSL2)
 
@@ -73,6 +91,7 @@ Shipping an install-and-use runtime means the desktop app must include a Linux k
 
 - CrateBay ships per-architecture desktop bundles (so you only download the runtime assets you need).
 - Runtime VM disks are sparse files (they grow on demand; the “size on disk” stays small until you actually pull images).
+- Linux bundles ship only the matching QEMU helper and its runtime libraries, not a multi-arch toolchain.
 - On macOS/APFS, CrateBay prefers copy-on-write cloning when installing the bundled runtime assets and when creating VM disks, which makes first-run setup much faster.
 
 ## Useful knobs
@@ -82,6 +101,9 @@ Shipping an install-and-use runtime means the desktop app must include a Linux k
 - `CRATEBAY_DOCKER_VSOCK_PORT`: legacy name for proxy port
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`: override which OS image id to use
 - `CRATEBAY_RUNTIME_ASSETS_DIR`: override the bundled runtime assets location
+- `CRATEBAY_RUNTIME_QEMU_PATH`: override the Linux QEMU helper path
+- `CRATEBAY_LINUX_DOCKER_PORT`: override the Linux runtime host TCP port
+- `CRATEBAY_LINUX_RUNTIME_CMDLINE`: override the Linux runtime guest kernel cmdline
 - `CRATEBAY_RUNTIME_HTTP_PROXY`: override the runtime image-pull proxy (macOS also falls back to the system proxy from `scutil --proxy` when present)
 - `CRATEBAY_RUNTIME_SOCKET_FORWARD`: override the macOS runtime socket bridge (`tcp` or `vsock`)
 - `CRATEBAY_VZ_RUNNER_PATH`: override the macOS VM runner binary path

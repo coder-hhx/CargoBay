@@ -264,6 +264,9 @@ fn sandbox_audit_log(
 fn detect_docker_socket() -> Option<String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
+        cratebay_core::runtime::host_docker_socket_path()
+            .to_string_lossy()
+            .into_owned(),
         format!("{}/.colima/default/docker.sock", home),
         format!("{}/.orbstack/run/docker.sock", home),
         "/var/run/docker.sock".to_string(),
@@ -285,9 +288,25 @@ fn connect_docker() -> Result<Docker> {
                 Docker::connect_with_socket(&sock, 120, bollard::API_DEFAULT_VERSION)
                     .map_err(|e| anyhow!("Failed to connect to Docker at {}: {}", sock, e))
             } else {
-                Err(anyhow!(
-                    "No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
-                ))
+                #[cfg(target_os = "linux")]
+                {
+                    let host =
+                        cratebay_core::runtime::ensure_runtime_linux_running().map_err(|e| {
+                            anyhow!("Failed to start CrateBay Runtime (Linux/QEMU): {}", e)
+                        })?;
+                    std::env::set_var("DOCKER_HOST", &host);
+                    return Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+                        .map_err(|e| {
+                            anyhow!("Failed to connect to CrateBay Runtime at {}: {}", host, e)
+                        });
+                }
+
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Err(anyhow!(
+                        "No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime."
+                    ))
+                }
             }
         }
 
@@ -297,16 +316,18 @@ fn connect_docker() -> Result<Docker> {
                 r"//./pipe/docker_engine",
                 r"//./pipe/dockerDesktopLinuxEngine",
             ];
-            candidates
-                .iter()
-                .find_map(|pipe| {
-                    Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION).ok()
+            if let Some(docker) = candidates.iter().find_map(|pipe| {
+                Docker::connect_with_named_pipe(pipe, 120, bollard::API_DEFAULT_VERSION).ok()
+            }) {
+                Ok(docker)
+            } else {
+                let host = cratebay_core::runtime::ensure_runtime_wsl_running()
+                    .map_err(|e| anyhow!("Failed to start CrateBay Runtime (WSL2): {}", e))?;
+                std::env::set_var("DOCKER_HOST", &host);
+                Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION).map_err(|e| {
+                    anyhow!("Failed to connect to CrateBay Runtime at {}: {}", host, e)
                 })
-                .ok_or_else(|| {
-                    anyhow!(
-                        "No Docker named pipe found. Set DOCKER_HOST or start a Docker-compatible runtime."
-                    )
-                })
+            }
         }
 
         #[cfg(not(any(unix, windows)))]

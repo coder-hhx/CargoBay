@@ -568,6 +568,16 @@ fn connect_cratebay_runtime_docker() -> Result<Docker, String> {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn connect_cratebay_runtime_docker() -> Result<Docker, String> {
+    let host = cratebay_core::runtime::ensure_runtime_linux_running()
+        .map_err(|e| format!("Failed to start CrateBay Runtime (Linux/QEMU): {}", e))?;
+    std::env::set_var("DOCKER_HOST", &host);
+
+    Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| format!("Failed to connect to CrateBay Runtime at {}: {}", host, e))
+}
+
 fn connect_docker() -> Result<Docker, String> {
     // Check DOCKER_HOST env first
     if std::env::var("DOCKER_HOST").is_ok() {
@@ -593,13 +603,18 @@ fn connect_docker() -> Result<Docker, String> {
             }
         }
 
-        // No runtime detected; start the built-in runtime on macOS.
+        // No runtime detected; start the built-in runtime when available.
         #[cfg(target_os = "macos")]
         {
             connect_cratebay_runtime_docker()
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            connect_cratebay_runtime_docker()
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         Err("No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime.".into())
     }
 
@@ -1548,7 +1563,113 @@ async fn handle_runtime(cmd: RuntimeCommands) {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        let host = cratebay_core::runtime::runtime_linux_docker_host();
+        let console_log = cratebay_core::runtime::runtime_linux_console_log_path();
+        let running = cratebay_core::runtime::runtime_linux_is_running();
+        let kvm_available = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/kvm")
+            .is_ok();
+
+        match cmd {
+            RuntimeCommands::Env => {
+                println!("export DOCKER_HOST={}", host);
+            }
+            RuntimeCommands::Status => {
+                let image_id = cratebay_core::runtime::runtime_os_image_id();
+                println!(
+                    "Runtime image: {} ({})",
+                    image_id,
+                    if cratebay_core::runtime::runtime_image_ready() {
+                        "ready"
+                    } else {
+                        "not installed"
+                    }
+                );
+                println!(
+                    "Runtime: CrateBay Runtime (Linux/{})",
+                    if kvm_available {
+                        "QEMU+KVM"
+                    } else {
+                        "QEMU/TCG"
+                    }
+                );
+                println!("State: {}", if running { "running" } else { "stopped" });
+                println!("DOCKER_HOST: {}", host);
+                println!("Console log: {}", console_log.display());
+
+                if running {
+                    match Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION) {
+                        Ok(docker) => match docker.version().await {
+                            Ok(v) => {
+                                println!(
+                                    "Docker engine: {}",
+                                    v.version.unwrap_or_else(|| "unknown".into())
+                                );
+                            }
+                            Err(e) => {
+                                println!("Docker engine: not responding ({})", e);
+                            }
+                        },
+                        Err(e) => {
+                            println!("Docker engine: failed to connect ({})", e);
+                        }
+                    }
+                }
+            }
+            RuntimeCommands::Start => {
+                let host = match cratebay_core::runtime::ensure_runtime_linux_running() {
+                    Ok(host) => host,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                println!(
+                    "Runtime: CrateBay Runtime (Linux/{})",
+                    if kvm_available {
+                        "QEMU+KVM"
+                    } else {
+                        "QEMU/TCG"
+                    }
+                );
+                println!("DOCKER_HOST: {}", host);
+                println!("Console log: {}", console_log.display());
+
+                match Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION) {
+                    Ok(docker) => match docker.version().await {
+                        Ok(v) => {
+                            println!(
+                                "Docker engine: {}",
+                                v.version.unwrap_or_else(|| "unknown".into())
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Docker engine check failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Docker engine connect failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            RuntimeCommands::Stop => {
+                if let Err(e) = cratebay_core::runtime::stop_runtime_linux() {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Stopped CrateBay Runtime (Linux/QEMU).");
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = cmd;
         eprintln!("CrateBay Runtime is not implemented on this platform yet.");

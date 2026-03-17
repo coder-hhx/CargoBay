@@ -6,11 +6,15 @@ use crate::hypervisor::{Hypervisor, HypervisorError, VmConfig, VmState};
 pub const DEFAULT_RUNTIME_VM_NAME: &str = "cratebay-runtime";
 pub const DEFAULT_DOCKER_VSOCK_PORT: u32 = 6237;
 pub const DEFAULT_RUNTIME_ASSETS_SUBDIR: &str = "runtime-images";
+#[cfg(target_os = "linux")]
+pub const DEFAULT_LINUX_RUNTIME_ASSETS_SUBDIR: &str = "runtime-linux";
 #[cfg(target_os = "windows")]
 pub const DEFAULT_WSL_ASSETS_SUBDIR: &str = "runtime-wsl";
 
 #[cfg(target_os = "windows")]
 pub const DEFAULT_WSL_DOCKER_PORT: u16 = 2375;
+#[cfg(target_os = "linux")]
+pub const DEFAULT_LINUX_DOCKER_PORT: u16 = 2475;
 
 static RUNTIME_VM_NAME: OnceLock<String> = OnceLock::new();
 static DOCKER_VSOCK_PORT: OnceLock<u32> = OnceLock::new();
@@ -241,7 +245,7 @@ fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
     Some(exe_dir.to_path_buf())
 }
 
-fn runtime_images_dir_candidates() -> Vec<PathBuf> {
+fn runtime_assets_root_candidates() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
 
     if let Ok(dir) = std::env::var("CRATEBAY_RUNTIME_ASSETS_DIR") {
@@ -275,6 +279,10 @@ fn runtime_images_dir_candidates() -> Vec<PathBuf> {
     }
 
     roots
+}
+
+fn runtime_images_dir_candidates() -> Vec<PathBuf> {
+    runtime_assets_root_candidates()
         .into_iter()
         .filter_map(|root| runtime_images_dir_from_root(&root))
         .collect()
@@ -282,6 +290,31 @@ fn runtime_images_dir_candidates() -> Vec<PathBuf> {
 
 pub fn bundled_runtime_assets_dir() -> Option<PathBuf> {
     runtime_images_dir_candidates().into_iter().next()
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_assets_dir_from_root(root: &Path) -> Option<PathBuf> {
+    if root
+        .file_name()
+        .is_some_and(|name| name == DEFAULT_LINUX_RUNTIME_ASSETS_SUBDIR)
+        && root.is_dir()
+    {
+        return Some(root.to_path_buf());
+    }
+
+    let dir = root.join(DEFAULT_LINUX_RUNTIME_ASSETS_SUBDIR);
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_assets_dir() -> Option<PathBuf> {
+    runtime_assets_root_candidates()
+        .into_iter()
+        .find_map(|root| runtime_linux_assets_dir_from_root(&root))
 }
 
 fn runtime_image_assets_dir(image_id: &str) -> Option<PathBuf> {
@@ -578,6 +611,475 @@ pub fn ensure_runtime_vm_running(hv: &dyn Hypervisor) -> Result<String, Hypervis
 }
 
 // ---------------------------------------------------------------------------
+// Linux runtime: bundled QEMU/KVM runner + Docker guest
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "linux")]
+static LINUX_RUNTIME_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn linux_runtime_lock() -> &'static std::sync::Mutex<()> {
+    LINUX_RUNTIME_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_runtime_docker_port() -> u16 {
+    std::env::var("CRATEBAY_LINUX_DOCKER_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(DEFAULT_LINUX_DOCKER_PORT)
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_bundle_id() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "cratebay-runtime-linux-aarch64"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "cratebay-runtime-linux-x86_64"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "cratebay-runtime-linux-x86_64"
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_qemu_binary_name() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "qemu-system-aarch64"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "qemu-system-x86_64"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "qemu-system-x86_64"
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_dir() -> PathBuf {
+    crate::store::data_dir().join("runtime-linux")
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_pidfile_path() -> PathBuf {
+    runtime_linux_dir().join("qemu.pid")
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_disk_path() -> PathBuf {
+    runtime_linux_dir().join("disk.raw")
+}
+
+#[cfg(target_os = "linux")]
+pub fn runtime_linux_console_log_path() -> PathBuf {
+    runtime_linux_dir().join("console.log")
+}
+
+#[cfg(target_os = "linux")]
+pub fn runtime_linux_docker_host() -> String {
+    format!("tcp://127.0.0.1:{}", linux_runtime_docker_port())
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_bundle_dir() -> Result<PathBuf, HypervisorError> {
+    let Some(root) = runtime_linux_assets_dir() else {
+        return Err(HypervisorError::CreateFailed(
+            "CrateBay Linux runtime assets not found. Ensure the desktop app is installed correctly or set CRATEBAY_RUNTIME_ASSETS_DIR.".into(),
+        ));
+    };
+
+    let dir = root.join(runtime_linux_bundle_id());
+    if dir.is_dir() {
+        Ok(dir)
+    } else {
+        Err(HypervisorError::CreateFailed(format!(
+            "CrateBay Linux runtime bundle not found: {}",
+            dir.display()
+        )))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|raw| {
+        std::env::split_paths(&raw)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_qemu_path() -> Result<PathBuf, HypervisorError> {
+    if let Ok(path) = std::env::var("CRATEBAY_RUNTIME_QEMU_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(HypervisorError::CreateFailed(format!(
+            "CRATEBAY_RUNTIME_QEMU_PATH does not point to a file: {}",
+            path.display()
+        )));
+    }
+
+    if let Ok(bundle_dir) = runtime_linux_bundle_dir() {
+        let bundled = bundle_dir.join(runtime_linux_qemu_binary_name());
+        if bundled.is_file() {
+            return Ok(bundled);
+        }
+    }
+
+    if let Some(path) = find_executable_on_path(runtime_linux_qemu_binary_name()) {
+        return Ok(path);
+    }
+
+    Err(HypervisorError::CreateFailed(format!(
+        "Bundled Linux runtime helper '{}' was not found. Reinstall CrateBay or set CRATEBAY_RUNTIME_QEMU_PATH.",
+        runtime_linux_qemu_binary_name()
+    )))
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_qemu_lib_dir(qemu_path: &Path) -> Option<PathBuf> {
+    let dir = qemu_path.parent()?.join("lib");
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_qemu_share_dir(qemu_path: &Path) -> Option<PathBuf> {
+    let dir = qemu_path.parent()?.join("share").join("qemu");
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_pid() -> Option<u32> {
+    let raw = std::fs::read_to_string(runtime_linux_pidfile_path()).ok()?;
+    raw.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_is_alive(pid: u32) -> bool {
+    let rc = unsafe { libc::kill(pid as i32, 0) };
+    if rc == 0 {
+        return true;
+    }
+
+    matches!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EPERM)
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_runtime_wait_ready(timeout: std::time::Duration) -> Result<(), String> {
+    let host = runtime_linux_docker_host();
+    let deadline = std::time::Instant::now() + timeout;
+    let mut last_error = "Docker runtime is still starting".to_string();
+
+    while std::time::Instant::now() < deadline {
+        match docker_http_ping_host(&host) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Err(last_error)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_runtime_default_cmdline() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "console=ttyAMA0 panic=1"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "console=ttyS0 panic=1"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "console=ttyS0 panic=1"
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_runtime_cmdline() -> String {
+    let mut cmdline = std::env::var("CRATEBAY_LINUX_RUNTIME_CMDLINE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| linux_runtime_default_cmdline().to_string());
+
+    if !cmdline
+        .split_whitespace()
+        .any(|arg| arg.starts_with("cratebay_http_proxy="))
+    {
+        if let Ok(proxy) = std::env::var("CRATEBAY_RUNTIME_HTTP_PROXY") {
+            let proxy = proxy
+                .trim()
+                .trim_start_matches("http://")
+                .trim_start_matches("https://");
+            if !proxy.is_empty() {
+                cmdline.push_str(" cratebay_http_proxy=");
+                cmdline.push_str(proxy);
+            }
+        }
+    }
+
+    cmdline
+}
+
+#[cfg(target_os = "linux")]
+fn linux_kvm_available() -> bool {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .is_ok()
+}
+
+#[cfg(target_os = "linux")]
+fn tail_linux_runtime_console_log() -> String {
+    let path = runtime_linux_console_log_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return String::new();
+    };
+
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let tail = lines
+        .iter()
+        .rev()
+        .take(25)
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("\nConsole tail ({}):\n{}", path.display(), tail)
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_runtime_disk() -> Result<PathBuf, HypervisorError> {
+    let path = runtime_linux_disk_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if !path.exists() {
+        let file = std::fs::File::create(&path)?;
+        file.set_len(20_u64 * 1024 * 1024 * 1024)?;
+    }
+
+    Ok(path)
+}
+
+#[cfg(target_os = "linux")]
+fn stop_runtime_linux_impl() -> Result<(), HypervisorError> {
+    if let Some(pid) = runtime_linux_pid() {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if !linux_process_is_alive(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        if linux_process_is_alive(pid) {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(runtime_linux_pidfile_path());
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn runtime_linux_is_running() -> bool {
+    runtime_linux_pid().is_some_and(linux_process_is_alive)
+}
+
+#[cfg(target_os = "linux")]
+pub fn stop_runtime_linux() -> Result<(), HypervisorError> {
+    let _guard = crate::lock_or_recover(linux_runtime_lock());
+    stop_runtime_linux_impl()
+}
+
+#[cfg(target_os = "linux")]
+pub fn ensure_runtime_linux_running() -> Result<String, HypervisorError> {
+    let _guard = crate::lock_or_recover(linux_runtime_lock());
+    let host = runtime_linux_docker_host();
+
+    if docker_http_ping_host(&host).is_ok() {
+        return Ok(host);
+    }
+
+    if runtime_linux_is_running() {
+        if linux_runtime_wait_ready(std::time::Duration::from_secs(5)).is_ok() {
+            return Ok(host);
+        }
+        stop_runtime_linux_impl()?;
+    } else {
+        let _ = std::fs::remove_file(runtime_linux_pidfile_path());
+    }
+
+    ensure_runtime_image_ready(runtime_os_image_id())?;
+
+    let runtime_dir = runtime_linux_dir();
+    std::fs::create_dir_all(&runtime_dir)?;
+    let _ = std::fs::remove_file(runtime_linux_pidfile_path());
+
+    let console_log = runtime_linux_console_log_path();
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&console_log)?;
+
+    let qemu_path = runtime_linux_qemu_path()?;
+    let disk_path = ensure_linux_runtime_disk()?;
+    let image_paths = crate::images::image_paths(runtime_os_image_id());
+    let pidfile = runtime_linux_pidfile_path();
+    let host_port = linux_runtime_docker_port();
+    let guest_port = docker_proxy_port();
+    let use_kvm = linux_kvm_available();
+    let cmdline = linux_runtime_cmdline();
+
+    let machine = if cfg!(target_arch = "aarch64") {
+        if use_kvm {
+            "virt,accel=kvm"
+        } else {
+            "virt,accel=tcg"
+        }
+    } else if use_kvm {
+        "q35,accel=kvm"
+    } else {
+        "q35,accel=tcg"
+    };
+
+    let cpu = if use_kvm { "host" } else { "max" };
+
+    let mut cmd = std::process::Command::new(&qemu_path);
+    cmd.arg("-name")
+        .arg(runtime_vm_name())
+        .arg("-machine")
+        .arg(machine)
+        .arg("-cpu")
+        .arg(cpu)
+        .arg("-smp")
+        .arg("2")
+        .arg("-m")
+        .arg("2048")
+        .arg("-kernel")
+        .arg(&image_paths.kernel_path)
+        .arg("-initrd")
+        .arg(&image_paths.initrd_path)
+        .arg("-append")
+        .arg(&cmdline)
+        .arg("-drive")
+        .arg(format!("if=virtio,format=raw,file={}", disk_path.display()))
+        .arg("-netdev")
+        .arg(format!(
+            "user,id=net0,hostfwd=tcp:127.0.0.1:{host_port}-:{guest_port}"
+        ))
+        .arg("-device")
+        .arg("virtio-net-pci,netdev=net0")
+        .arg("-device")
+        .arg("virtio-rng-pci")
+        .arg("-serial")
+        .arg(format!("file:{}", console_log.display()))
+        .arg("-display")
+        .arg("none")
+        .arg("-monitor")
+        .arg("none")
+        .arg("-daemonize")
+        .arg("-pidfile")
+        .arg(&pidfile)
+        .arg("-no-reboot");
+
+    if let Some(share_dir) = runtime_linux_qemu_share_dir(&qemu_path) {
+        cmd.arg("-L").arg(share_dir);
+    }
+
+    if let Some(lib_dir) = runtime_linux_qemu_lib_dir(&qemu_path) {
+        let current = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let joined = if current.trim().is_empty() {
+            lib_dir.to_string_lossy().into_owned()
+        } else {
+            format!("{}:{}", lib_dir.display(), current)
+        };
+        cmd.env("LD_LIBRARY_PATH", joined);
+    }
+
+    let out = cmd.output().map_err(|error| {
+        HypervisorError::CreateFailed(format!(
+            "Failed to launch CrateBay Linux runtime helper '{}': {}",
+            qemu_path.display(),
+            error
+        ))
+    })?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("exit {}", out.status)
+        };
+        return Err(HypervisorError::CreateFailed(format!(
+            "Failed to start CrateBay Runtime (Linux/QEMU): {}",
+            detail
+        )));
+    }
+
+    linux_runtime_wait_ready(std::time::Duration::from_secs(45)).map_err(|error| {
+        let _ = stop_runtime_linux_impl();
+        HypervisorError::CreateFailed(format!(
+            "CrateBay Runtime (Linux/QEMU) did not become ready within 45 seconds: {}{}",
+            error,
+            tail_linux_runtime_console_log()
+        ))
+    })?;
+
+    Ok(host)
+}
+
+// ---------------------------------------------------------------------------
 // Windows runtime: WSL2 distro + dockerd on TCP
 // ---------------------------------------------------------------------------
 
@@ -824,7 +1326,7 @@ fn docker_host_tcp_endpoint(host: &str) -> Option<(String, u16)> {
     Some((host_part.to_string(), port))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn docker_http_ping_host(host: &str) -> Result<(), String> {
     use std::io::{Read, Write};
     use std::net::ToSocketAddrs;
@@ -1022,6 +1524,17 @@ mod tests {
 
         let root = runtime_assets_root_dir_from_exe_dir(&exe_dir).unwrap();
         assert_eq!(root, src_tauri_dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn runtime_linux_assets_dir_detects_bundle_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(DEFAULT_LINUX_RUNTIME_ASSETS_SUBDIR);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let detected = runtime_linux_assets_dir_from_root(&root).unwrap();
+        assert_eq!(detected, root);
     }
 
     #[cfg(target_os = "macos")]

@@ -434,7 +434,14 @@ if [ -n "$iface" ]; then
     log "guest_ip=${ip4}"
   fi
 
-  ip route add default via 192.168.64.1 dev "$iface" >/dev/null 2>&1 || true
+  default_gw="$(ip route show default 2>/dev/null | awk '/^default / {print $3; exit}' || true)"
+  if [ -z "$default_gw" ]; then
+    default_gw="$(cmdline_value cratebay_default_gw || true)"
+  fi
+  if [ -z "$default_gw" ]; then
+    default_gw="192.168.64.1"
+  fi
+  ip route replace default via "$default_gw" dev "$iface" >/dev/null 2>&1 || true
   runtime_dns="$(cmdline_value cratebay_dns || true)"
   if [ -n "$runtime_dns" ]; then
     : > /etc/resolv.conf
@@ -446,7 +453,7 @@ if [ -n "$iface" ]; then
       [ -n "$dns_ip" ] && echo "nameserver $dns_ip" >> /etc/resolv.conf
     done
   elif [ ! -s /etc/resolv.conf ]; then
-    printf 'nameserver 192.168.64.1\n' >/etc/resolv.conf
+    printf 'nameserver %s\n' "$default_gw" >/etc/resolv.conf
   fi
   log "net_debug routes=$(ip route 2>/dev/null | tr '\n' ';' || true)"
   log "net_debug resolv=$(tr '\n' ';' </etc/resolv.conf 2>/dev/null || true)"

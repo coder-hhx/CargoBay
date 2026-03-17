@@ -65,6 +65,16 @@ CrateBay 支持任意 Docker 兼容运行时。
 - Socket 路径：`~/.cratebay/run/docker.sock`
 - 实现细节：`docs/RUNTIME.zh.md`
 
+**Linux（推荐）：CrateBay Runtime（内置，QEMU/KVM）**
+
+- GUI：点击 **启动运行时**
+- CLI：
+  - `cratebay runtime start`
+  - `cratebay runtime env`（输出 `DOCKER_HOST=tcp://...`）
+- 运行时镜像和 Linux helper 随桌面应用打包（无需首次使用再下载）
+- 有 `/dev/kvm` 时自动使用 KVM；没有时自动回退到 QEMU TCG。
+- 实现细节：`docs/RUNTIME.zh.md`
+
 **Windows（推荐）：CrateBay Runtime（内置，WSL2）**
 
 - GUI：点击 **启动运行时**
@@ -80,7 +90,7 @@ CrateBay 支持任意 Docker 兼容运行时。
 - **OrbStack**（macOS）— CrateBay 也会自动识别其 socket
 - **Colima**（macOS，免费）— `brew install colima && colima start`
 
-> 注：CrateBay 直接连接 Docker Engine API，本身不依赖安装 `docker` 或 `docker compose`。终端工作流你可以直接使用 `cratebay docker ...`，或者通过 `DOCKER_HOST` 把 Docker CLI 指向该 socket。
+> 注：CrateBay 直接连接 Docker Engine API，本身不依赖安装 `docker` 或 `docker compose`。终端工作流你可以直接使用 `cratebay docker ...`，或者通过 `DOCKER_HOST` 把 Docker CLI 指向该 runtime。
 
 ---
 
@@ -458,6 +468,8 @@ CrateBay 会按以下顺序自动识别 Docker socket：
 | 4 | `/var/run/docker.sock` | Docker Desktop / 原生 |
 | 5 | `~/.docker/run/docker.sock` | Docker Desktop（备用） |
 
+**Linux：** 先尝试 Unix socket；如果都不存在，CrateBay 会启动内置 QEMU runtime，并为当前进程设置 `DOCKER_HOST=tcp://127.0.0.1:2475`。
+
 **Windows：** 优先尝试 `//./pipe/docker_engine` 与 `//./pipe/dockerDesktopLinuxEngine`；若不存在，CrateBay 会启动内置 WSL2 runtime，并为当前进程设置 `DOCKER_HOST=tcp://...`。
 
 ### 覆盖默认识别顺序
@@ -484,6 +496,9 @@ cratebay docker ps
 | `CRATEBAY_LOG_DIR` | 覆盖日志目录 |
 | `CRATEBAY_OLLAMA_BASE_URL` | 覆盖 AI Hub Models 使用的本地 Ollama 兼容 HTTP 地址 |
 | `CRATEBAY_LOG_RETENTION_DAYS` | 错误日志保留天数（默认：7） |
+| `CRATEBAY_RUNTIME_QEMU_PATH` | 覆盖 Linux QEMU helper 路径 |
+| `CRATEBAY_LINUX_DOCKER_PORT` | 覆盖 Linux 内置 runtime 的 TCP 端口 |
+| `CRATEBAY_LINUX_RUNTIME_CMDLINE` | 覆盖 Linux 内置 runtime 的 kernel cmdline |
 | `CRATEBAY_VZ_RUNNER_PATH` | 覆盖 `cratebay-vz` 路径（macOS VZ PoC） |
 | `CRATEBAY_VZ_KERNEL` | Linux kernel 路径（macOS VZ PoC） |
 | `CRATEBAY_VZ_INITRD` | Linux initrd 路径（可选，macOS VZ PoC） |

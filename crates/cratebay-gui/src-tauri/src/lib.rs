@@ -319,6 +319,16 @@ fn connect_cratebay_runtime_docker() -> Result<Docker, String> {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn connect_cratebay_runtime_docker() -> Result<Docker, String> {
+    let host = cratebay_core::runtime::ensure_runtime_linux_running()
+        .map_err(|e| format!("Failed to start CrateBay Runtime (Linux/QEMU): {}", e))?;
+    std::env::set_var("DOCKER_HOST", &host);
+
+    Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| format!("Failed to connect to CrateBay Runtime at {}: {}", host, e))
+}
+
 fn connect_docker() -> Result<Docker, String> {
     // Check DOCKER_HOST env first
     if std::env::var("DOCKER_HOST").is_ok() {
@@ -344,13 +354,18 @@ fn connect_docker() -> Result<Docker, String> {
             }
         }
 
-        // No runtime detected; start the built-in runtime on macOS.
+        // No runtime detected; start the built-in runtime when available.
         #[cfg(target_os = "macos")]
         {
             return connect_cratebay_runtime_docker();
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            return connect_cratebay_runtime_docker();
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         Err("No Docker socket found. Set DOCKER_HOST or start a Docker-compatible runtime.".into())
     }
 
@@ -502,7 +517,18 @@ fn docker_runtime_quick_setup_windows() -> Result<String, String> {
     ok.map(|_| format!("CrateBay Runtime is running. DOCKER_HOST: {}", host))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn docker_runtime_quick_setup_linux() -> Result<String, String> {
+    let host = cratebay_core::runtime::ensure_runtime_linux_running()
+        .map_err(|e| format!("Failed to start CrateBay Runtime (Linux/QEMU): {}", e))?;
+    std::env::set_var("DOCKER_HOST", &host);
+    Ok(format!(
+        "CrateBay Runtime is running. DOCKER_HOST: {}",
+        host
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn docker_runtime_quick_setup_generic() -> Result<String, String> {
     connect_docker()
         .map(|_| "Docker runtime is reachable. Containers and Volumes are ready.".into())
@@ -514,6 +540,12 @@ fn docker_host_for_cli() -> Option<String> {
     }
     #[cfg(unix)]
     {
+        #[cfg(target_os = "linux")]
+        {
+            if cratebay_core::runtime::runtime_linux_is_running() {
+                return Some(cratebay_core::runtime::runtime_linux_docker_host());
+            }
+        }
         detect_docker_socket().map(|sock| format!("unix://{}", sock))
     }
     #[cfg(windows)]
@@ -6569,7 +6601,12 @@ async fn docker_runtime_quick_setup() -> Result<DockerRuntimeSetupResult, String
         .await
         .map_err(|e| format!("Runtime setup task failed: {}", e))?;
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    let setup_result = tokio::task::spawn_blocking(docker_runtime_quick_setup_linux)
+        .await
+        .map_err(|e| format!("Runtime setup task failed: {}", e))?;
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     let setup_result = tokio::task::spawn_blocking(docker_runtime_quick_setup_generic)
         .await
         .map_err(|e| format!("Runtime setup task failed: {}", e))?;

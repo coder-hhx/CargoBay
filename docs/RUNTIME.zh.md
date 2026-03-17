@@ -1,6 +1,6 @@
 # CrateBay Runtime（内置 Docker Engine）
 
-CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS 上是轻量 Linux VM，在 Windows 上是随应用打包的 WSL2 发行版。CrateBay 的 GUI + CLI 可直接使用它，不要求用户再安装 Docker Desktop、Colima、`docker` 或 `docker compose`。
+CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS 上是轻量 Linux VM，在 Linux 上是随应用打包的 QEMU guest，在 Windows 上是随应用打包的 WSL2 发行版。CrateBay 的 GUI + CLI 可直接使用它，不要求用户再安装 Docker Desktop、Colima、`docker` 或 `docker compose`。
 
 ## macOS 架构（Virtualization.framework）
 
@@ -35,6 +35,24 @@ CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS
 ```bash
 export DOCKER_HOST=unix://$HOME/.cratebay/run/docker.sock
 ```
+
+## Linux 架构（内置 QEMU / KVM）
+
+在 Linux 上，CrateBay Runtime 以“随应用打包的 **QEMU runner**”实现，启动的仍然是同一套最小化 CrateBay runtime guest 镜像。
+
+- Host helper：`runtime-linux/<arch>/qemu-system-*`
+- Guest 镜像：`cratebay-runtime-aarch64` / `cratebay-runtime-x86_64`
+- Host 侧连接：
+  - 默认：`DOCKER_HOST=tcp://127.0.0.1:2475`
+  - 可通过 `CRATEBAY_LINUX_DOCKER_PORT=<port>` 覆盖
+- 网络：
+  - Guest 对外走 QEMU user-mode NAT
+  - Host TCP `127.0.0.1:<host-port>` 转发到 guest TCP `6237`
+- 加速：
+  - 有 `/dev/kvm` 时自动使用 KVM
+  - 没有 KVM 时自动回退到 QEMU TCG
+
+Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `runtime-linux/<arch>/`，因此终端用户无需再额外安装 `qemu-system-*`。
 
 ## Windows 架构（WSL2）
 
@@ -71,6 +89,7 @@ CrateBay 将 Runtime VM 视作一种 OS image：
 
 - CrateBay 按架构分别打包（避免 universal 包把 runtime 资产翻倍）。
 - Runtime VM 的磁盘使用 **sparse file**（按需增长；未使用时“占用空间”很小）。
+- Linux 安装包只携带匹配当前架构的 QEMU helper 与运行时依赖，不带多架构工具链。
 - 在 macOS/APFS 上，CrateBay 会优先使用 copy-on-write clone 来安装内置 runtime 资产、并加速 VM 磁盘初始化，从而显著降低首次启动的等待时间。
 
 ## 常用配置项
@@ -80,6 +99,9 @@ CrateBay 将 Runtime VM 视作一种 OS image：
 - `CRATEBAY_DOCKER_VSOCK_PORT`：proxy 端口的历史名称（兼容）
 - `CRATEBAY_RUNTIME_OS_IMAGE_ID`：覆盖使用哪个 OS image id
 - `CRATEBAY_RUNTIME_ASSETS_DIR`：覆盖内置 runtime 资产目录
+- `CRATEBAY_RUNTIME_QEMU_PATH`：覆盖 Linux QEMU helper 路径
+- `CRATEBAY_LINUX_DOCKER_PORT`：覆盖 Linux runtime 的 host TCP 端口
+- `CRATEBAY_LINUX_RUNTIME_CMDLINE`：覆盖 Linux runtime guest 的 kernel cmdline
 - `CRATEBAY_RUNTIME_HTTP_PROXY`：覆盖 runtime 拉取镜像时使用的代理（macOS 在未显式设置时也会回退读取 `scutil --proxy` 的系统代理）
 - `CRATEBAY_RUNTIME_SOCKET_FORWARD`：覆盖 macOS runtime socket 桥接方式（`tcp` 或 `vsock`）
 - `CRATEBAY_VZ_RUNNER_PATH`：覆盖 macOS VM runner 二进制路径

@@ -23,7 +23,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 | Area | Key flows | Contract / unit | Browser E2E | Desktop smoke | Real dependency integration | Current status |
 |---|---|---:|---:|---:|---:|---|
 | App shell | Top-level navigation, modal shell | ✅ | ✅ | ✅ | n/a | Browser E2E + Linux desktop smoke are both gated in CI |
-| Containers | Create / list / env / lifecycle | ✅ | ✅ | ✅ | ✅ | Real Docker CLI smoke runs in Linux CI, and Linux desktop smoke now exercises create → env → login command → stop/start → remove through the real Tauri shell |
+| Containers | Create / list / env / lifecycle | ✅ | ✅ | ✅ | ✅ | Real Docker CLI smoke runs in Linux CI against both the host engine path and the bundled Linux runtime path, and Linux desktop smoke exercises create → env → login command → stop/start → remove through the real Tauri shell |
 | Images | Search / run / pack / inspect | ✅ | ✅ | ⏳ | ✅ | Real registry + Docker image smoke runs in Linux CI |
 | Volumes | Create / inspect / remove | ✅ | ✅ | ⏳ | ✅ | Real Docker volume lifecycle is asserted in Linux CI |
 | VMs | Create / port forwarding / login command / console | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but explicitly treated as an experimental post-v1 surface until dedicated hypervisor runners exist |
@@ -39,6 +39,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 - `crates/cratebay-gui/e2e/` covers the major GUI flows end-to-end in a deterministic environment.
 - `crates/cratebay-gui/src-tauri/tests/desktop_smoke.rs` plus `scripts/run-desktop-e2e-linux.sh` cover the real Tauri shell on Linux CI.
 - `scripts/docker-runtime-smoke.sh` validates the real Docker daemon through CrateBay CLI flows: image search, container run/start/stop/remove, env inspection, image pack, and volume lifecycle.
+- `.github/workflows/ci.yml` now also runs that CLI smoke against the bundled Linux runtime after building the packaged runtime image and Linux QEMU helper.
 - `scripts/ai-runtime-smoke.sh` validates AI Hub runtime paths: Ollama-compatible canary, MCP process lifecycle, and Docker-backed sandbox lifecycle.
 - `scripts/ci-local.sh` and `scripts/release-readiness.sh` include these runtime smokes as release gates; `release-readiness` also runs controlled provider canaries when configured (and safely skips when not).
 - `scripts/provider-canary-smoke.sh`, `scripts/ollama-daemon-smoke.sh`, and `.github/workflows/provider-canary.yml` now wire controlled provider probes onto dedicated runners without persisting secrets into the app keychain.
@@ -114,7 +115,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 ## v1.0 Exit Criteria
 
 - Linux desktop smoke proves at least one real runtime action chain through the actual Tauri shell.
-- Docker runtime smoke remains green for the supporting container engine.
+- Docker runtime smoke remains green for both the supporting container engine and the bundled Linux runtime path.
 - AI runtime smoke remains green for local model, sandbox, and MCP process flows.
 - Controlled provider canaries pass on dedicated infrastructure without leaking secrets or high-cost prompts.
 - VMs and Kubernetes remain explicitly outside the v1 release gate until dedicated runners exist.
