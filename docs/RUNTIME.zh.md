@@ -54,6 +54,8 @@ export DOCKER_HOST=unix://$HOME/.cratebay/run/docker.sock
 
 Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `runtime-linux/<arch>/`，因此终端用户无需再额外安装 `qemu-system-*`。
 
+本地 Linux `tauri build` 现在也会在打包前自动准备同一套 helper，因此自构建安装包仍然保持“安装即用”。
+
 ## Windows 架构（WSL2）
 
 在 Windows 上，CrateBay Runtime 以“随应用打包的 **WSL2 发行版**”实现，内部运行 `dockerd`。
@@ -69,6 +71,8 @@ Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `r
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 
 Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `rootfs.tar`，再把它嵌入安装包，因此终端用户不会在首次运行时再触发运行时下载。
+
+本地 Windows `tauri dev` / `tauri build` 现在也会在 repo 仍是 placeholder 资产时自动完成同样的准备流程。
 
 CrateBay 只有在 Docker API 实际可达后，才会把 Windows runtime 标记为 ready；如果上一次失败导入留下了脏的 WSL 安装目录，它也会先自动清理再重新导入内置 distro。
 

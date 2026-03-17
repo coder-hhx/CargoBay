@@ -18,4 +18,4 @@ runtime-wsl/
 Notes:
 
 - Release builds should include **only the matching host arch** to keep the app smaller.
-- In the repo, these are placeholders. Release packaging now generates the real `rootfs.tar` locally from Alpine packages before bundling the Windows installer.
+- In the repo, these start as placeholders. Local `tauri dev` / `tauri build` and release packaging now generate the real `rootfs.tar` locally from Alpine packages before bundling the Windows app.

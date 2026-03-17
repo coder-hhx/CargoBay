@@ -31,8 +31,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-download "${base_url}/vmlinuz-${arch}" "${tmp_dir}/vmlinuz"
-download "${base_url}/initramfs-${arch}" "${tmp_dir}/initramfs"
+if ! download "${base_url}/vmlinuz-${arch}" "${tmp_dir}/vmlinuz" \
+  || ! download "${base_url}/initramfs-${arch}" "${tmp_dir}/initramfs"; then
+  echo "Remote runtime assets for tag '${tag}' are unavailable; building locally instead."
+  bash "$(dirname "$0")/build-runtime-assets-alpine.sh" "${arch}" "${dest_dir}"
+  exit 0
+fi
 
 mv "${tmp_dir}/vmlinuz" "${image_dir}/vmlinuz"
 mv "${tmp_dir}/initramfs" "${image_dir}/initramfs"

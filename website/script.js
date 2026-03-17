@@ -27,7 +27,7 @@
       summary3Label: "Built-in Runtime",
       summary3Title: "Install-and-use",
       summary3Body:
-        "A Docker-compatible runtime is built in on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required.",
+        "Installers ship ready-to-run runtime assets on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required.",
       sectionKicker: "Why It Hits",
       sectionTitle: "Local AI is hot. The workflow is still broken.",
       sectionBody:
@@ -75,7 +75,7 @@
       summary3Label: "内置运行时",
       summary3Title: "安装即用",
       summary3Body:
-        "macOS 内置轻量 VM、Linux 内置打包 QEMU/KVM guest、Windows 内置 WSL2 的 Docker 兼容运行时；CrateBay 自身无需再安装 Docker Desktop、Colima、docker-cli、compose 或系统 QEMU。",
+        "安装包会直接携带可运行的 runtime 资产：macOS 内置轻量 VM、Linux 内置打包 QEMU/KVM guest、Windows 内置 WSL2；CrateBay 自身无需再安装 Docker Desktop、Colima、docker-cli、compose 或系统 QEMU。",
       sectionKicker: "为什么它有吸引力",
       sectionTitle: "本地 AI 很火，但真正顺手的工作流还不多。",
       sectionBody:

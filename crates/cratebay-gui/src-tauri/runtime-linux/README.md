@@ -20,5 +20,6 @@ runtime-linux/
 Notes:
 
 - Release builds should include only the matching host architecture.
+- Local Linux `tauri build` now stages this helper before bundling, so installers still ship a ready-to-run runtime.
 - The helper is launched by `cratebay-core::runtime::ensure_runtime_linux_running()`.
 - The guest image is the same initramfs-first runtime shipped in `runtime-images/`.

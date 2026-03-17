@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "tauri:predev": "node scripts/prepare-runtime-assets.mjs dev && vite",
+    "tauri:prebuild": "node scripts/prepare-runtime-assets.mjs build && npm run build",
     "check:i18n": "node scripts/check-i18n.mjs",
     "lint": "eslint .",
     "preview": "vite preview",

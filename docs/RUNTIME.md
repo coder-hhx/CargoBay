@@ -54,6 +54,8 @@ On Linux, CrateBay Runtime is implemented as a bundled **QEMU** runner that boot
 
 Linux release builds stage that helper into `runtime-linux/<arch>/` together with the shared libraries and QEMU data files it needs, so end users do not need to install `qemu-system-*` separately.
 
+Local Linux `tauri build` now stages the same helper automatically before packaging, so self-built installers keep the same install-and-use behavior.
+
 ## Windows architecture (WSL2)
 
 On Windows, CrateBay Runtime is implemented as a bundled **WSL2 distro** that runs `dockerd`.
@@ -69,6 +71,8 @@ On Windows, CrateBay Runtime is implemented as a bundled **WSL2 distro** that ru
 Runtime assets are bundled into the desktop app as `runtime-wsl/<arch>/rootfs.tar`; on first use CrateBay imports the distro via `wsl.exe --import`.
 
 Release builds generate that `rootfs.tar` locally from Alpine packages during packaging, then embed it into the Windows installer so end users do not hit a first-run runtime download.
+
+Local Windows `tauri dev` / `tauri build` now performs the same asset preparation automatically when the repo still contains placeholder WSL assets.
 
 CrateBay waits until the Docker API is actually reachable before reporting the Windows runtime as ready, and it auto-recovers a stale partial WSL import directory before re-importing the bundled distro.
 

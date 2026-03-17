@@ -178,32 +178,7 @@ fn runtime_images_dir_from_root(root: &Path) -> Option<PathBuf> {
     }
 }
 
-fn runtime_assets_root_dir_from_current_exe() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent()?;
-
-    runtime_assets_root_dir_from_exe_dir(exe_dir)
-}
-
-fn workspace_runtime_assets_root_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
-    for ancestor in exe_dir.ancestors() {
-        if !ancestor.join("Cargo.toml").is_file() {
-            continue;
-        }
-
-        let src_tauri_dir = ancestor
-            .join("crates")
-            .join("cratebay-gui")
-            .join("src-tauri");
-        if runtime_images_dir_from_root(&src_tauri_dir).is_some() {
-            return Some(src_tauri_dir);
-        }
-    }
-
-    None
-}
-
-fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
+fn bundled_runtime_assets_root_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
     // macOS app bundle layout: <App>.app/Contents/MacOS/<exe>
     #[cfg(target_os = "macos")]
     {
@@ -238,6 +213,33 @@ fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
         }
     }
 
+    None
+}
+
+fn workspace_runtime_assets_root_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
+    for ancestor in exe_dir.ancestors() {
+        if !ancestor.join("Cargo.toml").is_file() {
+            continue;
+        }
+
+        let src_tauri_dir = ancestor
+            .join("crates")
+            .join("cratebay-gui")
+            .join("src-tauri");
+        if runtime_images_dir_from_root(&src_tauri_dir).is_some() {
+            return Some(src_tauri_dir);
+        }
+    }
+
+    None
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
+    if let Some(root) = bundled_runtime_assets_root_from_exe_dir(exe_dir) {
+        return Some(root);
+    }
+
     if let Some(root) = workspace_runtime_assets_root_from_exe_dir(exe_dir) {
         return Some(root);
     }
@@ -246,16 +248,77 @@ fn runtime_assets_root_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
 }
 
 fn runtime_assets_root_candidates() -> Vec<PathBuf> {
+    fn push_unique(roots: &mut Vec<PathBuf>, path: PathBuf) {
+        if !roots.iter().any(|existing| existing == &path) {
+            roots.push(path);
+        }
+    }
+
     let mut roots: Vec<PathBuf> = Vec::new();
 
     if let Ok(dir) = std::env::var("CRATEBAY_RUNTIME_ASSETS_DIR") {
         if !dir.trim().is_empty() {
-            roots.push(PathBuf::from(dir));
+            push_unique(&mut roots, PathBuf::from(dir));
         }
     }
 
-    if let Some(root) = runtime_assets_root_dir_from_current_exe() {
-        roots.push(root);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            if let Some(root) = bundled_runtime_assets_root_from_exe_dir(exe_dir) {
+                push_unique(&mut roots, root);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            push_unique(
+                &mut roots,
+                PathBuf::from(local_app_data)
+                    .join("Programs")
+                    .join("CrateBay")
+                    .join("resources"),
+            );
+        }
+        if let Some(program_files) = std::env::var_os("ProgramFiles") {
+            push_unique(
+                &mut roots,
+                PathBuf::from(program_files)
+                    .join("CrateBay")
+                    .join("resources"),
+            );
+        }
+        if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
+            push_unique(
+                &mut roots,
+                PathBuf::from(program_files_x86)
+                    .join("CrateBay")
+                    .join("resources"),
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        push_unique(&mut roots, PathBuf::from("/opt/CrateBay").join("resources"));
+        push_unique(
+            &mut roots,
+            PathBuf::from("/usr/lib/CrateBay").join("resources"),
+        );
+        push_unique(
+            &mut roots,
+            PathBuf::from("/usr/lib/cratebay").join("resources"),
+        );
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            if let Some(root) = workspace_runtime_assets_root_from_exe_dir(exe_dir) {
+                push_unique(&mut roots, root);
+            }
+            push_unique(&mut roots, exe_dir.to_path_buf());
+        }
     }
 
     // If the CLI is installed separately from the desktop app, the runtime assets
@@ -264,11 +327,13 @@ fn runtime_assets_root_candidates() -> Vec<PathBuf> {
     // after installing the desktop app.
     #[cfg(target_os = "macos")]
     {
-        roots.push(PathBuf::from(
-            "/Applications/CrateBay.app/Contents/Resources",
-        ));
+        push_unique(
+            &mut roots,
+            PathBuf::from("/Applications/CrateBay.app/Contents/Resources"),
+        );
         if let Some(home) = std::env::var_os("HOME") {
-            roots.push(
+            push_unique(
+                &mut roots,
                 PathBuf::from(home)
                     .join("Applications")
                     .join("CrateBay.app")
@@ -312,9 +377,42 @@ fn runtime_linux_assets_dir_from_root(root: &Path) -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn runtime_linux_assets_dir() -> Option<PathBuf> {
-    runtime_assets_root_candidates()
-        .into_iter()
-        .find_map(|root| runtime_linux_assets_dir_from_root(&root))
+    let mut incomplete_dir: Option<PathBuf> = None;
+
+    for root in runtime_assets_root_candidates() {
+        let Some(dir) = runtime_linux_assets_dir_from_root(&root) else {
+            continue;
+        };
+
+        let bundle_dir = dir.join(runtime_linux_bundle_id());
+        let qemu_path = bundle_dir.join(runtime_linux_qemu_binary_name());
+        if qemu_path.is_file() {
+            return Some(dir);
+        }
+
+        if incomplete_dir.is_none() {
+            incomplete_dir = Some(dir);
+        }
+    }
+
+    incomplete_dir
+}
+
+fn file_contains_placeholder_marker(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() >= 1024 {
+        return false;
+    }
+
+    std::fs::read_to_string(path)
+        .map(|txt| txt.contains("PLACEHOLDER"))
+        .unwrap_or(false)
 }
 
 fn runtime_image_assets_dir(image_id: &str) -> Option<PathBuf> {
@@ -360,12 +458,8 @@ fn bundled_assets_ready(image_id: &str, image_dir: &Path) -> Option<bool> {
             return None;
         }
         if let Ok(meta) = std::fs::metadata(&path) {
-            if meta.len() < 1024 {
-                if let Ok(txt) = std::fs::read_to_string(&path) {
-                    if txt.contains("PLACEHOLDER") {
-                        has_placeholder = true;
-                    }
-                }
+            if meta.len() < 1024 && file_contains_placeholder_marker(&path) {
+                has_placeholder = true;
             }
         }
     }
@@ -485,17 +579,11 @@ fn install_runtime_image_from_assets(image_id: &str) -> Result<(), HypervisorErr
                 src.display()
             )));
         }
-        if let Ok(meta) = std::fs::metadata(&src) {
-            if meta.len() < 1024 {
-                if let Ok(txt) = std::fs::read_to_string(&src) {
-                    if txt.contains("PLACEHOLDER") {
-                        return Err(HypervisorError::CreateFailed(format!(
-                            "Runtime asset '{}' is a placeholder. Fetch real assets before using CrateBay Runtime.",
-                            src.display()
-                        )));
-                    }
-                }
-            }
+        if file_contains_placeholder_marker(&src) {
+            return Err(HypervisorError::CreateFailed(format!(
+                "Runtime asset '{}' is a placeholder. Fetch real assets before using CrateBay Runtime.",
+                src.display()
+            )));
         }
         let dest = dest_dir.join(name);
         crate::fsutil::copy_file_fast(&src, &dest)?;
@@ -1142,17 +1230,24 @@ fn runtime_wsl_assets_dir_from_root(root: &Path) -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn runtime_wsl_assets_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("CRATEBAY_RUNTIME_ASSETS_DIR") {
-        if !dir.trim().is_empty() {
-            let root = PathBuf::from(dir);
-            if let Some(d) = runtime_wsl_assets_dir_from_root(&root) {
-                return Some(d);
-            }
+    let mut placeholder_dir: Option<PathBuf> = None;
+
+    for root in runtime_assets_root_candidates() {
+        let Some(dir) = runtime_wsl_assets_dir_from_root(&root) else {
+            continue;
+        };
+
+        let path = dir.join(runtime_wsl_image_id()).join("rootfs.tar");
+        if path.is_file() && !file_contains_placeholder_marker(&path) {
+            return Some(dir);
+        }
+
+        if placeholder_dir.is_none() {
+            placeholder_dir = Some(dir);
         }
     }
 
-    let root = runtime_assets_root_dir_from_current_exe()?;
-    runtime_wsl_assets_dir_from_root(&root)
+    placeholder_dir
 }
 
 #[cfg(target_os = "windows")]
@@ -1194,17 +1289,11 @@ fn runtime_wsl_rootfs_tar_path() -> Result<PathBuf, HypervisorError> {
         )));
     }
 
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() < 1024 {
-            if let Ok(txt) = std::fs::read_to_string(&path) {
-                if txt.contains("PLACEHOLDER") {
-                    return Err(HypervisorError::CreateFailed(format!(
-                        "WSL runtime asset '{}' is a placeholder. Fetch real assets before using CrateBay Runtime.",
-                        path.display()
-                    )));
-                }
-            }
-        }
+    if file_contains_placeholder_marker(&path) {
+        return Err(HypervisorError::CreateFailed(format!(
+            "WSL runtime asset '{}' is a placeholder. Fetch real assets before using CrateBay Runtime.",
+            path.display()
+        )));
     }
 
     Ok(path)

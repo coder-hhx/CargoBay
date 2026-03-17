@@ -31,8 +31,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-download "${base_url}/wsl-rootfs-${arch}.tar" "${tmp_dir}/rootfs.tar"
+if ! download "${base_url}/wsl-rootfs-${arch}.tar" "${tmp_dir}/rootfs.tar"; then
+  echo "Remote WSL runtime assets for tag '${tag}' are unavailable; building locally instead."
+  bash "$(dirname "$0")/build-runtime-assets-wsl.sh" "${arch}" "${dest_dir}"
+  exit 0
+fi
 mv "${tmp_dir}/rootfs.tar" "${image_dir}/rootfs.tar"
 
 echo "WSL runtime assets ready: ${image_dir}"
-
