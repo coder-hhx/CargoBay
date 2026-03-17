@@ -1472,6 +1472,30 @@ fn extract_first_non_loopback_ipv4(output: &str) -> Option<String> {
     })
 }
 
+#[cfg(any(test, target_os = "windows"))]
+fn extract_first_non_loopback_ipv4_from_fib_trie(output: &str) -> Option<String> {
+    let mut last_ipv4 = None::<String>;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(ip) = extract_first_non_loopback_ipv4(trimmed) {
+            last_ipv4 = Some(ip);
+        }
+
+        if trimmed.contains("/32 host LOCAL") {
+            if let Some(ip) = last_ipv4.take() {
+                return Some(ip);
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
     let out = wsl_exec(
@@ -1492,9 +1516,18 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
         return Ok(ip);
     }
 
+    let out = wsl_exec(distro, "hostname -i 2>/dev/null | tr -d '\\r'").unwrap_or_default();
+    if let Some(ip) = extract_first_non_loopback_ipv4(&out) {
+        return Ok(ip);
+    }
+
+    let out = wsl_exec(distro, "cat /proc/net/fib_trie 2>/dev/null").unwrap_or_default();
+    if let Some(ip) = extract_first_non_loopback_ipv4_from_fib_trie(&out) {
+        return Ok(ip);
+    }
+
     Err(HypervisorError::CreateFailed(
-        "Failed to determine WSL guest IP (ensure iproute2 is installed in the runtime rootfs)"
-            .into(),
+        "Failed to determine WSL guest IP from iproute2, hostname, or /proc/net/fib_trie".into(),
     ))
 }
 
@@ -1621,6 +1654,8 @@ fn wsl_runtime_diagnostics(distro: &str) -> String {
             "ip -4 -o addr show 2>/dev/null || true",
         ),
         ("hostname -I", "hostname -I 2>/dev/null || true"),
+        ("hostname -i", "hostname -i 2>/dev/null || true"),
+        ("fib_trie", "cat /proc/net/fib_trie 2>/dev/null || true"),
         ("which dockerd", "command -v dockerd 2>/dev/null || true"),
         ("dockerd --version", "dockerd --version 2>/dev/null || true"),
         (
@@ -2052,6 +2087,39 @@ mod tests {
                 "2: eth0    inet 172.28.245.112/20 brd 172.28.255.255 scope global eth0"
             ),
             Some("172.28.245.112".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_non_loopback_ipv4_from_fib_trie_reads_local_host_entry() {
+        let fib_trie = r#"
+Main:
+  +-- 172.28.240.0/20 2 0 2
+     +-- 172.28.240.0/24 2 0 2
+        |-- 172.28.240.0
+           /20 link UNICAST
+        |-- 172.28.245.112
+           /32 host LOCAL
+"#;
+
+        assert_eq!(
+            extract_first_non_loopback_ipv4_from_fib_trie(fib_trie),
+            Some("172.28.245.112".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_non_loopback_ipv4_from_fib_trie_skips_loopback_local_entry() {
+        let fib_trie = r#"
+Local:
+  +-- 127.0.0.0/8 2 0 2
+     |-- 127.0.0.1
+        /32 host LOCAL
+"#;
+
+        assert_eq!(
+            extract_first_non_loopback_ipv4_from_fib_trie(fib_trie),
+            None
         );
     }
 }
