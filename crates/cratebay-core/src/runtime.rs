@@ -1508,20 +1508,46 @@ fn docker_http_ping_host(host: &str) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
-    let cmd = format!(
-        "mkdir -p /var/lib/docker /var/run /var/log; \
-         ulimit -n 65536 >/dev/null 2>&1 || true; \
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let prep_cmd = "mkdir -p /var/lib/docker /var/run /var/log; \
          if [ -f /var/run/dockerd.pid ] && kill -0 \"$(cat /var/run/dockerd.pid)\" 2>/dev/null; then \
+           echo running; \
            exit 0; \
          fi; \
          rm -f /var/run/dockerd.pid; \
-         nohup dockerd --pidfile /var/run/dockerd.pid \
+         : > /var/log/dockerd.log; \
+         echo start";
+    let prep_output = wsl_exec(distro, prep_cmd)?;
+    if prep_output.lines().any(|line| line.trim() == "running") {
+        return Ok(());
+    }
+
+    let dockerd_cmd = format!(
+        "ulimit -n 65536 >/dev/null 2>&1 || true; \
+         exec dockerd --pidfile /var/run/dockerd.pid \
            -H unix:///var/run/docker.sock \
            -H tcp://0.0.0.0:{port} \
-           > /var/log/dockerd.log 2>&1 &"
+           >> /var/log/dockerd.log 2>&1"
     );
-    let _ = wsl_exec(distro, &cmd)?;
-    Ok(())
+
+    Command::new("wsl.exe")
+        .args(["-d", distro, "--", "sh", "-lc", &dockerd_cmd])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!(
+                "Failed to start dockerd via wsl.exe for '{}': {}",
+                distro, error
+            ))
+        })
 }
 
 #[cfg(target_os = "windows")]
