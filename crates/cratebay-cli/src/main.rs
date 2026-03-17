@@ -964,8 +964,11 @@ fn runtime_proxy_pid_path() -> PathBuf {
 fn kill_runtime_proxy_process() -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command as ProcessCommand;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const TASKKILL_TIMEOUT: Duration = Duration::from_secs(15);
 
     let pid_path = runtime_proxy_pid_path();
     let Some(pid) = std::fs::read_to_string(&pid_path)
@@ -976,11 +979,49 @@ fn kill_runtime_proxy_process() -> Result<(), String> {
         return Ok(());
     };
 
-    let _ = ProcessCommand::new("taskkill")
+    let mut child = ProcessCommand::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .creation_flags(CREATE_NO_WINDOW)
-        .status();
+        .spawn()
+        .map_err(|e| format!("Failed to run taskkill for runtime proxy {}: {}", pid, e))?;
+
+    let deadline = Instant::now() + TASKKILL_TIMEOUT;
+    let mut timeout_error = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    timeout_error = Some(format!(
+                        "taskkill exited with {} while stopping runtime proxy {}",
+                        status, pid
+                    ));
+                }
+                break;
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                timeout_error = Some(format!(
+                    "Timed out waiting for taskkill to stop runtime proxy {}",
+                    pid
+                ));
+                break;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(e) => {
+                timeout_error = Some(format!(
+                    "Failed to wait for taskkill to stop runtime proxy {}: {}",
+                    pid, e
+                ));
+                break;
+            }
+        }
+    }
+
     let _ = std::fs::remove_file(pid_path);
+    if let Some(error) = timeout_error {
+        return Err(error);
+    }
+
     Ok(())
 }
 
