@@ -241,10 +241,6 @@ jobs:
         with:
           shared-key: builtin-runtime-windows
 
-      - name: Build bundled WSL runtime assets
-        shell: bash
-        run: bash scripts/build-runtime-assets-wsl.sh x86_64
-
       - name: Run built-in runtime smoke
         shell: bash
         run: ./scripts/runtime-smoke-cli-only.sh
