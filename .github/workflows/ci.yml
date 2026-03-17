@@ -221,6 +221,35 @@ jobs:
           ./scripts/docker-runtime-smoke.sh
 
   # -----------------------------------------------------------
+  # Built-in Windows runtime smoke — bundled WSL2 runtime
+  # -----------------------------------------------------------
+  builtin-runtime-windows:
+    name: Built-in Runtime Smoke (Windows)
+    runs-on: windows-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: choco install protoc -y
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: builtin-runtime-windows
+
+      - name: Build bundled WSL runtime assets
+        shell: bash
+        run: bash scripts/build-runtime-assets-wsl.sh x86_64
+
+      - name: Run built-in runtime smoke
+        shell: bash
+        run: ./scripts/runtime-smoke-cli-only.sh
+
+  # -----------------------------------------------------------
   # AI runtime smoke — Ollama canary, MCP lifecycle, sandboxes
   # -----------------------------------------------------------
   ai-runtime-smoke:
