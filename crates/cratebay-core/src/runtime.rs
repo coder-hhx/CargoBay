@@ -1435,17 +1435,24 @@ fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
 
 #[cfg(any(test, target_os = "windows"))]
 fn extract_first_non_loopback_ipv4(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
+    extract_non_loopback_ipv4s(output).into_iter().next()
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn extract_non_loopback_ipv4s(output: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    for line in output.lines() {
         let trimmed_line = line.trim();
         if trimmed_line.is_empty() {
-            return None;
+            continue;
         }
 
         if trimmed_line.contains(" lo") && trimmed_line.contains("inet ") {
-            return None;
+            continue;
         }
 
-        trimmed_line.split_whitespace().find_map(|token| {
+        for token in trimmed_line.split_whitespace() {
             let candidate = token
                 .trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';')
                 .split('/')
@@ -1454,22 +1461,30 @@ fn extract_first_non_loopback_ipv4(output: &str) -> Option<String> {
                 .trim();
 
             if candidate.is_empty() || candidate.starts_with("127.") || candidate == "0.0.0.0" {
-                return None;
+                continue;
             }
 
-            let octets = candidate
-                .split('.')
-                .map(str::parse::<u8>)
-                .collect::<Result<Vec<_>, _>>()
-                .ok()?;
-
-            if octets.len() == 4 {
-                Some(candidate.to_string())
-            } else {
-                None
+            if parse_ipv4_octets(candidate).is_some()
+                && !candidates.iter().any(|existing| existing == candidate)
+            {
+                candidates.push(candidate.to_string());
             }
-        })
-    })
+        }
+    }
+
+    candidates
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn parse_ipv4_octets(candidate: &str) -> Option<[u8; 4]> {
+    let octets = candidate
+        .split('.')
+        .map(str::parse::<u8>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+
+    let [a, b, c, d]: [u8; 4] = octets.try_into().ok()?;
+    Some([a, b, c, d])
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -1482,7 +1497,44 @@ fn is_usable_wsl_guest_ipv4(candidate: &str) -> bool {
 
 #[cfg(any(test, target_os = "windows"))]
 fn extract_usable_wsl_guest_ipv4(output: &str) -> Option<String> {
-    extract_first_non_loopback_ipv4(output).filter(|ip| is_usable_wsl_guest_ipv4(ip))
+    select_wsl_guest_ipv4(extract_non_loopback_ipv4s(output))
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn is_probable_wsl_bridge_ipv4(candidate: &str) -> bool {
+    let [first, second, _, fourth] = match parse_ipv4_octets(candidate) {
+        Some(octets) => octets,
+        None => return false,
+    };
+
+    fourth == 1
+        && (first == 10
+            || (first == 172 && (16..=31).contains(&second))
+            || (first == 192 && second == 168))
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn select_wsl_guest_ipv4<I>(candidates: I) -> Option<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut fallback = None;
+
+    for candidate in candidates {
+        if !is_usable_wsl_guest_ipv4(&candidate) {
+            continue;
+        }
+
+        if fallback.is_none() {
+            fallback = Some(candidate.clone());
+        }
+
+        if !is_probable_wsl_bridge_ipv4(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    fallback
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -1492,28 +1544,33 @@ fn extract_hosts_ipv4_for_hostname(output: &str, hostname: &str) -> Option<Strin
         return None;
     }
 
-    output.lines().find_map(|line| {
+    let mut candidates = Vec::new();
+
+    for line in output.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
-            return None;
+            continue;
         }
 
         let mut parts = trimmed.split_whitespace();
-        let ip = parts.next()?;
+        let Some(ip) = parts.next() else {
+            continue;
+        };
         if !is_usable_wsl_guest_ipv4(ip) {
-            return None;
+            continue;
         }
 
         if parts.any(|alias| alias == hostname) {
-            Some(ip.to_string())
-        } else {
-            None
+            candidates.push(ip.to_string());
         }
-    })
+    }
+
+    select_wsl_guest_ipv4(candidates)
 }
 
 #[cfg(any(test, target_os = "windows"))]
-fn extract_first_non_loopback_ipv4_from_fib_trie(output: &str) -> Option<String> {
+fn extract_local_ipv4s_from_fib_trie(output: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
     let mut last_ipv4 = None::<String>;
 
     for line in output.lines() {
@@ -1522,25 +1579,34 @@ fn extract_first_non_loopback_ipv4_from_fib_trie(output: &str) -> Option<String>
             continue;
         }
 
-        if let Some(ip) = extract_usable_wsl_guest_ipv4(trimmed) {
+        if let Some(ip) = extract_first_non_loopback_ipv4(trimmed) {
             last_ipv4 = Some(ip);
         }
 
         if trimmed.contains("/32 host LOCAL") {
             if let Some(ip) = last_ipv4.take() {
-                return Some(ip);
+                if is_usable_wsl_guest_ipv4(&ip)
+                    && !candidates.iter().any(|existing| existing == &ip)
+                {
+                    candidates.push(ip);
+                }
             }
         }
     }
 
-    None
+    candidates
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn extract_first_non_loopback_ipv4_from_fib_trie(output: &str) -> Option<String> {
+    select_wsl_guest_ipv4(extract_local_ipv4s_from_fib_trie(output))
 }
 
 #[cfg(target_os = "windows")]
 fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
     let out = wsl_exec(
         distro,
-        "ip -4 -o addr show 2>/dev/null | awk '$2 != \"lo\" {print $4}' | cut -d/ -f1 | head -n1",
+        "ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == \"src\") {print $(i + 1); exit}}' | tr -d '\\r'",
     )
     .unwrap_or_default();
     if let Some(ip) = extract_usable_wsl_guest_ipv4(&out) {
@@ -1549,9 +1615,14 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
 
     let out = wsl_exec(
         distro,
-        "hostname -I 2>/dev/null | awk '{print $1}' | tr -d '\\r'",
+        "ip -4 -o addr show scope global up 2>/dev/null | awk '$2 != \"lo\" {print $4}' | cut -d/ -f1 | tr -d '\\r'",
     )
     .unwrap_or_default();
+    if let Some(ip) = extract_usable_wsl_guest_ipv4(&out) {
+        return Ok(ip);
+    }
+
+    let out = wsl_exec(distro, "hostname -I 2>/dev/null | tr -d '\\r'").unwrap_or_default();
     if let Some(ip) = extract_usable_wsl_guest_ipv4(&out) {
         return Ok(ip);
     }
@@ -1696,11 +1767,16 @@ fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
 fn wsl_runtime_diagnostics(distro: &str) -> String {
     let probes = [
         (
+            "ip -4 route get 1.1.1.1",
+            "ip -4 route get 1.1.1.1 2>/dev/null || true",
+        ),
+        (
             "ip -4 -o addr show",
             "ip -4 -o addr show 2>/dev/null || true",
         ),
         ("hostname -I", "hostname -I 2>/dev/null || true"),
         ("hostname -i", "hostname -i 2>/dev/null || true"),
+        ("route", "cat /proc/net/route 2>/dev/null || true"),
         ("fib_trie", "cat /proc/net/fib_trie 2>/dev/null || true"),
         ("which dockerd", "command -v dockerd 2>/dev/null || true"),
         ("dockerd --version", "dockerd --version 2>/dev/null || true"),
@@ -2137,6 +2213,23 @@ mod tests {
     }
 
     #[test]
+    fn extract_non_loopback_ipv4s_collects_multiple_addresses() {
+        assert_eq!(
+            extract_non_loopback_ipv4s("172.17.0.1 172.28.245.112 172.28.245.112"),
+            vec!["172.17.0.1".to_string(), "172.28.245.112".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_usable_wsl_guest_ipv4_prefers_non_bridge_candidate() {
+        assert_eq!(
+            extract_usable_wsl_guest_ipv4("172.17.0.1 172.28.245.112"),
+            Some("172.28.245.112".to_string())
+        );
+        assert!(is_probable_wsl_bridge_ipv4("172.17.0.1"));
+    }
+
+    #[test]
     fn extract_first_non_loopback_ipv4_from_fib_trie_reads_local_host_entry() {
         let fib_trie = r#"
 Main:
@@ -2170,6 +2263,24 @@ Local:
     }
 
     #[test]
+    fn extract_first_non_loopback_ipv4_from_fib_trie_prefers_non_bridge_local_entry() {
+        let fib_trie = r#"
+Local:
+  +-- 172.17.0.0/16 2 0 2
+     |-- 172.17.0.1
+        /32 host LOCAL
+  +-- 172.28.240.0/20 2 0 2
+     |-- 172.28.245.112
+        /32 host LOCAL
+"#;
+
+        assert_eq!(
+            extract_first_non_loopback_ipv4_from_fib_trie(fib_trie),
+            Some("172.28.245.112".to_string())
+        );
+    }
+
+    #[test]
     fn extract_hosts_ipv4_for_hostname_reads_matching_host_entry() {
         let hosts = r#"
 127.0.0.1 localhost
@@ -2191,5 +2302,18 @@ Local:
 
         assert_eq!(extract_hosts_ipv4_for_hostname(hosts, "cratebay-wsl"), None);
         assert!(!is_usable_wsl_guest_ipv4("10.255.255.254"));
+    }
+
+    #[test]
+    fn extract_hosts_ipv4_for_hostname_prefers_non_bridge_match() {
+        let hosts = r#"
+172.17.0.1 cratebay-wsl
+172.28.245.112 cratebay-wsl
+"#;
+
+        assert_eq!(
+            extract_hosts_ipv4_for_hostname(hosts, "cratebay-wsl"),
+            Some("172.28.245.112".to_string())
+        );
     }
 }

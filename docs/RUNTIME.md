@@ -75,6 +75,7 @@ Release builds generate that `rootfs.tar` locally from Alpine packages during pa
 Local Windows `tauri dev` / `tauri build` now performs the same asset preparation automatically when the repo still contains placeholder WSL assets.
 
 CrateBay waits until the Docker API is actually reachable before reporting the Windows runtime as ready, and it auto-recovers a stale partial WSL import directory before re-importing the bundled distro.
+When Windows must fall back from `127.0.0.1` to the guest address, CrateBay now prefers the host-reachable WSL NAT IP and skips bridge-only addresses such as Docker's `172.17.0.1`.
 
 ## Runtime images
 
