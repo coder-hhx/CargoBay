@@ -1473,6 +1473,46 @@ fn extract_first_non_loopback_ipv4(output: &str) -> Option<String> {
 }
 
 #[cfg(any(test, target_os = "windows"))]
+fn is_usable_wsl_guest_ipv4(candidate: &str) -> bool {
+    !(candidate.starts_with("127.")
+        || candidate == "0.0.0.0"
+        || candidate == "10.255.255.254"
+        || candidate.starts_with("169.254."))
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn extract_usable_wsl_guest_ipv4(output: &str) -> Option<String> {
+    extract_first_non_loopback_ipv4(output).filter(|ip| is_usable_wsl_guest_ipv4(ip))
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn extract_hosts_ipv4_for_hostname(output: &str, hostname: &str) -> Option<String> {
+    let hostname = hostname.trim();
+    if hostname.is_empty() {
+        return None;
+    }
+
+    output.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let ip = parts.next()?;
+        if !is_usable_wsl_guest_ipv4(ip) {
+            return None;
+        }
+
+        if parts.any(|alias| alias == hostname) {
+            Some(ip.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(any(test, target_os = "windows"))]
 fn extract_first_non_loopback_ipv4_from_fib_trie(output: &str) -> Option<String> {
     let mut last_ipv4 = None::<String>;
 
@@ -1482,7 +1522,7 @@ fn extract_first_non_loopback_ipv4_from_fib_trie(output: &str) -> Option<String>
             continue;
         }
 
-        if let Some(ip) = extract_first_non_loopback_ipv4(trimmed) {
+        if let Some(ip) = extract_usable_wsl_guest_ipv4(trimmed) {
             last_ipv4 = Some(ip);
         }
 
@@ -1503,7 +1543,7 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
         "ip -4 -o addr show 2>/dev/null | awk '$2 != \"lo\" {print $4}' | cut -d/ -f1 | head -n1",
     )
     .unwrap_or_default();
-    if let Some(ip) = extract_first_non_loopback_ipv4(&out) {
+    if let Some(ip) = extract_usable_wsl_guest_ipv4(&out) {
         return Ok(ip);
     }
 
@@ -1512,12 +1552,18 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
         "hostname -I 2>/dev/null | awk '{print $1}' | tr -d '\\r'",
     )
     .unwrap_or_default();
-    if let Some(ip) = extract_first_non_loopback_ipv4(&out) {
+    if let Some(ip) = extract_usable_wsl_guest_ipv4(&out) {
         return Ok(ip);
     }
 
     let out = wsl_exec(distro, "hostname -i 2>/dev/null | tr -d '\\r'").unwrap_or_default();
-    if let Some(ip) = extract_first_non_loopback_ipv4(&out) {
+    if let Some(ip) = extract_usable_wsl_guest_ipv4(&out) {
+        return Ok(ip);
+    }
+
+    let hostname = wsl_exec(distro, "hostname 2>/dev/null").unwrap_or_default();
+    let hosts = wsl_exec(distro, "cat /etc/hosts 2>/dev/null").unwrap_or_default();
+    if let Some(ip) = extract_hosts_ipv4_for_hostname(&hosts, &hostname) {
         return Ok(ip);
     }
 
@@ -1527,7 +1573,7 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
     }
 
     Err(HypervisorError::CreateFailed(
-        "Failed to determine WSL guest IP from iproute2, hostname, or /proc/net/fib_trie".into(),
+        "Failed to determine WSL guest IP from iproute2, hostname, /etc/hosts, or /proc/net/fib_trie".into(),
     ))
 }
 
@@ -2121,5 +2167,29 @@ Local:
             extract_first_non_loopback_ipv4_from_fib_trie(fib_trie),
             None
         );
+    }
+
+    #[test]
+    fn extract_hosts_ipv4_for_hostname_reads_matching_host_entry() {
+        let hosts = r#"
+127.0.0.1 localhost
+172.28.245.112 cratebay-wsl
+"#;
+
+        assert_eq!(
+            extract_hosts_ipv4_for_hostname(hosts, "cratebay-wsl"),
+            Some("172.28.245.112".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_hosts_ipv4_for_hostname_skips_unusable_host_entry() {
+        let hosts = r#"
+10.255.255.254 cratebay-wsl
+172.28.245.112 other-host
+"#;
+
+        assert_eq!(extract_hosts_ipv4_for_hostname(hosts, "cratebay-wsl"), None);
+        assert!(!is_usable_wsl_guest_ipv4("10.255.255.254"));
     }
 }
