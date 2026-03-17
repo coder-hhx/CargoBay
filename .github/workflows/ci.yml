@@ -187,8 +187,10 @@ jobs:
           sudo apt-get install -y \
             patchelf \
             qemu-system-x86 \
-            squashfs-tools \
-            zig
+            squashfs-tools
+
+      - name: Install Zig
+        run: bash scripts/install-zig.sh
 
       - name: Install cargo-zigbuild
         run: cargo install cargo-zigbuild --locked --force

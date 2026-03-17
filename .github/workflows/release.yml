@@ -236,8 +236,11 @@ jobs:
             librsvg2-dev \
             patchelf \
             qemu-system-x86 \
-            squashfs-tools \
-            zig
+            squashfs-tools
+
+      - name: Install Zig (Linux only)
+        if: runner.os == 'Linux'
+        run: bash scripts/install-zig.sh
 
       - name: Install cargo-zigbuild (Linux only)
         if: runner.os == 'Linux'
