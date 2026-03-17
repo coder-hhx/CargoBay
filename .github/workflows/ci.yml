@@ -241,6 +241,10 @@ jobs:
         with:
           shared-key: builtin-runtime-windows
 
+      - name: Fetch bundled WSL runtime assets
+        shell: bash
+        run: CRATEBAY_RUNTIME_FETCH_ONLY=1 bash scripts/fetch-wsl-runtime-assets.sh x86_64
+
       - name: Run built-in runtime smoke
         shell: bash
         run: ./scripts/runtime-smoke-cli-only.sh

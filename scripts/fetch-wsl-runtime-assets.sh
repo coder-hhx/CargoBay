@@ -9,6 +9,7 @@ fi
 
 dest_dir="${2:-crates/cratebay-gui/src-tauri/runtime-wsl}"
 tag="${CRATEBAY_RUNTIME_TAG:-runtime-v0.1.0}"
+fetch_only="${CRATEBAY_RUNTIME_FETCH_ONLY:-0}"
 
 image_id="cratebay-runtime-wsl-${arch}"
 image_dir="${dest_dir}/${image_id}"
@@ -32,6 +33,10 @@ cleanup() {
 trap cleanup EXIT
 
 if ! download "${base_url}/wsl-rootfs-${arch}.tar" "${tmp_dir}/rootfs.tar"; then
+  if [[ "${fetch_only}" == "1" ]]; then
+    echo "ERROR: remote WSL runtime assets for tag '${tag}' are unavailable and local build fallback is disabled." >&2
+    exit 1
+  fi
   echo "Remote WSL runtime assets for tag '${tag}' are unavailable; building locally instead."
   bash "$(dirname "$0")/build-runtime-assets-wsl.sh" "${arch}" "${dest_dir}"
   exit 0
