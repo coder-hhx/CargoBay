@@ -78,6 +78,7 @@ CrateBay waits until the Docker API is actually reachable before reporting the W
 When Windows must fall back from `127.0.0.1` to the guest address, CrateBay now prefers the host-reachable WSL NAT IP and skips bridge-only addresses such as Docker's `172.17.0.1`.
 If a `wsl.exe` probe stalls during startup, CrateBay now fails that probe with a bounded timeout instead of hanging the whole `cratebay runtime start` flow indefinitely.
 Windows now launches `dockerd` through a short-lived WSL shell bootstrap, so `cratebay runtime start` and shell automation do not stay blocked behind a long-lived host-side `wsl.exe` process.
+If `dockerd` exits early on Windows before the Docker API answers, CrateBay now retries once with a compatibility-safe WSL profile and validates readiness by pinging `/_ping` inside the guest instead of relying on log text alone.
 For deeper diagnosis, `CRATEBAY_RUNTIME_PROGRESS=1` prints the Windows WSL startup phases and probe command boundaries to stderr.
 
 ## Runtime images

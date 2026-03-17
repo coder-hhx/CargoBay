@@ -78,6 +78,7 @@ CrateBay 只有在 Docker API 实际可达后，才会把 Windows runtime 标记
 当 Windows 需要从 `127.0.0.1` 回退到 guest IP 时，CrateBay 现在会优先选择宿主可达的 WSL NAT 地址，并跳过 Docker `172.17.0.1` 这类仅桥接可见的地址。
 如果启动过程中某个 `wsl.exe` 探测卡住，CrateBay 现在会在限定超时后直接报错，而不是让整个 `cratebay runtime start` 一直挂住。
 Windows 现在会通过一个短生命周期的 WSL shell 引导 `dockerd` 后台启动，因此 `cratebay runtime start` 以及基于 shell 的自动化不会再被一个长期存活的宿主侧 `wsl.exe` 进程卡住。
+如果 Windows 上的 `dockerd` 在 Docker API 可达前就提前退出，CrateBay 现在会自动再用一组兼容性更高的 WSL 参数重试一次，并改为在 guest 内直接请求 `/_ping` 判断 readiness，而不是只依赖日志文本。
 如需进一步定位，可设置 `CRATEBAY_RUNTIME_PROGRESS=1`，让 Windows WSL 启动阶段与探测命令边界输出到 stderr。
 
 ## 运行时镜像

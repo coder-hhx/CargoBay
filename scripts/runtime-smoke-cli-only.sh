@@ -49,7 +49,14 @@ cleanup() {
   "$cratebay_bin" image remove "$packaged_image" >/dev/null 2>&1 || true
   "$cratebay_bin" volume remove "$volume_name" >/dev/null 2>&1 || true
   "$cratebay_bin" runtime stop >/dev/null 2>&1 || true
-  rm -rf "$smoke_data_dir"
+  if [[ "${OS:-}" == "Windows_NT" || -n "${MSYSTEM:-}" ]]; then
+    for _ in {1..10}; do
+      rm -rf "$smoke_data_dir" >/dev/null 2>&1 && break
+      sleep 1
+    done
+  else
+    rm -rf "$smoke_data_dir"
+  fi
 }
 trap cleanup EXIT
 

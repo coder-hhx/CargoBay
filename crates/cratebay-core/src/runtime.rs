@@ -1847,21 +1847,36 @@ fn docker_http_ping_host(host: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_dockerd_launch_command(port: u16) -> String {
+fn wsl_dockerd_launch_command(port: u16, compatibility_mode: bool) -> String {
+    let mut flags = vec![
+        "--pidfile /var/run/dockerd.pid".to_string(),
+        "-H unix:///var/run/docker.sock".to_string(),
+        format!("-H tcp://0.0.0.0:{port}"),
+    ];
+    if compatibility_mode {
+        flags.push("--storage-driver=vfs".to_string());
+        flags.push("--iptables=false".to_string());
+        flags.push("--ip6tables=false".to_string());
+        flags.push("--ip-forward=false".to_string());
+        flags.push("--ip-masq=false".to_string());
+    }
+
     format!(
         "command -v dockerd >/dev/null 2>&1 || {{ echo 'dockerd not found' >&2; exit 1; }}; \
          command -v nohup >/dev/null 2>&1 || {{ echo 'nohup not found' >&2; exit 1; }}; \
          ulimit -n 65536 >/dev/null 2>&1 || true; \
-         nohup dockerd --pidfile /var/run/dockerd.pid \
-           -H unix:///var/run/docker.sock \
-           -H tcp://0.0.0.0:{port} \
-           >> /var/log/dockerd.log 2>&1 </dev/null & \
-         echo started"
+         nohup dockerd {} >> /var/log/dockerd.log 2>&1 </dev/null & \
+         echo started",
+        flags.join(" ")
     )
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
+fn wsl_start_dockerd_with_mode(
+    distro: &str,
+    port: u16,
+    compatibility_mode: bool,
+) -> Result<(), HypervisorError> {
     let prep_cmd = "mkdir -p /var/lib/docker /var/run /var/log; \
          if [ -f /var/run/dockerd.pid ] && kill -0 \"$(cat /var/run/dockerd.pid)\" 2>/dev/null; then \
            echo running; \
@@ -1876,9 +1891,16 @@ fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
         return Ok(());
     }
 
-    let launch_output = wsl_exec(distro, &wsl_dockerd_launch_command(port))?;
+    let launch_output = wsl_exec(
+        distro,
+        &wsl_dockerd_launch_command(port, compatibility_mode),
+    )?;
     if launch_output.lines().any(|line| line.trim() == "started") {
-        windows_runtime_progress("Windows runtime: launched dockerd inside WSL");
+        windows_runtime_progress(if compatibility_mode {
+            "Windows runtime: launched dockerd inside WSL (compatibility mode)"
+        } else {
+            "Windows runtime: launched dockerd inside WSL"
+        });
         return Ok(());
     }
 
@@ -1890,35 +1912,81 @@ fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
 }
 
 #[cfg(target_os = "windows")]
+fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
+    wsl_start_dockerd_with_mode(distro, port, false)
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_docker_http_ping_command(port: u16) -> String {
+    format!("wget -qO- http://127.0.0.1:{port}/_ping 2>/dev/null | tr -d '\\r' || true")
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_dockerd_pid_is_running(distro: &str) -> bool {
+    wsl_exec(
+        distro,
+        "if [ -f /var/run/dockerd.pid ] && kill -0 \"$(cat /var/run/dockerd.pid)\" 2>/dev/null; then echo running; fi",
+    )
+    .map(|output| output.lines().any(|line| line.trim() == "running"))
+    .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
 fn wsl_runtime_diagnostics(distro: &str) -> String {
-    let probes = [
+    let probes = vec![
         (
-            "ip -4 route get 1.1.1.1",
-            "ip -4 route get 1.1.1.1 2>/dev/null || true",
+            "ip -4 route get 1.1.1.1".to_string(),
+            "ip -4 route get 1.1.1.1 2>/dev/null || true".to_string(),
         ),
         (
-            "ip -4 -o addr show",
-            "ip -4 -o addr show 2>/dev/null || true",
-        ),
-        ("hostname -I", "hostname -I 2>/dev/null || true"),
-        ("hostname -i", "hostname -i 2>/dev/null || true"),
-        ("route", "cat /proc/net/route 2>/dev/null || true"),
-        ("fib_trie", "cat /proc/net/fib_trie 2>/dev/null || true"),
-        ("which dockerd", "command -v dockerd 2>/dev/null || true"),
-        ("dockerd --version", "dockerd --version 2>/dev/null || true"),
-        (
-            "ps -ef | grep dockerd",
-            "ps -ef | grep '[d]ockerd' 2>/dev/null || true",
+            "ip -4 -o addr show".to_string(),
+            "ip -4 -o addr show 2>/dev/null || true".to_string(),
         ),
         (
-            "dockerd.log",
-            "tail -n 80 /var/log/dockerd.log 2>/dev/null || true",
+            "hostname -I".to_string(),
+            "hostname -I 2>/dev/null || true".to_string(),
+        ),
+        (
+            "hostname -i".to_string(),
+            "hostname -i 2>/dev/null || true".to_string(),
+        ),
+        (
+            "route".to_string(),
+            "cat /proc/net/route 2>/dev/null || true".to_string(),
+        ),
+        (
+            "fib_trie".to_string(),
+            "cat /proc/net/fib_trie 2>/dev/null || true".to_string(),
+        ),
+        (
+            "which dockerd".to_string(),
+            "command -v dockerd 2>/dev/null || true".to_string(),
+        ),
+        (
+            "dockerd --version".to_string(),
+            "dockerd --version 2>/dev/null || true".to_string(),
+        ),
+        (
+            "docker _ping".to_string(),
+            wsl_docker_http_ping_command(wsl_docker_port()),
+        ),
+        (
+            "dockerd.pid".to_string(),
+            "if [ -f /var/run/dockerd.pid ]; then cat /var/run/dockerd.pid; fi".to_string(),
+        ),
+        (
+            "ps | grep dockerd".to_string(),
+            "ps | grep '[d]ockerd' 2>/dev/null || true".to_string(),
+        ),
+        (
+            "dockerd.log".to_string(),
+            "tail -n 80 /var/log/dockerd.log 2>/dev/null || true".to_string(),
         ),
     ];
 
     let mut diagnostics = Vec::new();
     for (label, command) in probes {
-        match wsl_exec_with_timeout(distro, command, std::time::Duration::from_secs(5)) {
+        match wsl_exec_with_timeout(distro, &command, std::time::Duration::from_secs(5)) {
             Ok(output) if !output.trim().is_empty() => {
                 diagnostics.push(format!("{label}:\n{}", output.trim()));
             }
@@ -2071,21 +2139,31 @@ pub fn run_wsl_host_relay_server(
 fn wait_for_wsl_dockerd_ready_in_guest(distro: &str, port: u16) -> Result<String, HypervisorError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let mut last_error = "Docker runtime is still starting".to_string();
-    let readiness_probe = "if [ -S /var/run/docker.sock ] && \
-         grep -Eq 'Daemon has completed initialization|API listen on \\[::\\]:2375|API listen on /var/run/docker.sock' /var/log/dockerd.log 2>/dev/null; then \
-           echo ready; \
-         fi";
+    let readiness_probe = wsl_docker_http_ping_command(port);
+    let fallback_deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut compatibility_retry_attempted = false;
 
     while std::time::Instant::now() < deadline {
-        match wsl_exec(distro, readiness_probe) {
-            Ok(output) if output.lines().any(|line| line.trim() == "ready") => {
+        match wsl_exec(distro, &readiness_probe) {
+            Ok(output) if output.lines().any(|line| line.trim() == "OK") => {
                 let guest_ip = wsl_guest_ip(distro)?;
                 return Ok(format!("tcp://{guest_ip}:{port}"));
             }
             Ok(_) => {
-                last_error = "dockerd is still starting inside WSL".to_string();
+                last_error = "dockerd HTTP API is not responding inside WSL".to_string();
             }
             Err(error) => last_error = error.to_string(),
+        }
+
+        if !compatibility_retry_attempted
+            && std::time::Instant::now() >= fallback_deadline
+            && !wsl_dockerd_pid_is_running(distro)
+        {
+            windows_runtime_progress(
+                "Windows runtime: dockerd exited before becoming ready, retrying in compatibility mode",
+            );
+            wsl_start_dockerd_with_mode(distro, port, true)?;
+            compatibility_retry_attempted = true;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2450,12 +2528,24 @@ Local:
     #[cfg(target_os = "windows")]
     #[test]
     fn wsl_dockerd_launch_command_uses_nohup_background_start() {
-        let command = wsl_dockerd_launch_command(2375);
+        let command = wsl_dockerd_launch_command(2375, false);
         assert!(command.contains("command -v dockerd"));
         assert!(command.contains("command -v nohup"));
         assert!(command.contains("nohup dockerd"));
         assert!(command.contains("tcp://0.0.0.0:2375"));
         assert!(command.contains("echo started"));
         assert!(!command.contains("exec dockerd"));
+        assert!(!command.contains("--storage-driver=vfs"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_dockerd_launch_command_adds_compatibility_flags() {
+        let command = wsl_dockerd_launch_command(2375, true);
+        assert!(command.contains("--storage-driver=vfs"));
+        assert!(command.contains("--iptables=false"));
+        assert!(command.contains("--ip6tables=false"));
+        assert!(command.contains("--ip-forward=false"));
+        assert!(command.contains("--ip-masq=false"));
     }
 }
