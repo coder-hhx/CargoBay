@@ -1184,10 +1184,13 @@ fn wsl_docker_port() -> u16 {
 fn wsl_list_distros() -> Result<Vec<String>, HypervisorError> {
     use std::process::Command;
 
-    let out = Command::new("wsl.exe")
-        .args(["-l", "-q"])
-        .output()
-        .map_err(|e| HypervisorError::CreateFailed(format!("Failed to run wsl.exe: {}", e)))?;
+    let mut command = Command::new("wsl.exe");
+    command.args(["-l", "-q"]);
+    let out = run_windows_command_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(20),
+        "wsl.exe -l -q",
+    )?;
 
     if !out.status.success() {
         return Err(HypervisorError::CreateFailed(format!(
@@ -1203,6 +1206,58 @@ fn wsl_list_distros() -> Result<Vec<String>, HypervisorError> {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect())
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_command_with_timeout(
+    command: &mut std::process::Command,
+    timeout: std::time::Duration,
+    description: &str,
+) -> Result<std::process::Output, HypervisorError> {
+    use std::process::Stdio;
+
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!("Failed to start {}: {}", description, error))
+        })?;
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child.wait_with_output().map_err(|error| {
+                    HypervisorError::CreateFailed(format!(
+                        "Failed to collect output for {}: {}",
+                        description, error
+                    ))
+                });
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(HypervisorError::CreateFailed(format!(
+                    "{} timed out after {} seconds",
+                    description,
+                    timeout.as_secs()
+                )));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(HypervisorError::CreateFailed(format!(
+                    "Failed while waiting for {}: {}",
+                    description, error
+                )));
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1326,17 +1381,21 @@ fn wsl_import_runtime_distro(distro: &str) -> Result<(), HypervisorError> {
     let rootfs = runtime_wsl_rootfs_tar_path()?;
     let install_dir = prepare_wsl_install_dir(distro)?;
 
-    let out = Command::new("wsl.exe")
-        .args([
-            "--import",
-            distro,
-            &install_dir.to_string_lossy(),
-            &rootfs.to_string_lossy(),
-            "--version",
-            "2",
-        ])
-        .output()
-        .map_err(|e| HypervisorError::CreateFailed(format!("Failed to run wsl.exe: {}", e)))?;
+    let mut command = Command::new("wsl.exe");
+    command.args([
+        "--import",
+        distro,
+        &install_dir.to_string_lossy(),
+        &rootfs.to_string_lossy(),
+        "--version",
+        "2",
+    ]);
+    let description = format!("wsl.exe --import {}", distro);
+    let out = run_windows_command_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(300),
+        &description,
+    )?;
 
     if !out.status.success() {
         return Err(HypervisorError::CreateFailed(format!(
@@ -1354,10 +1413,14 @@ fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
     use std::process::Command;
 
     // Run via `sh -lc` to keep quoting predictable.
-    let out = Command::new("wsl.exe")
-        .args(["-d", distro, "--", "sh", "-lc", shell_cmd])
-        .output()
-        .map_err(|e| HypervisorError::CreateFailed(format!("Failed to run wsl.exe: {}", e)))?;
+    let mut command = Command::new("wsl.exe");
+    command.args(["-d", distro, "--", "sh", "-lc", shell_cmd]);
+    let description = format!("wsl.exe exec in '{}'", distro);
+    let out = run_windows_command_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(30),
+        &description,
+    )?;
 
     if !out.status.success() {
         return Err(HypervisorError::CreateFailed(format!(
@@ -1655,10 +1718,14 @@ pub fn stop_runtime_wsl() -> Result<(), HypervisorError> {
         return Ok(());
     }
 
-    let out = Command::new("wsl.exe")
-        .args(["--terminate", distro])
-        .output()
-        .map_err(|e| HypervisorError::CreateFailed(format!("Failed to run wsl.exe: {}", e)))?;
+    let mut command = Command::new("wsl.exe");
+    command.args(["--terminate", distro]);
+    let description = format!("wsl.exe --terminate {}", distro);
+    let out = run_windows_command_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(30),
+        &description,
+    )?;
 
     if !out.status.success() {
         return Err(HypervisorError::CreateFailed(format!(
