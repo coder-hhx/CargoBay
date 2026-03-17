@@ -1307,7 +1307,7 @@ fn wsl_guest_ip(distro: &str) -> Result<String, HypervisorError> {
     ))
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(any(test, target_os = "windows", target_os = "linux"))]
 fn docker_host_tcp_endpoint(host: &str) -> Option<(String, u16)> {
     let endpoint = host.strip_prefix("tcp://")?;
 
