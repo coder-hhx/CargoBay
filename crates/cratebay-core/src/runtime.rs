@@ -1527,7 +1527,7 @@ fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
 #[cfg(target_os = "windows")]
 fn wait_for_wsl_docker_ready(distro: &str, port: u16) -> Result<String, HypervisorError> {
     let localhost = format!("tcp://127.0.0.1:{port}");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let mut last_error = "Docker runtime is still starting".to_string();
 
     while std::time::Instant::now() < deadline {
@@ -1547,10 +1547,26 @@ fn wait_for_wsl_docker_ready(distro: &str, port: u16) -> Result<String, Hypervis
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
-    Err(HypervisorError::CreateFailed(format!(
-        "CrateBay Runtime (WSL2) did not become ready within 45 seconds: {}",
-        last_error
-    )))
+    let dockerd_log = wsl_exec(
+        distro,
+        "tail -n 80 /var/log/dockerd.log 2>/dev/null || true",
+    )
+    .unwrap_or_default();
+
+    let message = if dockerd_log.trim().is_empty() {
+        format!(
+            "CrateBay Runtime (WSL2) did not become ready within 120 seconds: {}",
+            last_error
+        )
+    } else {
+        format!(
+            "CrateBay Runtime (WSL2) did not become ready within 120 seconds: {}\ndockerd.log:\n{}",
+            last_error,
+            dockerd_log.trim()
+        )
+    };
+
+    Err(HypervisorError::CreateFailed(message))
 }
 
 /// Ensure CrateBay Runtime is running on Windows via a WSL2 distro.
