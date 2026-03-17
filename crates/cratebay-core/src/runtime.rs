@@ -1214,6 +1214,23 @@ fn read_windows_command_capture(path: &Path) -> Vec<u8> {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_runtime_progress_enabled() -> bool {
+    std::env::var("CRATEBAY_RUNTIME_PROGRESS")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !normalized.is_empty() && normalized != "0" && normalized != "false"
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_runtime_progress(message: &str) {
+    if windows_runtime_progress_enabled() {
+        eprintln!("{message}");
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn format_windows_command_capture_detail(stdout: &[u8], stderr: &[u8]) -> Option<String> {
     let stderr = String::from_utf8_lossy(stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -1255,6 +1272,8 @@ fn run_windows_command_with_timeout(
 ) -> Result<std::process::Output, HypervisorError> {
     use std::fs::OpenOptions;
     use std::process::Stdio;
+
+    windows_runtime_progress(&format!("Windows runtime command: start {description}"));
 
     let capture_suffix = format!(
         "{}-{}",
@@ -1313,6 +1332,9 @@ fn run_windows_command_with_timeout(
                     stderr: read_windows_command_capture(&stderr_path),
                 };
                 cleanup_windows_command_capture(&stdout_path, &stderr_path);
+                windows_runtime_progress(&format!(
+                    "Windows runtime command: completed {description}"
+                ));
                 return Ok(output);
             }
             Ok(None) if std::time::Instant::now() < deadline => {
@@ -1334,6 +1356,9 @@ fn run_windows_command_with_timeout(
                     message.push_str(&detail);
                 }
 
+                windows_runtime_progress(&format!(
+                    "Windows runtime command: timed out {description}"
+                ));
                 return Err(HypervisorError::CreateFailed(message));
             }
             Err(error) => {
@@ -1348,6 +1373,9 @@ fn run_windows_command_with_timeout(
                     message.push_str(&detail);
                 }
 
+                windows_runtime_progress(&format!(
+                    "Windows runtime command: wait failed {description}"
+                ));
                 return Err(HypervisorError::CreateFailed(message));
             }
         }
@@ -1503,18 +1531,18 @@ fn wsl_import_runtime_distro(distro: &str) -> Result<(), HypervisorError> {
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
+fn wsl_exec_with_timeout(
+    distro: &str,
+    shell_cmd: &str,
+    timeout: std::time::Duration,
+) -> Result<String, HypervisorError> {
     use std::process::Command;
 
     // Run via `sh -lc` to keep quoting predictable.
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "--", "sh", "-lc", shell_cmd]);
     let description = format!("wsl.exe exec in '{}'", distro);
-    let out = run_windows_command_with_timeout(
-        &mut command,
-        std::time::Duration::from_secs(30),
-        &description,
-    )?;
+    let out = run_windows_command_with_timeout(&mut command, timeout, &description)?;
 
     if !out.status.success() {
         return Err(HypervisorError::CreateFailed(format!(
@@ -1525,6 +1553,11 @@ fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
     }
 
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
+    wsl_exec_with_timeout(distro, shell_cmd, std::time::Duration::from_secs(10))
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -1814,12 +1847,21 @@ fn docker_http_ping_host(host: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
+fn wsl_dockerd_launch_command(port: u16) -> String {
+    format!(
+        "command -v dockerd >/dev/null 2>&1 || {{ echo 'dockerd not found' >&2; exit 1; }}; \
+         command -v nohup >/dev/null 2>&1 || {{ echo 'nohup not found' >&2; exit 1; }}; \
+         ulimit -n 65536 >/dev/null 2>&1 || true; \
+         nohup dockerd --pidfile /var/run/dockerd.pid \
+           -H unix:///var/run/docker.sock \
+           -H tcp://0.0.0.0:{port} \
+           >> /var/log/dockerd.log 2>&1 </dev/null & \
+         echo started"
+    )
+}
+
+#[cfg(target_os = "windows")]
 fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
     let prep_cmd = "mkdir -p /var/lib/docker /var/run /var/log; \
          if [ -f /var/run/dockerd.pid ] && kill -0 \"$(cat /var/run/dockerd.pid)\" 2>/dev/null; then \
            echo running; \
@@ -1830,31 +1872,21 @@ fn wsl_start_dockerd(distro: &str, port: u16) -> Result<(), HypervisorError> {
          echo start";
     let prep_output = wsl_exec(distro, prep_cmd)?;
     if prep_output.lines().any(|line| line.trim() == "running") {
+        windows_runtime_progress("Windows runtime: dockerd already running inside WSL");
         return Ok(());
     }
 
-    let dockerd_cmd = format!(
-        "ulimit -n 65536 >/dev/null 2>&1 || true; \
-         exec dockerd --pidfile /var/run/dockerd.pid \
-           -H unix:///var/run/docker.sock \
-           -H tcp://0.0.0.0:{port} \
-           >> /var/log/dockerd.log 2>&1"
-    );
+    let launch_output = wsl_exec(distro, &wsl_dockerd_launch_command(port))?;
+    if launch_output.lines().any(|line| line.trim() == "started") {
+        windows_runtime_progress("Windows runtime: launched dockerd inside WSL");
+        return Ok(());
+    }
 
-    Command::new("wsl.exe")
-        .args(["-d", distro, "--", "sh", "-lc", &dockerd_cmd])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| {
-            HypervisorError::CreateFailed(format!(
-                "Failed to start dockerd via wsl.exe for '{}': {}",
-                distro, error
-            ))
-        })
+    Err(HypervisorError::CreateFailed(format!(
+        "Failed to launch dockerd inside WSL '{}': {}",
+        distro,
+        launch_output.trim()
+    )))
 }
 
 #[cfg(target_os = "windows")]
@@ -1886,7 +1918,7 @@ fn wsl_runtime_diagnostics(distro: &str) -> String {
 
     let mut diagnostics = Vec::new();
     for (label, command) in probes {
-        match wsl_exec(distro, command) {
+        match wsl_exec_with_timeout(distro, command, std::time::Duration::from_secs(5)) {
             Ok(output) if !output.trim().is_empty() => {
                 diagnostics.push(format!("{label}:\n{}", output.trim()));
             }
@@ -2085,14 +2117,18 @@ pub fn ensure_runtime_wsl_guest_host() -> Result<String, HypervisorError> {
     let distro = runtime_vm_name();
     let port = wsl_docker_port();
 
+    windows_runtime_progress("Windows runtime: checking bundled WSL distro");
     // 1) Ensure the distro exists (import if missing).
     if !wsl_distro_exists(distro)? {
+        windows_runtime_progress("Windows runtime: importing bundled WSL distro");
         wsl_import_runtime_distro(distro)?;
     }
 
     // 2) Ensure dockerd is running inside WSL and only return once the Docker
     // API is actually responding inside the WSL guest.
+    windows_runtime_progress("Windows runtime: starting dockerd inside WSL");
     wsl_start_dockerd(distro, port)?;
+    windows_runtime_progress("Windows runtime: waiting for dockerd readiness");
     wait_for_wsl_dockerd_ready_in_guest(distro, port)
 }
 
@@ -2409,5 +2445,17 @@ Local:
             extract_hosts_ipv4_for_hostname(hosts, "cratebay-wsl"),
             Some("172.28.245.112".to_string())
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_dockerd_launch_command_uses_nohup_background_start() {
+        let command = wsl_dockerd_launch_command(2375);
+        assert!(command.contains("command -v dockerd"));
+        assert!(command.contains("command -v nohup"));
+        assert!(command.contains("nohup dockerd"));
+        assert!(command.contains("tcp://0.0.0.0:2375"));
+        assert!(command.contains("echo started"));
+        assert!(!command.contains("exec dockerd"));
     }
 }

@@ -61,8 +61,14 @@ if [[ ! -x "$cratebay_bin" ]]; then
   exit 1
 fi
 
+if [[ "${OS:-}" == "Windows_NT" || -n "${MSYSTEM:-}" ]]; then
+  export CRATEBAY_RUNTIME_PROGRESS="${CRATEBAY_RUNTIME_PROGRESS:-1}"
+fi
+
 echo "== Start built-in runtime =="
-runtime_start_output="$("$cratebay_bin" runtime start)"
+runtime_start_log="$smoke_data_dir/runtime-start.log"
+"$cratebay_bin" runtime start >"$runtime_start_log"
+runtime_start_output="$(cat "$runtime_start_log")"
 printf '%s\n' "$runtime_start_output"
 assert_contains "$runtime_start_output" "DOCKER_HOST:" "runtime start should report DOCKER_HOST"
 
