@@ -578,11 +578,75 @@ fn connect_cratebay_runtime_docker() -> Result<Docker, String> {
         .map_err(|e| format!("Failed to connect to CrateBay Runtime at {}: {}", host, e))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DockerHostTarget {
+    Tcp(String),
+    Unix(String),
+    NamedPipe(String),
+    Unsupported(String),
+}
+
+fn parse_docker_host_target(host: &str) -> DockerHostTarget {
+    let trimmed = host.trim();
+
+    if trimmed.starts_with("tcp://") || trimmed.starts_with("http://") {
+        return DockerHostTarget::Tcp(trimmed.to_string());
+    }
+
+    if let Some(path) = trimmed.strip_prefix("unix://") {
+        return DockerHostTarget::Unix(path.to_string());
+    }
+
+    if let Some(path) = trimmed.strip_prefix("npipe://") {
+        return DockerHostTarget::NamedPipe(path.to_string());
+    }
+
+    if trimmed.starts_with("//./pipe/") || trimmed.starts_with(r"\\.\pipe\") {
+        return DockerHostTarget::NamedPipe(trimmed.to_string());
+    }
+
+    if trimmed.starts_with('/') {
+        return DockerHostTarget::Unix(trimmed.to_string());
+    }
+
+    DockerHostTarget::Unsupported(trimmed.to_string())
+}
+
+fn connect_docker_with_host(host: &str) -> Result<Docker, String> {
+    match parse_docker_host_target(host) {
+        DockerHostTarget::Tcp(endpoint) => {
+            Docker::connect_with_http(&endpoint, 120, bollard::API_DEFAULT_VERSION)
+                .map_err(|e| format!("Failed to connect to Docker at {}: {}", endpoint, e))
+        }
+        DockerHostTarget::Unix(socket) => {
+            Docker::connect_with_socket(&socket, 120, bollard::API_DEFAULT_VERSION)
+                .map_err(|e| format!("Failed to connect to Docker at {}: {}", socket, e))
+        }
+        DockerHostTarget::NamedPipe(pipe) => {
+            #[cfg(windows)]
+            {
+                Docker::connect_with_named_pipe(&pipe, 120, bollard::API_DEFAULT_VERSION)
+                    .map_err(|e| format!("Failed to connect to Docker at {}: {}", pipe, e))
+            }
+
+            #[cfg(not(windows))]
+            {
+                Err(format!(
+                    "Windows named pipe DOCKER_HOST is only supported on Windows: {}",
+                    pipe
+                ))
+            }
+        }
+        DockerHostTarget::Unsupported(value) => {
+            Err(format!("Unsupported DOCKER_HOST value: {}", value))
+        }
+    }
+}
+
 fn connect_docker() -> Result<Docker, String> {
     // Check DOCKER_HOST env first
-    if std::env::var("DOCKER_HOST").is_ok() {
-        return Docker::connect_with_local_defaults()
-            .map_err(|e| format!("Failed to connect via DOCKER_HOST: {}", e));
+    if let Ok(host) = std::env::var("DOCKER_HOST") {
+        return connect_docker_with_host(&host);
     }
 
     #[cfg(unix)]
@@ -3567,6 +3631,46 @@ mod tests {
         let result = truncate_str("hello world", 6);
         assert!(result.len() <= 10); // Unicode ellipsis is multi-byte
         assert!(result.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn parse_docker_host_target_detects_tcp() {
+        assert_eq!(
+            parse_docker_host_target("tcp://127.0.0.1:2475"),
+            DockerHostTarget::Tcp("tcp://127.0.0.1:2475".into())
+        );
+    }
+
+    #[test]
+    fn parse_docker_host_target_detects_unix_socket() {
+        assert_eq!(
+            parse_docker_host_target("unix:///var/run/docker.sock"),
+            DockerHostTarget::Unix("/var/run/docker.sock".into())
+        );
+        assert_eq!(
+            parse_docker_host_target("/var/run/docker.sock"),
+            DockerHostTarget::Unix("/var/run/docker.sock".into())
+        );
+    }
+
+    #[test]
+    fn parse_docker_host_target_detects_named_pipe() {
+        assert_eq!(
+            parse_docker_host_target("npipe:////./pipe/docker_engine"),
+            DockerHostTarget::NamedPipe("//./pipe/docker_engine".into())
+        );
+        assert_eq!(
+            parse_docker_host_target("//./pipe/docker_engine"),
+            DockerHostTarget::NamedPipe("//./pipe/docker_engine".into())
+        );
+    }
+
+    #[test]
+    fn parse_docker_host_target_rejects_unknown_scheme() {
+        assert_eq!(
+            parse_docker_host_target("ssh://docker@example"),
+            DockerHostTarget::Unsupported("ssh://docker@example".into())
+        );
     }
 
     #[test]
