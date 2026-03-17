@@ -643,21 +643,20 @@ async fn wait_for_docker_http_ready(host: &str, timeout: Duration) -> Result<(),
     let docker = Docker::connect_with_http(host, 120, bollard::API_DEFAULT_VERSION)
         .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
     let deadline = tokio::time::Instant::now() + timeout;
-    let mut last_error = None::<String>;
 
     loop {
         match docker.version().await {
             Ok(_) => return Ok(()),
-            Err(error) => last_error = Some(error.to_string()),
-        }
-
-        if tokio::time::Instant::now() >= deadline {
-            return Err(format!(
-                "Docker runtime at {} did not become ready within {} seconds: {}",
-                host,
-                timeout.as_secs(),
-                last_error.unwrap_or_else(|| "Docker runtime is still starting".to_string())
-            ));
+            Err(error) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "Docker runtime at {} did not become ready within {} seconds: {}",
+                        host,
+                        timeout.as_secs(),
+                        error
+                    ));
+                }
+            }
         }
 
         tokio::time::sleep(Duration::from_millis(250)).await;
