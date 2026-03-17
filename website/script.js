@@ -27,7 +27,7 @@
       summary3Label: "Built-in Runtime",
       summary3Title: "Install-and-use",
       summary3Body:
-        "Installers ship ready-to-run runtime assets on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required, and the Windows runtime now starts dockerd through a short-lived WSL bootstrap, retries once with a compatibility-safe profile if dockerd exits early, prefers the host-reachable WSL IP over bridge-only addresses, validates readiness through the Docker API itself, and can emit optional progress logs for WSL diagnostics.",
+        "Installers ship ready-to-run runtime assets on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required, and the Windows runtime now ships an Alpine WSL distro with OpenRC-managed Docker services, retries once with a compatibility-safe direct dockerd profile if that service path exits early, prefers the host-reachable WSL IP over bridge-only addresses, validates readiness through the Docker API itself, and can emit optional progress logs for WSL diagnostics.",
       sectionKicker: "Why It Hits",
       sectionTitle: "Local AI is hot. The workflow is still broken.",
       sectionBody:

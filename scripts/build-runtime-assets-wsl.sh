@@ -70,7 +70,7 @@ download \
 tar -xzf "$tmp_dir/minirootfs.tar.gz" -C "$rootfs_dir"
 
 echo ""
-echo "== Resolve Alpine package dependencies (docker-engine + iproute2) =="
+echo "== Resolve Alpine package dependencies (docker + OpenRC + iproute2) =="
 "$python_cmd" - "$alpine_version" "$arch" >"$tmp_dir/pkglist.txt" <<'PY'
 import io
 import re
@@ -134,9 +134,13 @@ def resolve(token: str):
     return None
 
 roots = [
-    "docker-engine",
-    "containerd-ctr",
+    "docker",
+    "docker-openrc",
+    "containerd-openrc",
+    "openrc",
     "iproute2",
+    "procps-ng",
+    "util-linux",
     "ca-certificates",
 ]
 
@@ -194,9 +198,14 @@ find "$rootfs_dir" -maxdepth 1 \
 echo ""
 echo "== Write WSL runtime configuration =="
 mkdir -p \
+  "$rootfs_dir/etc/conf.d" \
   "$rootfs_dir/etc/docker" \
+  "$rootfs_dir/etc/network" \
   "$rootfs_dir/etc/profile.d" \
+  "$rootfs_dir/etc/runlevels/default" \
   "$rootfs_dir/run" \
+  "$rootfs_dir/run/openrc" \
+  "$rootfs_dir/usr/local/bin" \
   "$rootfs_dir/var" \
   "$rootfs_dir/var/lib/docker" \
   "$rootfs_dir/var/log"
@@ -208,6 +217,13 @@ cat >"$rootfs_dir/etc/docker/daemon.json" <<'JSON'
   }
 }
 JSON
+
+cat >"$rootfs_dir/etc/conf.d/docker" <<'CONF'
+DOCKER_OPTS="--pidfile /var/run/dockerd.pid -H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375"
+DOCKER_LOGFILE="/var/log/dockerd.log"
+DOCKER_OUTFILE="/var/log/dockerd.log"
+DOCKER_ERRFILE="/var/log/dockerd.log"
+CONF
 
 cat >"$rootfs_dir/etc/wsl.conf" <<'CONF'
 [boot]
@@ -222,10 +238,26 @@ mountFsTab=false
 options=metadata,uid=0,gid=0,umask=022,fmask=0111
 CONF
 
+cat >"$rootfs_dir/etc/rc.conf" <<'CONF'
+rc_cgroup_mode="unified"
+unicode="YES"
+CONF
+
+cat >"$rootfs_dir/etc/network/interfaces" <<'CONF'
+auto lo
+iface lo inet loopback
+CONF
+
 cat >"$rootfs_dir/etc/profile.d/cratebay.sh" <<'SH'
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 SH
 chmod 0755 "$rootfs_dir/etc/profile.d/cratebay.sh"
+
+for svc in cgroups containerd docker; do
+  if [[ -e "$rootfs_dir/etc/init.d/$svc" ]]; then
+    ln -sf "../../init.d/$svc" "$rootfs_dir/etc/runlevels/default/$svc"
+  fi
+done
 
 echo ""
 echo "== Pack deterministic WSL rootfs.tar =="

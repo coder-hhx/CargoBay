@@ -1860,15 +1860,52 @@ fn wsl_dockerd_launch_command(port: u16, compatibility_mode: bool) -> String {
         flags.push("--ip-forward=false".to_string());
         flags.push("--ip-masq=false".to_string());
     }
+    let flags = flags.join(" ");
 
     format!(
         "command -v dockerd >/dev/null 2>&1 || {{ echo 'dockerd not found' >&2; exit 1; }}; \
-         command -v nohup >/dev/null 2>&1 || {{ echo 'nohup not found' >&2; exit 1; }}; \
+         if ! command -v setsid >/dev/null 2>&1 && ! command -v nohup >/dev/null 2>&1; then \
+           echo 'setsid or nohup not found' >&2; \
+           exit 1; \
+         fi; \
          ulimit -n 65536 >/dev/null 2>&1 || true; \
-         nohup dockerd {} >> /var/log/dockerd.log 2>&1 </dev/null & \
-         echo started",
-        flags.join(" ")
+         if command -v setsid >/dev/null 2>&1; then \
+           setsid dockerd {flags} >> /var/log/dockerd.log 2>&1 </dev/null & \
+         else \
+           nohup dockerd {flags} >> /var/log/dockerd.log 2>&1 </dev/null & \
+         fi; \
+         echo started"
     )
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_try_start_dockerd_via_openrc(distro: &str, port: u16) -> Result<bool, HypervisorError> {
+    let docker_opts = format!(
+        "--pidfile /var/run/dockerd.pid -H unix:///var/run/docker.sock -H tcp://0.0.0.0:{port}"
+    );
+    let command = format!(
+        "if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/docker ]; then \
+           mkdir -p /run /run/openrc /var/log /etc/conf.d; \
+           printf '%s\\n' \
+             'DOCKER_OPTS=\"{docker_opts}\"' \
+             'DOCKER_LOGFILE=\"/var/log/dockerd.log\"' \
+             'DOCKER_OUTFILE=\"/var/log/dockerd.log\"' \
+             'DOCKER_ERRFILE=\"/var/log/dockerd.log\"' \
+             >/etc/conf.d/docker; \
+           printf '%s\\n' default > /run/openrc/softlevel; \
+           if [ -x /etc/init.d/cgroups ]; then \
+             rc-service cgroups start >> /var/log/openrc.log 2>&1 || true; \
+           fi; \
+           if [ -x /etc/init.d/containerd ]; then \
+             rc-service containerd start >> /var/log/openrc.log 2>&1 || true; \
+           fi; \
+           rc-service docker start >> /var/log/openrc.log 2>&1 || true; \
+           echo started; \
+         fi"
+    );
+
+    let output = wsl_exec_with_timeout(distro, command, std::time::Duration::from_secs(45))?;
+    Ok(output.lines().any(|line| line.trim() == "started"))
 }
 
 #[cfg(target_os = "windows")]
@@ -1884,10 +1921,16 @@ fn wsl_start_dockerd_with_mode(
          fi; \
          rm -f /var/run/dockerd.pid; \
          : > /var/log/dockerd.log; \
+         : > /var/log/openrc.log; \
          echo start";
     let prep_output = wsl_exec(distro, prep_cmd)?;
     if prep_output.lines().any(|line| line.trim() == "running") {
         windows_runtime_progress("Windows runtime: dockerd already running inside WSL");
+        return Ok(());
+    }
+
+    if !compatibility_mode && wsl_try_start_dockerd_via_openrc(distro, port)? {
+        windows_runtime_progress("Windows runtime: requested dockerd via OpenRC service");
         return Ok(());
     }
 
@@ -1971,12 +2014,24 @@ fn wsl_runtime_diagnostics(distro: &str) -> String {
             wsl_docker_http_ping_command(wsl_docker_port()),
         ),
         (
+            "rc-service docker status".to_string(),
+            "if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/docker ]; then rc-service docker status 2>&1 || true; fi".to_string(),
+        ),
+        (
+            "rc-service containerd status".to_string(),
+            "if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/containerd ]; then rc-service containerd status 2>&1 || true; fi".to_string(),
+        ),
+        (
             "dockerd.pid".to_string(),
             "if [ -f /var/run/dockerd.pid ]; then cat /var/run/dockerd.pid; fi".to_string(),
         ),
         (
             "ps | grep dockerd".to_string(),
             "ps | grep '[d]ockerd' 2>/dev/null || true".to_string(),
+        ),
+        (
+            "openrc.log".to_string(),
+            "tail -n 80 /var/log/openrc.log 2>/dev/null || true".to_string(),
         ),
         (
             "dockerd.log".to_string(),
@@ -2527,10 +2582,12 @@ Local:
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn wsl_dockerd_launch_command_uses_nohup_background_start() {
+    fn wsl_dockerd_launch_command_uses_detached_background_start() {
         let command = wsl_dockerd_launch_command(2375, false);
         assert!(command.contains("command -v dockerd"));
-        assert!(command.contains("command -v nohup"));
+        assert!(command.contains("setsid or nohup not found"));
+        assert!(command.contains("if command -v setsid"));
+        assert!(command.contains("setsid dockerd"));
         assert!(command.contains("nohup dockerd"));
         assert!(command.contains("tcp://0.0.0.0:2375"));
         assert!(command.contains("echo started"));

@@ -70,15 +70,15 @@ Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `r
 
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 
-Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `rootfs.tar`，再把它嵌入安装包，因此终端用户不会在首次运行时再触发运行时下载。
+Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `rootfs.tar`，其中也会内置 `containerd` / `docker` 的 OpenRC service 定义，再把它嵌入安装包，因此终端用户不会在首次运行时再触发运行时下载。
 
 本地 Windows `tauri dev` / `tauri build` 现在也会在 repo 仍是 placeholder 资产时自动完成同样的准备流程。
 
 CrateBay 只有在 Docker API 实际可达后，才会把 Windows runtime 标记为 ready；如果上一次失败导入留下了脏的 WSL 安装目录，它也会先自动清理再重新导入内置 distro。
 当 Windows 需要从 `127.0.0.1` 回退到 guest IP 时，CrateBay 现在会优先选择宿主可达的 WSL NAT 地址，并跳过 Docker `172.17.0.1` 这类仅桥接可见的地址。
 如果启动过程中某个 `wsl.exe` 探测卡住，CrateBay 现在会在限定超时后直接报错，而不是让整个 `cratebay runtime start` 一直挂住。
-Windows 现在会通过一个短生命周期的 WSL shell 引导 `dockerd` 后台启动，因此 `cratebay runtime start` 以及基于 shell 的自动化不会再被一个长期存活的宿主侧 `wsl.exe` 进程卡住。
-如果 Windows 上的 `dockerd` 在 Docker API 可达前就提前退出，CrateBay 现在会自动再用一组兼容性更高的 WSL 参数重试一次，并改为在 guest 内直接请求 `/_ping` 判断 readiness，而不是只依赖日志文本。
+Windows 现在会优先让内置 Alpine WSL distro 通过 OpenRC service 脚本启动 Docker，从而尽量走发行版原生的服务生命周期，而不是只依赖一次性的 shell 引导。
+如果 OpenRC 路径下的 Docker 仍然在 API 可达前就提前退出，CrateBay 会再自动用一组兼容性更高的直接 `dockerd` 参数重试一次，并改为在 guest 内直接请求 `/_ping` 判断 readiness，而不是只依赖日志文本。
 如需进一步定位，可设置 `CRATEBAY_RUNTIME_PROGRESS=1`，让 Windows WSL 启动阶段与探测命令边界输出到 stderr。
 
 ## 运行时镜像
