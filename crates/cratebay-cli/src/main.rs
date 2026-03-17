@@ -650,20 +650,20 @@ async fn wait_for_docker_http_ready(host: &str, timeout: Duration) -> Result<(),
     )
     .map_err(|e| format!("Failed to connect to Docker at {}: {}", host, e))?;
     let deadline = tokio::time::Instant::now() + timeout;
-    let mut last_error = "Docker API is still starting".to_string();
+    let mut last_error = None::<String>;
 
     loop {
         match tokio::time::timeout(request_timeout, docker.version()).await {
             Ok(Ok(_)) => return Ok(()),
             Ok(Err(error)) => {
-                last_error = error.to_string();
+                last_error = Some(error.to_string());
             }
             Err(_) => {
-                last_error = format!(
+                last_error = Some(format!(
                     "timed out waiting {} seconds for Docker at {}",
                     request_timeout.as_secs(),
                     host
-                );
+                ));
             }
         }
 
@@ -672,7 +672,7 @@ async fn wait_for_docker_http_ready(host: &str, timeout: Duration) -> Result<(),
                 "Docker runtime at {} did not become ready within {} seconds: {}",
                 host,
                 timeout.as_secs(),
-                last_error
+                last_error.unwrap_or_else(|| "Docker API is still starting".to_string())
             ));
         }
 
