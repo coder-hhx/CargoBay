@@ -43,6 +43,31 @@ function detectTargetArch() {
   throw new Error(`Unsupported runtime asset arch: ${process.arch}`)
 }
 
+function detectMacTargetTriple(arch) {
+  for (const value of [process.env.TAURI_ENV_TARGET_TRIPLE, process.env.CARGO_BUILD_TARGET]) {
+    if (value) {
+      return value
+    }
+  }
+
+  const rustc = spawnSync("rustc", ["-vV"], {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: "utf8",
+  })
+  if (rustc.status === 0) {
+    const hostLine = rustc.stdout
+      .split("\n")
+      .find((line) => line.startsWith("host:"))
+    const host = hostLine?.split(":")[1]?.trim()
+    if (host) {
+      return host
+    }
+  }
+
+  return `${arch}-apple-darwin`
+}
+
 function fileHasPlaceholderMarker(filePath) {
   if (!fs.existsSync(filePath)) {
     return false
@@ -112,6 +137,15 @@ function ensureMacAssets(arch) {
   runRepoScript("build-runtime-assets-alpine.sh", [arch])
 }
 
+function ensureMacExternalBin(arch) {
+  const target = detectMacTargetTriple(arch)
+  const runner = path.join(srcTauriDir, "bin", `cratebay-vz-${target}`)
+  if (readyFile(runner)) {
+    return
+  }
+  runRepoScript("prepare-tauri-external-bins.sh", [target])
+}
+
 function ensureWindowsAssets(arch) {
   const rootfs = path.join(
     srcTauriDir,
@@ -155,6 +189,7 @@ const arch = detectTargetArch()
 switch (process.platform) {
   case "darwin":
     ensureMacAssets(arch)
+    ensureMacExternalBin(arch)
     break
   case "win32":
     ensureWindowsAssets(arch)

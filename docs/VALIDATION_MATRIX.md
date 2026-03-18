@@ -9,6 +9,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 - **Contract / unit** — parameter validation, formatting, command routing, safety policy.
 - **Browser E2E** — full GUI flow in the built frontend with deterministic Tauri bridge mocks.
 - **Desktop smoke** — real Tauri desktop shell launched through `tauri-driver`.
+- **Assistant-operated Tauri MCP smoke** — live automation against the debug desktop app through the Tauri MCP bridge for fast local shell validation.
 - **Real dependency integration** — Docker / VM / provider / MCP runtime state validated against real dependencies or protocol-compatible runtime canaries.
 - **Release gate** — CI and release scripts fail if the required layers regress.
 
@@ -38,6 +39,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 
 - `crates/cratebay-gui/e2e/` covers the major GUI flows end-to-end in a deterministic environment.
 - `crates/cratebay-gui/src-tauri/tests/desktop_smoke.rs` plus `scripts/run-desktop-e2e-linux.sh` cover the real Tauri shell on Linux CI.
+- `scripts/tauri-mcp-app.sh` plus `docs/TAURI_MCP_AUTOMATION.md` establish a local assistant-driven smoke path through the debug app over the Tauri MCP bridge.
 - `scripts/docker-runtime-smoke.sh` validates the real Docker daemon through CrateBay CLI flows: image search, container run/start/stop/remove, env inspection, image pack, and volume lifecycle.
 - `.github/workflows/ci.yml` now also runs that CLI smoke against the bundled Linux runtime after building the packaged runtime image and Linux QEMU helper.
 - `scripts/ai-runtime-smoke.sh` validates AI Hub runtime paths: Ollama-compatible canary, MCP process lifecycle, and Docker-backed sandbox lifecycle.
@@ -136,6 +138,9 @@ npx playwright test
 
 # Linux-only desktop shell smoke
 ./scripts/run-desktop-e2e-linux.sh
+
+# Local debug app for assistant-operated Tauri MCP smoke
+./scripts/tauri-mcp-app.sh start
 
 # Controlled provider canaries
 ./scripts/provider-canary-smoke.sh

@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Toaster } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
-import { APP_VERSION } from "@/lib/appVersion"
 import { Dashboard } from "./pages/Dashboard"
 import { Containers } from "./pages/Containers"
 import { Images } from "./pages/Images"
@@ -427,12 +426,6 @@ function App() {
           <span className="text-[15px] font-bold tracking-tight text-foreground">
             {t("appName")}
           </span>
-          <Badge
-            variant="secondary"
-            className="ml-auto rounded-md px-1.5 py-0 text-[10px] text-muted-foreground"
-          >
-            v{APP_VERSION}
-          </Badge>
         </div>
 
         <ScrollArea className="flex-1 px-2 py-3">
