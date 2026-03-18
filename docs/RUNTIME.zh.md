@@ -65,8 +65,8 @@ Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `r
   - Unix socket：`/var/run/docker.sock`（WSL 内）
   - TCP：`0.0.0.0:2375`（WSL 内，用于宿主访问）
 - Host 侧连接方式：
-  - 优先（支持 localhost 转发时）：`DOCKER_HOST=tcp://127.0.0.1:2375`
-  - 兜底：`DOCKER_HOST=tcp://<wsl-ip>:2375`
+  - 优先（宿主可直接路由到 WSL guest 时）：`DOCKER_HOST=tcp://<wsl-ip>:2375`
+  - 兜底：`DOCKER_HOST=tcp://127.0.0.1:2375`
 
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 

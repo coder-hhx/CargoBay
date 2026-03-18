@@ -65,8 +65,8 @@ On Windows, CrateBay Runtime is implemented as a bundled **WSL2 distro** that ru
   - Unix socket: `/var/run/docker.sock` (inside WSL)
   - TCP: `0.0.0.0:2375` (inside WSL, for host access)
 - Host connection:
-  - Preferred (when localhost forwarding is available): `DOCKER_HOST=tcp://127.0.0.1:2375`
-  - Fallback: `DOCKER_HOST=tcp://<wsl-ip>:2375`
+  - Preferred (when the host can route to the WSL guest directly): `DOCKER_HOST=tcp://<wsl-ip>:2375`
+  - Fallback: `DOCKER_HOST=tcp://127.0.0.1:2375`
 
 Runtime assets are bundled into the desktop app as `runtime-wsl/<arch>/rootfs.tar`; on first use CrateBay imports the distro via `wsl.exe --import`.
 

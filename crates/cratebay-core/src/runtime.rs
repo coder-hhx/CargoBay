@@ -2368,8 +2368,8 @@ pub fn ensure_runtime_wsl_guest_host() -> Result<String, HypervisorError> {
 /// Ensure CrateBay Runtime is running on Windows via a WSL2 distro.
 ///
 /// Returns a docker-compatible `DOCKER_HOST` value that is reachable from the
-/// current process (preferably `tcp://127.0.0.1:2375`, falling back to the
-/// WSL guest IP when that is reachable directly).
+/// current process (prefer the direct host-reachable WSL guest IP, falling
+/// back to `tcp://127.0.0.1:2375` or a local relay only when needed).
 #[cfg(target_os = "windows")]
 pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
     let guest = ensure_runtime_wsl_guest_host()?;
@@ -2377,6 +2377,10 @@ pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
         HypervisorError::CreateFailed(format!("Invalid WSL guest Docker host '{}'", guest))
     })?;
     let localhost = format!("tcp://127.0.0.1:{port}");
+
+    if docker_http_ping_host(&guest).is_ok() {
+        return Ok(guest);
+    }
 
     if docker_http_ping_host(&localhost).is_ok() {
         return Ok(localhost);
@@ -2393,23 +2397,15 @@ pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
 
-        if docker_http_ping_host(&guest).is_ok() {
-            return Ok(guest);
-        }
-
         return Err(HypervisorError::CreateFailed(format!(
-            "CrateBay Runtime (WSL2) is running in the guest but the local Docker relay did not become reachable: {}",
-            relay_error
+            "CrateBay Runtime (WSL2) is running in the guest but neither the direct guest endpoint '{}' nor the local Docker relay became reachable: {}",
+            guest, relay_error
         )));
-    }
-
-    if docker_http_ping_host(&guest).is_ok() {
-        return Ok(guest);
     }
 
     Err(HypervisorError::CreateFailed(format!(
         "CrateBay Runtime (WSL2) is running in the guest but is not reachable from Windows at {} or {}",
-        localhost, guest
+        guest, localhost
     )))
 }
 
