@@ -735,6 +735,24 @@ async fn ensure_windows_runtime_terminal_host() -> Result<String, String> {
         })
 }
 
+#[cfg(windows)]
+fn cratebay_runtime_linux_platform() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "linux/arm64"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "linux/amd64"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "linux/amd64"
+    }
+}
+
 fn connect_docker_with_host(host: &str) -> Result<Docker, String> {
     match parse_docker_host_target(host) {
         DockerHostTarget::Tcp(endpoint) => {
@@ -819,6 +837,10 @@ fn connect_docker() -> Result<Docker, String> {
         }
         if let Ok(host) = cratebay_core::runtime::ensure_runtime_wsl_running() {
             std::env::set_var("DOCKER_HOST", &host);
+            std::env::set_var(
+                "CRATEBAY_DOCKER_PLATFORM",
+                cratebay_runtime_linux_platform(),
+            );
             return Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(|e| format!("Failed to connect to CrateBay Runtime at {}: {}", host, e));
         }
@@ -1838,12 +1860,23 @@ async fn handle_runtime(cmd: RuntimeCommands) {
 
         match cmd {
             RuntimeCommands::Env => {
-                println!("PowerShell: $env:DOCKER_HOST=\"{}\"", host);
-                println!("CMD      : set DOCKER_HOST={}", host);
+                let platform = cratebay_runtime_linux_platform();
+                println!(
+                    "PowerShell: $env:DOCKER_HOST=\"{}\"; $env:CRATEBAY_DOCKER_PLATFORM=\"{}\"",
+                    host, platform
+                );
+                println!(
+                    "CMD      : set DOCKER_HOST={} && set CRATEBAY_DOCKER_PLATFORM={}",
+                    host, platform
+                );
             }
             RuntimeCommands::Status => {
                 println!("Runtime: CrateBay Runtime (WSL2)");
                 println!("DOCKER_HOST: {}", host);
+                println!(
+                    "CRATEBAY_DOCKER_PLATFORM: {}",
+                    cratebay_runtime_linux_platform()
+                );
 
                 match docker_http_engine_version(&host, Duration::from_secs(15)).await {
                     Ok(version) => println!("Docker engine: {}", version),
@@ -1853,6 +1886,10 @@ async fn handle_runtime(cmd: RuntimeCommands) {
             RuntimeCommands::Start => {
                 println!("Runtime: CrateBay Runtime (WSL2)");
                 println!("DOCKER_HOST: {}", host);
+                println!(
+                    "CRATEBAY_DOCKER_PLATFORM: {}",
+                    cratebay_runtime_linux_platform()
+                );
 
                 match docker_http_engine_version(&host, Duration::from_secs(15)).await {
                     Ok(version) => println!("Docker engine: {}", version),
@@ -3239,12 +3276,19 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
 
 async fn docker_pull_image(docker: &Docker, reference: &str) -> Result<(), String> {
     let (from_image, tag) = split_image_reference(reference);
-    let platform = docker
-        .version()
-        .await
+    let platform = if let Some(platform) = std::env::var("CRATEBAY_DOCKER_PLATFORM")
         .ok()
-        .and_then(|version| docker_pull_platform_for_engine(&version))
-        .unwrap_or_default();
+        .filter(|value| !value.trim().is_empty())
+    {
+        platform
+    } else {
+        docker
+            .version()
+            .await
+            .ok()
+            .and_then(|version| docker_pull_platform_for_engine(&version))
+            .unwrap_or_default()
+    };
     let opts = CreateImageOptions {
         from_image,
         tag,
