@@ -84,6 +84,17 @@ runtime_env_output="$("$cratebay_bin" runtime env)"
 printf '%s\n' "$runtime_env_output"
 assert_contains "$runtime_env_output" "DOCKER_HOST" "runtime env should print DOCKER_HOST instructions"
 
+if [[ "${OS:-}" == "Windows_NT" || -n "${MSYSTEM:-}" ]]; then
+  runtime_env_bash="$(printf '%s\n' "$runtime_env_output" | sed -n 's/^Bash     : //p' | head -n 1)"
+  if [[ -z "$runtime_env_bash" ]]; then
+    echo "ERROR: runtime env did not emit Bash instructions on Windows"
+    exit 1
+  fi
+  eval "$runtime_env_bash"
+else
+  eval "$runtime_env_output"
+fi
+
 runtime_status_output="$("$cratebay_bin" runtime status)"
 printf '%s\n' "$runtime_status_output"
 assert_contains "$runtime_status_output" "Docker engine:" "runtime status should report engine status"

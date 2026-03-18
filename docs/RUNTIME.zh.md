@@ -69,7 +69,7 @@ Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `r
   - 兜底：CrateBay 自己管理的 loopback relay，例如 `DOCKER_HOST=tcp://127.0.0.1:<relay-port>`
 
 启动时，CrateBay 会先短暂等待直连的 WSL guest endpoint 就绪，再回退到 CrateBay 自己管理的 loopback relay。这样可以避开 Windows localhost 转发里“探活先成功，但 Linux 镜像拉取仍被当成 Windows 平台请求”的问题。
-在 Windows 上使用 `cratebay runtime env` 时，CrateBay 现在会同时输出 `DOCKER_HOST` 和 `CRATEBAY_DOCKER_PLATFORM`，这样后续的 `cratebay docker ... --pull` 仍会按 Linux 镜像去请求内置的 WSL runtime。
+在 Windows 上使用 `cratebay runtime env` 时，CrateBay 现在会输出 PowerShell、CMD 和 Bash 三种片段，并同时设置 `DOCKER_HOST` 与 `CRATEBAY_DOCKER_PLATFORM`，这样后续的 `cratebay docker ... --pull` 仍会按 Linux 镜像去请求内置的 WSL runtime。
 
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 

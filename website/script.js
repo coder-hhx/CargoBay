@@ -27,7 +27,7 @@
       summary3Label: "Built-in Runtime",
       summary3Title: "Install-and-use",
       summary3Body:
-        "Installers ship ready-to-run runtime assets on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required, and the Windows runtime now ships an Alpine WSL distro with OpenRC-managed Docker services, waits briefly for the direct guest endpoint before falling back to a CrateBay-managed loopback relay, emits the matching Linux image platform hint in runtime env output, falls back once to a detached compatibility-safe wsl.exe dockerd bootstrap if the API still does not come up, prefers the host-reachable WSL IP over bridge-only addresses, validates readiness through the Docker API itself, and can emit optional progress logs for WSL diagnostics.",
+        "Installers ship ready-to-run runtime assets on macOS (lightweight VM), Linux (bundled QEMU/KVM guest), and Windows (WSL2) — no Docker Desktop, Colima, docker-cli, compose, or system QEMU required, and the Windows runtime now ships an Alpine WSL distro with OpenRC-managed Docker services, waits briefly for the direct guest endpoint before falling back to a CrateBay-managed loopback relay, emits shell-specific runtime env output with the matching Linux image platform hint, falls back once to a detached compatibility-safe wsl.exe dockerd bootstrap if the API still does not come up, prefers the host-reachable WSL IP over bridge-only addresses, validates readiness through the Docker API itself, and can emit optional progress logs for WSL diagnostics.",
       sectionKicker: "Why It Hits",
       sectionTitle: "Local AI is hot. The workflow is still broken.",
       sectionBody:
@@ -75,7 +75,7 @@
       summary3Label: "内置运行时",
       summary3Title: "安装即用",
       summary3Body:
-        "安装包会直接携带可运行的 runtime 资产：macOS 内置轻量 VM、Linux 内置打包 QEMU/KVM guest、Windows 内置 WSL2；CrateBay 自身无需再安装 Docker Desktop、Colima、docker-cli、compose 或系统 QEMU，Windows runtime 现在会先走 Alpine WSL 里的 OpenRC Docker 服务，并先短暂等待直连的 guest endpoint，再回退到 CrateBay 自己管理的 loopback relay，同时在 runtime env 输出里带上匹配的 Linux 镜像平台提示；如果 Docker API 在合理时间内仍未就绪，还会自动退回到一个分离的、兼容性更高的 `wsl.exe` + `dockerd` 引导路径，优先选择宿主可达的 WSL IP，而不是桥接地址，并直接通过 Docker API 探测 readiness，同时支持按需输出启动阶段进度用于诊断。",
+        "安装包会直接携带可运行的 runtime 资产：macOS 内置轻量 VM、Linux 内置打包 QEMU/KVM guest、Windows 内置 WSL2；CrateBay 自身无需再安装 Docker Desktop、Colima、docker-cli、compose 或系统 QEMU，Windows runtime 现在会先走 Alpine WSL 里的 OpenRC Docker 服务，并先短暂等待直连的 guest endpoint，再回退到 CrateBay 自己管理的 loopback relay，同时在 runtime env 输出里带上按 shell 区分的 Linux 镜像平台提示；如果 Docker API 在合理时间内仍未就绪，还会自动退回到一个分离的、兼容性更高的 `wsl.exe` + `dockerd` 引导路径，优先选择宿主可达的 WSL IP，而不是桥接地址，并直接通过 Docker API 探测 readiness，同时支持按需输出启动阶段进度用于诊断。",
       sectionKicker: "为什么它有吸引力",
       sectionTitle: "本地 AI 很火，但真正顺手的工作流还不多。",
       sectionBody:

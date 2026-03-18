@@ -1869,6 +1869,10 @@ async fn handle_runtime(cmd: RuntimeCommands) {
                     "CMD      : set DOCKER_HOST={} && set CRATEBAY_DOCKER_PLATFORM={}",
                     host, platform
                 );
+                println!(
+                    "Bash     : export DOCKER_HOST={} CRATEBAY_DOCKER_PLATFORM={}",
+                    host, platform
+                );
             }
             RuntimeCommands::Status => {
                 println!("Runtime: CrateBay Runtime (WSL2)");

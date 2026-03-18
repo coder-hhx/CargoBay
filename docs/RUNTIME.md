@@ -69,7 +69,7 @@ On Windows, CrateBay Runtime is implemented as a bundled **WSL2 distro** that ru
   - Fallback: a CrateBay-managed local relay on loopback, e.g. `DOCKER_HOST=tcp://127.0.0.1:<relay-port>`
 
 At startup, CrateBay waits briefly for the direct WSL guest endpoint to answer before falling back to a CrateBay-managed local relay on loopback. This avoids Windows localhost-forwarding cases where health probes succeed but Linux image pulls still get treated like Windows-platform requests.
-When you use `cratebay runtime env` on Windows, CrateBay now prints both `DOCKER_HOST` and `CRATEBAY_DOCKER_PLATFORM` so subsequent `cratebay docker ... --pull` commands keep requesting Linux images from the bundled WSL runtime.
+When you use `cratebay runtime env` on Windows, CrateBay now prints PowerShell, CMD, and Bash snippets that set both `DOCKER_HOST` and `CRATEBAY_DOCKER_PLATFORM`, so subsequent `cratebay docker ... --pull` commands keep requesting Linux images from the bundled WSL runtime.
 
 Runtime assets are bundled into the desktop app as `runtime-wsl/<arch>/rootfs.tar`; on first use CrateBay imports the distro via `wsl.exe --import`.
 
