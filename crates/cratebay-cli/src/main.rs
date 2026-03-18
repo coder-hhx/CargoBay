@@ -3276,10 +3276,24 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
 
 async fn docker_pull_image(docker: &Docker, reference: &str) -> Result<(), String> {
     let (from_image, tag) = split_image_reference(reference);
-    let platform = if let Some(platform) = std::env::var("CRATEBAY_DOCKER_PLATFORM")
+    let platform_override = std::env::var("CRATEBAY_DOCKER_PLATFORM")
         .ok()
         .filter(|value| !value.trim().is_empty())
-    {
+        .map(|value| value.trim().to_string());
+
+    #[cfg(windows)]
+    if let Some(platform) = platform_override.as_deref() {
+        return cratebay_core::runtime::pull_runtime_wsl_image(reference, platform).map_err(
+            |error| {
+                format!(
+                    "Failed to pull image {} inside CrateBay Runtime (WSL2): {}",
+                    reference, error
+                )
+            },
+        );
+    }
+
+    let platform = if let Some(platform) = platform_override {
         platform
     } else {
         docker

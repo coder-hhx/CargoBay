@@ -1631,6 +1631,23 @@ fn wsl_exec(distro: &str, shell_cmd: &str) -> Result<String, HypervisorError> {
     wsl_exec_with_timeout(distro, shell_cmd, std::time::Duration::from_secs(10))
 }
 
+#[cfg(target_os = "windows")]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(target_os = "windows")]
+pub fn pull_runtime_wsl_image(reference: &str, platform: &str) -> Result<(), HypervisorError> {
+    let distro = runtime_vm_name();
+    let command = format!(
+        "command -v docker >/dev/null 2>&1 || {{ echo 'docker CLI not found in WSL runtime' >&2; exit 1; }}; \
+         docker pull --quiet --platform {} {}",
+        shell_single_quote(platform),
+        shell_single_quote(reference)
+    );
+    wsl_exec_with_timeout(distro, &command, std::time::Duration::from_secs(300)).map(|_| ())
+}
+
 #[cfg(any(test, target_os = "windows"))]
 fn extract_first_non_loopback_ipv4(output: &str) -> Option<String> {
     extract_non_loopback_ipv4s(output).into_iter().next()
