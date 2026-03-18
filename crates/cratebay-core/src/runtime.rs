@@ -1917,7 +1917,7 @@ fn docker_http_ping_host(host: &str) -> Result<(), String> {
     Err(last_error.unwrap_or_else(|| "unknown error".to_string()))
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn wait_for_docker_http_ping_host(host: &str, timeout: std::time::Duration) -> Result<(), String> {
     let deadline = std::time::Instant::now() + timeout;
     let mut last_error = "Docker host is still starting".to_string();
