@@ -68,6 +68,8 @@ Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `r
   - 优先（宿主可直接路由到 WSL guest 时）：`DOCKER_HOST=tcp://<wsl-ip>:2375`
   - 兜底：`DOCKER_HOST=tcp://127.0.0.1:2375`
 
+启动时，CrateBay 会先短暂等待直连的 WSL guest endpoint 就绪，再回退到 `127.0.0.1` 或进程内本地 relay。这样可以避开冷启动阶段里“localhost 探活先成功，但更长的 Docker 流式 API 请求仍然失败”的窗口。
+
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 
 Windows release 构建会在打包阶段基于 Alpine 包本地生成这个 `rootfs.tar`，其中也会内置 `containerd` / `docker` 的 OpenRC service 定义，再把它嵌入安装包，因此终端用户不会在首次运行时再触发运行时下载。

@@ -1917,6 +1917,23 @@ fn docker_http_ping_host(host: &str) -> Result<(), String> {
     Err(last_error.unwrap_or_else(|| "unknown error".to_string()))
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn wait_for_docker_http_ping_host(host: &str, timeout: std::time::Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut last_error = "Docker host is still starting".to_string();
+
+    while std::time::Instant::now() < deadline {
+        match docker_http_ping_host(host) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    Err(last_error)
+}
+
 #[cfg(any(test, target_os = "windows"))]
 fn wsl_dockerd_flags(port: u16, compatibility_mode: bool) -> String {
     let mut flags = vec![
@@ -2378,25 +2395,25 @@ pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
     })?;
     let localhost = format!("tcp://127.0.0.1:{port}");
 
-    if docker_http_ping_host(&guest).is_ok() {
+    if wait_for_docker_http_ping_host(&guest, std::time::Duration::from_secs(5)).is_ok() {
         return Ok(guest);
     }
 
-    if docker_http_ping_host(&localhost).is_ok() {
+    if wait_for_docker_http_ping_host(&localhost, std::time::Duration::from_secs(2)).is_ok() {
         return Ok(localhost);
     }
 
     if let Ok(host) = ensure_process_local_wsl_host_relay(&guest_ip, port) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let mut relay_error = "local Docker relay is still starting".to_string();
-        while std::time::Instant::now() < deadline {
-            match docker_http_ping_host(&host) {
-                Ok(()) => return Ok(host),
-                Err(error) => relay_error = error,
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+        let relay_result =
+            wait_for_docker_http_ping_host(&host, std::time::Duration::from_secs(10));
+        if relay_result.is_ok() {
+            return Ok(host);
         }
 
+        let relay_error = match relay_result {
+            Ok(()) => "local Docker relay is still starting".to_string(),
+            Err(error) => error,
+        };
         return Err(HypervisorError::CreateFailed(format!(
             "CrateBay Runtime (WSL2) is running in the guest but neither the direct guest endpoint '{}' nor the local Docker relay became reachable: {}",
             guest, relay_error

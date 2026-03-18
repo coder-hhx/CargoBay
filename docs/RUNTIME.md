@@ -68,6 +68,8 @@ On Windows, CrateBay Runtime is implemented as a bundled **WSL2 distro** that ru
   - Preferred (when the host can route to the WSL guest directly): `DOCKER_HOST=tcp://<wsl-ip>:2375`
   - Fallback: `DOCKER_HOST=tcp://127.0.0.1:2375`
 
+At startup, CrateBay waits briefly for the direct WSL guest endpoint to answer before falling back to `127.0.0.1` or the process-local relay. This avoids cold-start cases where localhost probes succeed earlier than longer streaming Docker API requests.
+
 Runtime assets are bundled into the desktop app as `runtime-wsl/<arch>/rootfs.tar`; on first use CrateBay imports the distro via `wsl.exe --import`.
 
 Release builds generate that `rootfs.tar` locally from Alpine packages during packaging, including bundled OpenRC service definitions for `containerd` and `docker`, then embed it into the Windows installer so end users do not hit a first-run runtime download.

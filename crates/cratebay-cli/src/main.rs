@@ -2462,7 +2462,7 @@ async fn handle_image(cmd: ImageCommands) -> Result<(), String> {
             let mut stream =
                 docker.import_image_stream(ImportImageOptions::default(), byte_stream, None);
             let mut out = String::new();
-            while let Some(progress) = stream.try_next().await.map_err(|e| e.to_string())? {
+            while let Some(progress) = stream.try_next().await.map_err(format_bollard_error)? {
                 if let Some(error) = progress.error {
                     return Err(error);
                 }
@@ -2507,7 +2507,7 @@ async fn handle_image(cmd: ImageCommands) -> Result<(), String> {
 
             let mut stream = docker.push_image(&repo, Some(PushImageOptions { tag }), creds);
             let mut out = String::new();
-            while let Some(progress) = stream.try_next().await.map_err(|e| e.to_string())? {
+            while let Some(progress) = stream.try_next().await.map_err(format_bollard_error)? {
                 if let Some(status) = progress.status {
                     if let Some(p) = progress.progress {
                         out.push_str(&format!("{} {}\n", status, p));
@@ -3176,7 +3176,7 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
             };
 
             let mut stream = docker.logs(&container, Some(opts));
-            while let Some(chunk) = stream.try_next().await.map_err(|e| e.to_string())? {
+            while let Some(chunk) = stream.try_next().await.map_err(format_bollard_error)? {
                 print!("{}", chunk);
             }
         }
@@ -3214,8 +3214,21 @@ async fn docker_pull_image(docker: &Docker, reference: &str) -> Result<(), Strin
     };
 
     let mut stream = docker.create_image(Some(opts), None, None);
-    while let Some(_progress) = stream.try_next().await.map_err(|e| e.to_string())? {}
+    while let Some(_progress) = stream.try_next().await.map_err(format_bollard_error)? {}
     Ok(())
+}
+
+fn format_bollard_error(error: bollard::errors::Error) -> String {
+    match error {
+        bollard::errors::Error::DockerStreamError { error } => {
+            format!("Docker stream error: {error}")
+        }
+        bollard::errors::Error::DockerResponseServerError {
+            status_code,
+            message,
+        } => format!("Docker responded with status code {status_code}: {message}"),
+        other => other.to_string(),
+    }
 }
 
 fn split_image_reference(reference: &str) -> (String, String) {
