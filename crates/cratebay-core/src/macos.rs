@@ -18,7 +18,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tracing::{info, warn};
 
 /// macOS hypervisor backed by Apple Virtualization.framework.
@@ -52,6 +52,7 @@ struct VmEntry {
 struct RuntimeHttpProxyConfig {
     guest_endpoint: String,
     host_tcp_forward: Option<String>,
+    host_http_connect_proxy: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,17 +68,7 @@ fn runtime_socket_forward_mode() -> RuntimeSocketForwardMode {
     {
         Some(value) if value == "vsock" => RuntimeSocketForwardMode::Vsock,
         Some(value) if value == "tcp" => RuntimeSocketForwardMode::Tcp,
-        _ => {
-            #[cfg(target_arch = "x86_64")]
-            {
-                RuntimeSocketForwardMode::Tcp
-            }
-
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                RuntimeSocketForwardMode::Vsock
-            }
-        }
+        _ => RuntimeSocketForwardMode::Tcp,
     }
 }
 
@@ -305,6 +296,140 @@ fn clear_orphan_runner_marker(vm_id: &str) {
     let _ = std::fs::remove_file(orphan_runner_marker_path(vm_id));
 }
 
+fn codesign_output_has_virtualization_entitlements(output: &str) -> bool {
+    output.contains("com.apple.security.virtualization")
+        && output.contains("com.apple.security.hypervisor")
+}
+
+fn path_is_app_bundle_runner(path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Some(contents_dir) = parent.parent() else {
+        return false;
+    };
+    if parent.file_name().and_then(|value| value.to_str()) != Some("MacOS") {
+        return false;
+    }
+    if contents_dir.file_name().and_then(|value| value.to_str()) != Some("Contents") {
+        return false;
+    }
+    contents_dir
+        .parent()
+        .and_then(|value| value.extension())
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("app"))
+}
+
+fn macos_entitlements_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(root) = std::env::var("CRATEBAY_REPO_ROOT") {
+        candidates.push(PathBuf::from(root));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        candidates.extend(exe.ancestors().map(Path::to_path_buf));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.extend(cwd.ancestors().map(Path::to_path_buf));
+    }
+    candidates.extend(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .map(Path::to_path_buf),
+    );
+
+    for candidate in candidates {
+        let entitlements = candidate.join("scripts").join("macos-entitlements.plist");
+        if entitlements.is_file() {
+            return Some(entitlements);
+        }
+    }
+
+    None
+}
+
+fn runner_has_virtualization_entitlements(path: &Path) -> bool {
+    let output = Command::new("codesign")
+        .args(["-d", "--entitlements", ":-"])
+        .arg(path)
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    codesign_output_has_virtualization_entitlements(&combined)
+}
+
+fn ensure_local_vz_runner_entitlements(path: &Path) -> Result<(), HypervisorError> {
+    if runner_has_virtualization_entitlements(path) {
+        return Ok(());
+    }
+
+    if path_is_app_bundle_runner(path) {
+        return Err(HypervisorError::CreateFailed(format!(
+            "VZ runner is missing required virtualization entitlements: {}. Reinstall or re-sign the app bundle.",
+            path.display()
+        )));
+    }
+
+    let entitlements = macos_entitlements_path().ok_or_else(|| {
+        HypervisorError::CreateFailed(format!(
+            "VZ runner is missing required virtualization entitlements and scripts/macos-entitlements.plist was not found for automatic signing: {}",
+            path.display()
+        ))
+    })?;
+
+    let output = Command::new("codesign")
+        .args([
+            "--force",
+            "--sign",
+            "-",
+            "--options",
+            "runtime",
+            "--entitlements",
+        ])
+        .arg(&entitlements)
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!(
+                "Failed to code-sign VZ runner {}: {}",
+                path.display(),
+                error
+            ))
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(HypervisorError::CreateFailed(format!(
+            "Failed to code-sign VZ runner {} with {}: {}",
+            path.display(),
+            entitlements.display(),
+            detail
+        )));
+    }
+
+    if !runner_has_virtualization_entitlements(path) {
+        return Err(HypervisorError::CreateFailed(format!(
+            "VZ runner still lacks virtualization entitlements after code-signing: {}",
+            path.display()
+        )));
+    }
+
+    warn!(
+        "Applied local virtualization entitlements to VZ runner {}",
+        path.display()
+    );
+    Ok(())
+}
+
 fn wait_for_child_exit(
     child: &mut Child,
     timeout: Duration,
@@ -389,12 +514,14 @@ impl MacOSHypervisor {
                 return Some(RuntimeHttpProxyConfig {
                     guest_endpoint: format!("192.168.64.1:{}", bind_port),
                     host_tcp_forward: Some(format!("0.0.0.0:{}={}:{}", bind_port, host, port)),
+                    host_http_connect_proxy: None,
                 });
             }
 
             Some(RuntimeHttpProxyConfig {
                 guest_endpoint: format!("{}:{}", host, port),
                 host_tcp_forward: None,
+                host_http_connect_proxy: None,
             })
         };
 
@@ -435,7 +562,12 @@ impl MacOSHypervisor {
             }
         }
 
-        None
+        let bind_port = Self::allocate_runtime_host_proxy_port().ok()?;
+        Some(RuntimeHttpProxyConfig {
+            guest_endpoint: format!("192.168.64.1:{}", bind_port),
+            host_tcp_forward: None,
+            host_http_connect_proxy: Some(format!("0.0.0.0:{}", bind_port)),
+        })
     }
 
     fn push_runtime_dns_server(servers: &mut Vec<String>, seen: &mut HashSet<String>, value: &str) {
@@ -674,6 +806,7 @@ impl MacOSHypervisor {
         }
 
         let mut sibling_candidate = None;
+        let mut repo_external_candidate = None;
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 let candidate = dir.join("cratebay-vz");
@@ -692,6 +825,19 @@ impl MacOSHypervisor {
                 }
 
                 sibling_candidate = Some(candidate);
+            }
+            let host_target = format!("{}-apple-darwin", std::env::consts::ARCH);
+            for ancestor in exe.ancestors() {
+                let candidate = ancestor
+                    .join("crates")
+                    .join("cratebay-gui")
+                    .join("src-tauri")
+                    .join("bin")
+                    .join(format!("cratebay-vz-{}", host_target));
+                if candidate.is_file() {
+                    repo_external_candidate = Some(candidate);
+                    break;
+                }
             }
         }
 
@@ -721,6 +867,12 @@ impl MacOSHypervisor {
         }
 
         if let Some(candidate) = sibling_candidate {
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+
+        if let Some(candidate) = repo_external_candidate {
             if candidate.is_file() {
                 return candidate;
             }
@@ -786,6 +938,16 @@ impl MacOSHypervisor {
                 cmdline.push_str(proxy);
             }
         }
+        if vm.name == crate::runtime::runtime_vm_name()
+            && !cmdline
+                .split_whitespace()
+                .any(|arg| arg.starts_with("cratebay_host_epoch="))
+        {
+            if let Ok(now) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                cmdline.push_str(" cratebay_host_epoch=");
+                cmdline.push_str(&now.as_secs().to_string());
+            }
+        }
 
         let disk = vm_disk_path(&vm.id);
         if !disk.exists() {
@@ -806,7 +968,10 @@ impl MacOSHypervisor {
             .open(&console_log)?;
         let console_err = console_file.try_clone()?;
 
-        let mut cmd = Command::new(Self::vz_runner_path());
+        let runner_path = Self::vz_runner_path();
+        ensure_local_vz_runner_entitlements(&runner_path)?;
+
+        let mut cmd = Command::new(&runner_path);
         cmd.arg("--kernel")
             .arg(kernel)
             .arg("--disk")
@@ -848,6 +1013,12 @@ impl MacOSHypervisor {
                 .and_then(|config| config.host_tcp_forward.as_deref())
             {
                 cmd.arg("--host-tcp-forward").arg(forward);
+            }
+            if let Some(proxy) = runtime_http_proxy
+                .as_ref()
+                .and_then(|config| config.host_http_connect_proxy.as_deref())
+            {
+                cmd.arg("--http-connect-proxy").arg(proxy);
             }
         }
 
@@ -1513,7 +1684,11 @@ impl Hypervisor for MacOSHypervisor {
 
 #[cfg(test)]
 mod tests {
-    use super::{runner_processes_from_ps_output, runner_vm_id_from_command};
+    use super::{
+        codesign_output_has_virtualization_entitlements, path_is_app_bundle_runner,
+        runner_processes_from_ps_output, runner_vm_id_from_command,
+    };
+    use std::path::Path;
 
     #[test]
     fn runner_vm_id_from_command_extracts_vm_id() {
@@ -1542,5 +1717,33 @@ mod tests {
         assert_eq!(grouped.get("vz-1"), Some(&vec![123, 456]));
         assert_eq!(grouped.get("vz-2"), Some(&vec![789]));
         assert!(!grouped.contains_key("vz-3"));
+    }
+
+    #[test]
+    fn codesign_output_detects_virtualization_entitlements() {
+        let output = r#"
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.hypervisor</key>
+  <true/>
+  <key>com.apple.security.virtualization</key>
+  <true/>
+</dict>
+</plist>
+"#;
+        assert!(codesign_output_has_virtualization_entitlements(output));
+        assert!(!codesign_output_has_virtualization_entitlements(
+            "Executable=/tmp/cratebay-vz"
+        ));
+    }
+
+    #[test]
+    fn path_is_app_bundle_runner_detects_bundle_layout() {
+        assert!(path_is_app_bundle_runner(Path::new(
+            "/Applications/CrateBay.app/Contents/MacOS/cratebay-vz"
+        )));
+        assert!(!path_is_app_bundle_runner(Path::new(
+            "/tmp/CrateBay/target/debug/cratebay-vz"
+        )));
     }
 }

@@ -12,6 +12,11 @@ alpine_version="${CRATEBAY_ALPINE_VERSION:-v3.19}"
 # Alpine netboot kernel+initramfs flavor: `virt` is optimized for VMs and
 # provides a working virtio console (console=hvc0) under Virtualization.framework.
 netboot_flavor="${CRATEBAY_ALPINE_NETBOOT_FLAVOR:-virt}" # virt|lts
+ubuntu_release="${CRATEBAY_UBUNTU_RELEASE:-24.04}"
+ubuntu_series="${CRATEBAY_UBUNTU_SERIES:-noble}"
+ubuntu_suite="${CRATEBAY_UBUNTU_SUITE:-noble-updates}"
+ubuntu_ports_base="${CRATEBAY_UBUNTU_PORTS_BASE:-https://ports.ubuntu.com/ubuntu-ports}"
+ubuntu_cloud_base="${CRATEBAY_UBUNTU_CLOUD_BASE:-https://cloud-images.ubuntu.com/releases}"
 
 case "$arch" in
   aarch64|x86_64) ;;
@@ -65,10 +70,26 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v unsquashfs >/dev/null 2>&1; then
+if [[ "$arch" != "aarch64" ]] && ! command -v unsquashfs >/dev/null 2>&1; then
   echo "ERROR: unsquashfs (squashfs-tools) is required." >&2
   echo "  Install: brew install squashfs" >&2
   exit 1
+fi
+
+if [[ "$arch" == "aarch64" ]]; then
+  if ! command -v ar >/dev/null 2>&1; then
+    echo "ERROR: ar is required for Ubuntu kernel module extraction." >&2
+    exit 1
+  fi
+  if ! command -v zstd >/dev/null 2>&1; then
+    echo "ERROR: zstd is required for Ubuntu kernel module extraction." >&2
+    echo "  Install: brew install zstd" >&2
+    exit 1
+  fi
+  if ! command -v strings >/dev/null 2>&1; then
+    echo "ERROR: strings is required for Ubuntu kernel metadata extraction." >&2
+    exit 1
+  fi
 fi
 
 tmp_dir="$(mktemp -d)"
@@ -104,11 +125,17 @@ cp "$guest_agent_bin" "$tmp_dir/cratebay-guest-agent"
 chmod 0755 "$tmp_dir/cratebay-guest-agent"
 
 echo ""
-echo "== Download Alpine netboot kernel+initramfs (${alpine_version}, ${arch}, ${netboot_flavor}) =="
+echo "== Download runtime kernel+initramfs (${arch}) =="
 release_base="https://dl-cdn.alpinelinux.org/alpine/${alpine_version}/releases/${arch}/netboot"
-curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/vmlinuz" "${release_base}/vmlinuz-${netboot_flavor}"
 curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/initramfs.gz" "${release_base}/initramfs-${netboot_flavor}"
-curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/modloop" "${release_base}/modloop-${netboot_flavor}"
+if [[ "$arch" == "aarch64" ]]; then
+  ubuntu_kernel_url="${ubuntu_cloud_base}/${ubuntu_release}/release/unpacked/ubuntu-${ubuntu_release}-server-cloudimg-arm64-vmlinuz-generic"
+  curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/ubuntu-vmlinuz.gz" "$ubuntu_kernel_url"
+  gzip -dc "$tmp_dir/ubuntu-vmlinuz.gz" >"$tmp_dir/vmlinuz"
+else
+  curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/vmlinuz" "${release_base}/vmlinuz-${netboot_flavor}"
+  curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/modloop" "${release_base}/modloop-${netboot_flavor}"
+fi
 
 echo ""
 echo "== Unpack initramfs =="
@@ -116,19 +143,237 @@ mkdir -p "$tmp_dir/initrd-root"
 gzip -dc "$tmp_dir/initramfs.gz" | (cd "$tmp_dir/initrd-root" && cpio -idm --quiet)
 
 echo ""
-echo "== Extract kernel modules from modloop (squashfs) =="
-rm -rf "$tmp_dir/modloop-root"
-unsquashfs -d "$tmp_dir/modloop-root" "$tmp_dir/modloop" >/dev/null
+if [[ "$arch" == "aarch64" ]]; then
+  echo "== Install Ubuntu aarch64 kernel modules for Apple Virtualization.framework =="
+  python3 - "$tmp_dir" "$tmp_dir/initrd-root" "$ubuntu_ports_base" "$ubuntu_series" "$ubuntu_suite" "$tmp_dir/vmlinuz" <<'PY'
+import gzip
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
 
-mod_ver="$(ls "$tmp_dir/modloop-root/modules" 2>/dev/null | head -n 1 || true)"
-if [[ -z "$mod_ver" ]]; then
-  echo "ERROR: modloop did not contain modules/ directory." >&2
-  exit 1
+tmp_dir = pathlib.Path(sys.argv[1])
+initrd_root = pathlib.Path(sys.argv[2])
+ports_base = sys.argv[3].rstrip("/")
+series = sys.argv[4]
+suite = sys.argv[5]
+kernel_path = pathlib.Path(sys.argv[6])
+
+kernel_data = kernel_path.read_bytes()
+match = re.search(rb"Linux version ([^ ]+)", kernel_data)
+if not match:
+    raise SystemExit("ERROR: failed to extract Ubuntu kernel release from downloaded Image")
+kernel_release = match.group(1).decode("utf-8")
+
+packages_needed = [
+    f"linux-modules-{kernel_release}",
+    f"linux-modules-extra-{kernel_release}",
+]
+candidate_suites = [suite, f"{series}-security", series]
+
+pkg_meta = {}
+for candidate in candidate_suites:
+    url = f"{ports_base}/dists/{candidate}/main/binary-arm64/Packages.gz"
+    try:
+        with urllib.request.urlopen(url) as resp:
+            raw = resp.read()
+    except Exception:
+        continue
+
+    text = gzip.decompress(raw).decode("utf-8", "replace")
+    for block in text.strip().split("\n\n"):
+        lines = {}
+        for line in block.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            lines[key.strip()] = value.strip()
+        name = lines.get("Package")
+        filename = lines.get("Filename")
+        if name in packages_needed and filename:
+            pkg_meta[name] = filename
+    if all(name in pkg_meta for name in packages_needed):
+        break
+
+missing = [name for name in packages_needed if name not in pkg_meta]
+if missing:
+    raise SystemExit(
+        "ERROR: failed to locate Ubuntu kernel module packages for "
+        f"{kernel_release}: {', '.join(missing)}"
+    )
+
+download_dir = tmp_dir / "ubuntu-kmods"
+download_dir.mkdir(parents=True, exist_ok=True)
+
+extract_roots = []
+for package_name in packages_needed:
+    deb_path = download_dir / f"{package_name}.deb"
+    urllib.request.urlretrieve(f"{ports_base}/{pkg_meta[package_name]}", deb_path)
+    extract_dir = download_dir / package_name
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ar", "x", str(deb_path)], cwd=extract_dir, check=True)
+
+    data_tar = None
+    for candidate in extract_dir.iterdir():
+        if candidate.name.startswith("data.tar"):
+            data_tar = candidate
+            break
+    if data_tar is None:
+        raise SystemExit(f"ERROR: {deb_path.name} did not contain a data.tar payload")
+
+    subprocess.run(["tar", "-xf", str(data_tar)], cwd=extract_dir, check=True)
+    modules_root = extract_dir / "lib" / "modules" / kernel_release
+    if modules_root.is_dir():
+        extract_roots.append(modules_root)
+
+if not extract_roots:
+    raise SystemExit(f"ERROR: Ubuntu module packages did not contain lib/modules/{kernel_release}")
+
+module_paths = {}
+for root in extract_roots:
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix not in {".zst", ".ko"}:
+            continue
+        name = path.name
+        if name.endswith(".ko.zst"):
+            module_name = name[:-7]
+        elif name.endswith(".ko"):
+            module_name = name[:-3]
+        else:
+            continue
+        module_paths.setdefault(module_name, path)
+
+required_modules = [
+    "libcrc32c",
+    "nfnetlink",
+    "x_tables",
+    "llc",
+    "stp",
+    "bridge",
+    "br_netfilter",
+    "nf_defrag_ipv4",
+    "nf_defrag_ipv6",
+    "nf_conntrack",
+    "nf_nat",
+    "nf_tables",
+    "nft_compat",
+    "nft_chain_nat",
+    "nft_ct",
+    "ip_tables",
+    "iptable_nat",
+    "iptable_filter",
+    "iptable_mangle",
+    "iptable_raw",
+    "xt_conntrack",
+    "xt_addrtype",
+    "xt_MASQUERADE",
+    "xt_nat",
+    "xt_tcpudp",
+    "xt_comment",
+    "overlay",
+    "vsock",
+    "vmw_vsock_virtio_transport_common",
+    "vmw_vsock_virtio_transport",
+    "veth",
+]
+
+missing_required = [name for name in required_modules if name not in module_paths]
+if missing_required:
+    raise SystemExit(
+        "ERROR: missing required Ubuntu modules for CrateBay Runtime: "
+        + ", ".join(missing_required)
+    )
+
+module_bytes_cache = {}
+depends_cache = {}
+
+def read_module_bytes(path: pathlib.Path) -> bytes:
+    key = str(path)
+    cached = module_bytes_cache.get(key)
+    if cached is not None:
+        return cached
+
+    if path.name.endswith(".zst"):
+        payload = subprocess.check_output(["zstd", "-dc", str(path)])
+    else:
+        payload = path.read_bytes()
+    module_bytes_cache[key] = payload
+    return payload
+
+def module_dependencies(name: str):
+    cached = depends_cache.get(name)
+    if cached is not None:
+        return cached
+
+    payload = read_module_bytes(module_paths[name])
+    deps = []
+    for match in re.finditer(rb"depends=([^\x00\n]*)", payload):
+        raw = match.group(1).decode("utf-8", "replace").strip()
+        if not raw:
+            continue
+        deps.extend(part.strip() for part in raw.split(",") if part.strip())
+        break
+    depends_cache[name] = deps
+    return deps
+
+ordered = []
+visited = set()
+
+def visit(name: str):
+    if name in visited:
+        return
+    visited.add(name)
+    for dep in module_dependencies(name):
+        if dep in module_paths:
+            visit(dep)
+    ordered.append(name)
+
+for module_name in required_modules:
+    visit(module_name)
+
+modules_dest_root = initrd_root / "lib" / "modules" / kernel_release
+if modules_dest_root.parent.exists():
+    shutil.rmtree(modules_dest_root.parent)
+modules_dest_root.mkdir(parents=True, exist_ok=True)
+
+load_list = []
+for module_name in ordered:
+    src = module_paths[module_name]
+    src_root = next(root for root in extract_roots if src.is_relative_to(root))
+    relative = src.relative_to(src_root)
+    if relative.suffix == ".zst":
+        relative = relative.with_suffix("")
+    dest = modules_dest_root / relative
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(read_module_bytes(src))
+    os.chmod(dest, 0o644)
+    load_list.append(str(pathlib.Path("/lib/modules") / kernel_release / relative))
+
+kmods_list = initrd_root / "etc" / "cratebay-kmods.list"
+kmods_list.parent.mkdir(parents=True, exist_ok=True)
+kmods_list.write_text("\n".join(load_list) + "\n", encoding="utf-8")
+PY
+else
+  echo "== Extract kernel modules from modloop (squashfs) =="
+  rm -rf "$tmp_dir/modloop-root"
+  unsquashfs -d "$tmp_dir/modloop-root" "$tmp_dir/modloop" >/dev/null
+
+  mod_ver="$(ls "$tmp_dir/modloop-root/modules" 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$mod_ver" ]]; then
+    echo "ERROR: modloop did not contain modules/ directory." >&2
+    exit 1
+  fi
+
+  rm -rf "$tmp_dir/initrd-root/lib/modules/$mod_ver"
+  mkdir -p "$tmp_dir/initrd-root/lib/modules"
+  cp -a "$tmp_dir/modloop-root/modules/$mod_ver" "$tmp_dir/initrd-root/lib/modules/"
 fi
-
-rm -rf "$tmp_dir/initrd-root/lib/modules/$mod_ver"
-mkdir -p "$tmp_dir/initrd-root/lib/modules"
-cp -a "$tmp_dir/modloop-root/modules/$mod_ver" "$tmp_dir/initrd-root/lib/modules/"
 
 echo ""
 echo "== Resolve Alpine package dependencies (docker-engine + e2fsprogs) =="
@@ -381,16 +626,35 @@ mount -t tmpfs tmpfs /run || true
 mkdir -p /run/lock
 ln -sf /run /var/run
 
+host_epoch="$(cmdline_value cratebay_host_epoch || true)"
+if [ -n "$host_epoch" ]; then
+  if date -u -s "@${host_epoch}" >/dev/null 2>&1 \
+    || date -u -D '%s' -s "${host_epoch}" >/dev/null 2>&1 \
+    || /bin/busybox date -u -s "@${host_epoch}" >/dev/null 2>&1; then
+    log "clock_sync=ok epoch=${host_epoch}"
+  else
+    log "WARN: failed to set clock from cratebay_host_epoch=${host_epoch}"
+  fi
+fi
+
 # Try loading common virtio/kernel modules (ok if built-in).
 #
 # NOTE: Docker networking requires bridge + veth + netfilter/NAT modules on
 # some kernels. We load a broad set best-effort to reduce "dockerd starts but
 # exits early" scenarios on minimal netboot kernels.
+if [ -f /etc/cratebay-kmods.list ]; then
+  while IFS= read -r module_path; do
+    [ -n "$module_path" ] || continue
+    [ -f "$module_path" ] || continue
+    insmod "$module_path" >/dev/null 2>&1 || true
+  done </etc/cratebay-kmods.list
+fi
 for m in \
   virtio_pci virtio_blk virtio_net virtio_vsock vmw_vsock_virtio_transport vsock \
   overlay bridge veth br_netfilter \
-  nf_tables nf_tables_inet nf_tables_ipv4 nf_tables_ipv6 nf_tables_bridge nft_chain_nat nft_ct nft_counter \
-  nf_conntrack nf_nat ip_tables iptable_nat iptable_filter x_tables xt_conntrack \
+  nf_tables nf_tables_inet nf_tables_ipv4 nf_tables_ipv6 nf_tables_bridge nft_compat nft_chain_nat nft_ct nft_counter \
+  nf_conntrack nf_nat ip_tables iptable_nat iptable_filter iptable_mangle iptable_raw x_tables \
+  xt_conntrack xt_addrtype xt_MASQUERADE xt_nat xt_tcpudp xt_comment \
   tun; do
   modprobe "$m" >/dev/null 2>&1 || true
 done
@@ -493,6 +757,8 @@ sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
 sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
 
 runtime_http_proxy="$(cmdline_value cratebay_http_proxy || true)"
+docker_proxy_port="${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}"
+docker_api_port="${CRATEBAY_GUEST_DOCKER_API_PORT:-2375}"
 if [ -n "$runtime_http_proxy" ]; then
   export HTTP_PROXY="http://${runtime_http_proxy}"
   export HTTPS_PROXY="http://${runtime_http_proxy}"
@@ -523,6 +789,8 @@ fi
 set -- dockerd \
   --config-file="$daemon_config" \
   --host=unix:///var/run/docker.sock \
+  --host="tcp://127.0.0.1:${docker_api_port}" \
+  --tls=false \
   --data-root=/var/lib/docker
 "$@" &
 dockerd_pid="$!"
@@ -548,17 +816,25 @@ if command -v ctr >/dev/null 2>&1; then
 fi
 
 if [ -x /usr/local/bin/cratebay-guest-agent ]; then
+  guest_gateway_ip="$(ip route | awk '/default/ {print $3; exit}')"
   if [ -e /proc/net/vsock ]; then
     log "starting cratebay-guest-agent (vsock -> /var/run/docker.sock)"
-    /usr/local/bin/cratebay-guest-agent --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
+    /usr/local/bin/cratebay-guest-agent --port "${docker_proxy_port}" --docker-sock /var/run/docker.sock &
     agent_pid="$!"
   else
     agent_pid=""
     log "skipping cratebay-guest-agent (vsock): no vsock device"
   fi
-  log "starting cratebay-guest-agent (tcp -> /var/run/docker.sock)"
-  /usr/local/bin/cratebay-guest-agent --tcp --port "${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}" --docker-sock /var/run/docker.sock &
-  agent_tcp_pid="$!"
+  if [ -n "$guest_gateway_ip" ]; then
+    log "starting cratebay-guest-agent (tcp connect ${guest_gateway_ip}:${docker_proxy_port} -> 127.0.0.1:${docker_api_port})"
+    /usr/local/bin/cratebay-guest-agent --connect "${guest_gateway_ip}:${docker_proxy_port}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
+    agent_tcp_pid="$!"
+  else
+    log "WARN: failed to detect guest gateway ip; falling back to guest TCP listen mode"
+    log "starting cratebay-guest-agent (tcp listen ${docker_proxy_port} -> 127.0.0.1:${docker_api_port})"
+    /usr/local/bin/cratebay-guest-agent --tcp --port "${docker_proxy_port}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
+    agent_tcp_pid="$!"
+  fi
   sleep 0.2
   if [ -n "$agent_pid" ] && ! kill -0 "$agent_pid" >/dev/null 2>&1; then
     log "WARN: cratebay-guest-agent (vsock) exited early"

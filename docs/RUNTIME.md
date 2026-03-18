@@ -6,13 +6,13 @@ CrateBay Runtime is CrateBay’s built-in Docker-compatible engine path. On macO
 
 - Host VM runner: `cratebay-vz` (spawned by `cratebay-core`)
 - Host Docker socket: `~/.cratebay/run/docker.sock`
-- Transport: **TCP forwarding over the guest NAT IP**
-  - Host side creates the Unix socket and, for each connection, opens a TCP connection to the guest (NAT IP) on port `6237`.
-  - Guest side runs `cratebay-guest-agent`, listening on TCP `0.0.0.0:6237`, proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
+- Transport: **guest-initiated TCP tunnel**
+  - Host side creates the Unix socket and listens on port `6237` for a guest-initiated control/data channel.
+  - Guest side runs `cratebay-guest-agent`, connecting back to the host gateway on TCP `6237`, then proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
+  - The host-side socket bridge normalizes plain Docker HTTP requests to `Connection: close` and an explicit `Content-Length: 0` when needed so standard Docker clients do not leave the single reverse tunnel wedged on keep-alive reads.
 - Default transport selection:
-  - Intel macOS (`x86_64`) defaults to TCP forwarding because Apple Virtualization's virtio-vsock path is not stable enough there.
-  - Apple Silicon keeps the lower-overhead vsock path by default.
-  - `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` can override the default for debugging.
+  - CrateBay now defaults to a guest-initiated TCP tunnel on both Intel and Apple Silicon because Apple Virtualization's direct host->guest TCP and virtio-vsock paths are both less predictable in real runtime use.
+  - `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` can override the default for debugging or targeted regression checks.
 
 ### macOS signing note (required on newer macOS)
 
@@ -28,7 +28,9 @@ Local development builds can use ad-hoc signing (what `scripts/install-local-mac
 The runtime OS image must include and start on boot:
 
 - Docker Engine (`dockerd`) listening on **Unix socket** `/var/run/docker.sock`
-- `cratebay-guest-agent` listening on **TCP** `0.0.0.0:6237`
+- `cratebay-guest-agent` establishing a **TCP** connection back to the host gateway on `6237`
+- `cratebay-guest-agent` available on vsock as the fallback bridge path when the guest exposes AF_VSOCK
+- Early boot clock sync from the host via `cratebay_host_epoch`, so TLS-based image pulls do not fail on a cold boot due to an epoch-skewed guest clock
 
 CrateBay exposes the host-side socket via `docker`-compatible clients by setting:
 

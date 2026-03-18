@@ -238,7 +238,7 @@ Docker volume management:
 
 ### Virtual Machines (虚拟机)
 
-Experimental (post-v1 track, not release-blocking):
+Experimental (future track, not part of the current release gate):
 
 - **Create / start / stop / delete / list** with full lifecycle management
 - **CPU / Memory / Disk** parameters on creation
@@ -273,7 +273,7 @@ Settings are split into two tabs:
 
 Preferences are saved in `localStorage` (GUI) and AI settings are persisted to `ai-settings.json`.
 
-v1.0 AI surface:
+Current AI surface (v0.8.0 pre-release):
 
 - **AI Hub** page with tabs: `Overview / Models / Sandboxes / MCP / Assistant`
 - **Models** tab includes Ollama runtime status, local model list, pull, delete, and storage visibility
@@ -297,7 +297,7 @@ cratebay status
 
 Output:
 ```
-CrateBay v1.0.0
+CrateBay v0.8.0
 Platform: macOS aarch64 (Virtualization.framework available)
 Rosetta x86_64: available
 Docker: connected (~/.colima/default/docker.sock)

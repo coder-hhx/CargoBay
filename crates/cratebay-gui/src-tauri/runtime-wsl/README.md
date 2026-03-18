@@ -18,4 +18,4 @@ runtime-wsl/
 Notes:
 
 - Release builds should include **only the matching host arch** to keep the app smaller.
-- In the repo, these start as placeholders. Local `tauri dev` / `tauri build` and release packaging now generate the real `rootfs.tar` locally from Alpine packages, including bundled OpenRC service files for `containerd` and `docker`; at runtime CrateBay waits briefly for the direct guest endpoint before falling back to a CrateBay-managed local relay on loopback, and can still fall back to a detached direct `dockerd` bootstrap if the OpenRC path does not reach Docker API health.
+- The committed `rootfs.tar` should be a real Alpine-based WSL runtime image. `scripts/build-runtime-assets-wsl.sh` can regenerate it locally from Alpine packages, including bundled OpenRC service files for `containerd` and `docker`; at runtime CrateBay waits briefly for the direct guest endpoint before falling back to a CrateBay-managed local relay on loopback, and can still fall back to a detached direct `dockerd` bootstrap if the OpenRC path does not reach Docker API health.

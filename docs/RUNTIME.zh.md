@@ -6,13 +6,13 @@ CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS
 
 - Host VM runner：`cratebay-vz`（由 `cratebay-core` 拉起）
 - Host Docker socket：`~/.cratebay/run/docker.sock`
-- 传输：**通过 guest NAT IP 的 TCP 转发**
-  - Host 侧创建 Unix socket；每次有连接时，Host 会连接到 guest（NAT IP）的 TCP `6237` 并做转发。
-  - Guest 侧运行 `cratebay-guest-agent`，监听 TCP `0.0.0.0:6237`，把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
+- 传输：**guest 主动回连 host 的 TCP 通道**
+  - Host 侧创建 Unix socket，并在 `6237` 端口等待 guest 主动建立控制/数据通道。
+  - Guest 侧运行 `cratebay-guest-agent`，主动回连 host gateway 的 TCP `6237`，再把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
+  - Host 侧 socket bridge 会在安全前提下把普通 Docker HTTP 请求规范化成 `Connection: close` + 显式 `Content-Length: 0`，避免标准 Docker 客户端把这条单反向通道卡死在 keep-alive 读取上。
 - 默认传输选择：
-  - Intel macOS（`x86_64`）默认走 TCP 转发，因为 Apple Virtualization 的 virtio-vsock 路径在该平台上稳定性不足。
-  - Apple Silicon 默认继续走开销更低的 vsock。
-  - 如需调试，可通过 `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` 覆盖默认值。
+  - Intel 与 Apple Silicon 现在都默认走 guest 主动回连的 TCP 通道，因为 Apple Virtualization 里的 direct host→guest TCP 与 virtio-vsock 路径在真实运行时场景下都不够稳定。
+  - 如需调试或做定向回归验证，可通过 `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` 覆盖默认值。
 
 ### macOS 签名说明（较新 macOS 版本必需）
 
@@ -28,7 +28,9 @@ CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS
 运行时 OS 镜像需要包含并在开机时启动：
 
 - Docker Engine（`dockerd`），通过 **Unix socket** `/var/run/docker.sock` 对外提供服务
-- `cratebay-guest-agent`，监听 **TCP** `0.0.0.0:6237`
+- `cratebay-guest-agent`，主动回连 host gateway 的 **TCP** `6237`
+- `cratebay-guest-agent`，在 guest 暴露 AF_VSOCK 时也可作为兜底的 vsock bridge 路径
+- 通过 `cratebay_host_epoch` 在早期启动阶段同步 host 时间，避免冷启动后 guest 时钟仍停在 Unix epoch 而导致 TLS 拉取镜像失败
 
 要让 `docker` 兼容客户端连接到 CrateBay Runtime，可设置：
 

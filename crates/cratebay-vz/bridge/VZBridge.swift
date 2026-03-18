@@ -103,6 +103,37 @@ private func selectedBridgedInterface() -> VZBridgedNetworkInterface? {
     return available.first
 }
 
+private func describeNSError(_ error: Error) -> String {
+    let nsError = error as NSError
+    var parts: [String] = [
+        nsError.localizedDescription,
+        "[\(nsError.domain) code \(nsError.code)]",
+    ]
+
+    if let reason = nsError.userInfo[NSLocalizedFailureReasonErrorKey] as? String,
+       !reason.isEmpty {
+        parts.append("reason=\(reason)")
+    }
+    if let recovery = nsError.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String,
+       !recovery.isEmpty {
+        parts.append("recovery=\(recovery)")
+    }
+
+    let extra = nsError.userInfo
+        .filter { key, _ in
+            key != NSLocalizedDescriptionKey &&
+            key != NSLocalizedFailureReasonErrorKey &&
+            key != NSLocalizedRecoverySuggestionErrorKey
+        }
+        .map { key, value in "\(key)=\(value)" }
+        .sorted()
+    if !extra.isEmpty {
+        parts.append("userInfo={\(extra.joined(separator: ", "))}")
+    }
+
+    return parts.joined(separator: " ")
+}
+
 // MARK: - C API implementation
 
 @_cdecl("vz_free_string")
@@ -196,6 +227,7 @@ public func vz_create_and_start_vm(
 
     // --- Build VZ configuration ---
     let vzConfig = VZVirtualMachineConfiguration()
+    vzConfig.platform = VZGenericPlatformConfiguration()
 
     // Boot loader
     let kernelURL = URL(fileURLWithPath: kernelPath)
@@ -239,12 +271,6 @@ public func vz_create_and_start_vm(
         vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     }
 
-    // --- Memory balloon (allows guest to report unused memory) ---
-    vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
-
-    // --- Entropy ---
-    vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
-
     // --- Serial console (file or stdout) ---
     let serialPort = VZVirtioConsoleDeviceSerialPortConfiguration()
 
@@ -252,6 +278,7 @@ public func vz_create_and_start_vm(
     if let consoleCStr = cfg.console_log_path {
         consoleLogPath = String(cString: consoleCStr)
     }
+    let consoleReadHandle = FileHandle(forReadingAtPath: "/dev/null") ?? FileHandle.standardInput
 
     if let logPath = consoleLogPath {
         let logURL = URL(fileURLWithPath: logPath)
@@ -263,20 +290,20 @@ public func vz_create_and_start_vm(
         if let writeHandle = FileHandle(forWritingAtPath: logPath) {
             writeHandle.seekToEndOfFile()
             serialPort.attachment = VZFileHandleSerialPortAttachment(
-                fileHandleForReading: nil,
+                fileHandleForReading: consoleReadHandle,
                 fileHandleForWriting: writeHandle
             )
         } else {
             // Fallback to stdout if file cannot be opened
             serialPort.attachment = VZFileHandleSerialPortAttachment(
-                fileHandleForReading: nil,
+                fileHandleForReading: consoleReadHandle,
                 fileHandleForWriting: FileHandle.standardOutput
             )
         }
     } else {
         let stdoutHandle = FileHandle.standardOutput
         serialPort.attachment = VZFileHandleSerialPortAttachment(
-            fileHandleForReading: nil,
+            fileHandleForReading: consoleReadHandle,
             fileHandleForWriting: stdoutHandle
         )
     }
@@ -339,7 +366,7 @@ public func vz_create_and_start_vm(
     do {
         try vzConfig.validate()
     } catch {
-        setError(outError, "VZ configuration validation failed: \(error.localizedDescription)")
+        setError(outError, "VZ configuration validation failed: \(describeNSError(error))")
         return nil
     }
 
@@ -368,7 +395,7 @@ public func vz_create_and_start_vm(
             case .success:
                 break
             case .failure(let error):
-                startError = "VZ start failed: \(error.localizedDescription)"
+                startError = "VZ start failed: \(describeNSError(error))"
             }
             semaphore.signal()
         }

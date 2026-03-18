@@ -425,7 +425,9 @@ fn docker_ping_unix_socket(sock: &Path) -> Result<(), String> {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
 
     stream
-        .write_all(b"GET /_ping HTTP/1.1\r\nHost: docker\r\n\r\n")
+        .write_all(
+            b"GET /_ping HTTP/1.1\r\nHost: docker\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        )
         .map_err(|e| format!("write _ping: {}", e))?;
 
     // Read more than a single packet: Docker may include enough headers that

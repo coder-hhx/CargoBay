@@ -6,7 +6,7 @@ This update refocuses CrateBay around an AI-first local workflow.
 
 - Primary workflow: local models, managed agent sandboxes, MCP servers, provider profiles, and CLI bridges.
 - Secondary substrate: containers, images, and volumes remain available behind the AI workflow.
-- Post-v1 tracks: VMs and Kubernetes stay visible as future expansion areas, but are no longer part of the default v1 path.
+- Future tracks: VMs and Kubernetes stay visible as later expansion areas, but are no longer part of the current release path.
 
 ## What changed
 
@@ -52,4 +52,4 @@ Validated in this workspace:
 
 ## Scope note
 
-This release note reflects the current v1-prioritized product scope, not the earlier broader scope that included real VM and K3s runtime runners in the default milestone.
+This note reflects the current pre-release product scope, not the earlier broader scope that included real VM and K3s runtime runners in the default milestone.

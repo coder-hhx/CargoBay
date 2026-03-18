@@ -63,6 +63,11 @@ trap cleanup EXIT
 echo "== Build cratebay CLI =="
 cargo build -p cratebay-cli >/dev/null
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  echo "== Build cratebay-vz runner =="
+  cargo build -p cratebay-vz >/dev/null
+fi
+
 if [[ ! -x "$cratebay_bin" ]]; then
   echo "ERROR: built cratebay binary not found at $cratebay_bin"
   exit 1

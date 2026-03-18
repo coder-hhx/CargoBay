@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "cratebay-cli"
-version = "1.0.0"
+version = "0.8.0"
 dependencies = [
  "bollard",
  "bytes",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "cratebay-core"
-version = "1.0.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "cratebay-daemon"
-version = "1.0.0"
+version = "0.8.0"
 dependencies = [
  "cratebay-core",
  "tokio",
@@ -1002,14 +1002,15 @@ dependencies = [
 
 [[package]]
 name = "cratebay-guest-agent"
-version = "1.0.0"
+version = "0.8.0"
 dependencies = [
  "libc",
+ "tokio",
 ]
 
 [[package]]
 name = "cratebay-gui"
-version = "1.0.0"
+version = "0.8.0"
 dependencies = [
  "bollard",
  "bytes",
@@ -1051,7 +1052,7 @@ dependencies = [
 
 [[package]]
 name = "cratebay-vz"
-version = "1.0.0"
+version = "0.8.0"
 dependencies = [
  "cratebay-core",
  "libc",

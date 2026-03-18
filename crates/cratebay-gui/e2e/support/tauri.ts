@@ -54,7 +54,7 @@ const mergeState = <T extends Record<string, unknown>>(base: T, patch?: Partial<
 }
 
 export const defaultMockState = (): MockState => ({
-  appVersion: "1.0.0",
+  appVersion: "0.8.0",
   containers: [
     {
       id: "ctr-web",
@@ -384,8 +384,8 @@ export const defaultMockState = (): MockState => ({
   ],
   updates: {
     available: false,
-    current_version: "1.0.0",
-    latest_version: "1.0.0",
+    current_version: "0.8.0",
+    latest_version: "0.8.0",
     release_notes: "",
     download_url: "https://github.com/coder-hhx/CrateBay/releases",
   },

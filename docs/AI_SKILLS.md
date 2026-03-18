@@ -12,7 +12,7 @@ Provide a stable, executable skill registry shared by:
 - Agent/CLI bridge presets (`agent_cli_preset`)
 - Managed sandbox actions (`sandbox_action`)
 
-CrateBay v1.0 focuses on **CrateBay-managed sandboxes** and **direct local execution surfaces**. External sandbox compatibility remains experimental.
+The current public CrateBay surface focuses on **CrateBay-managed sandboxes** and **direct local execution surfaces**. External sandbox compatibility remains experimental.
 
 ## Data Model
 

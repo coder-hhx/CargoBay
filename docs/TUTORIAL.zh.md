@@ -238,7 +238,7 @@ Docker 存储卷管理：
 
 ### Virtual Machines（虚拟机）
 
-实验特性（post-v1 track，不作为 v1 阻断项）：
+实验特性（后续阶段能力，不属于当前发布门禁）：
 
 - **创建 / 启动 / 停止 / 删除 / 列表**，完整生命周期管理
 - 创建时可设置 **CPU / 内存 / 磁盘**
@@ -273,7 +273,7 @@ Docker 存储卷管理：
 
 其中 GUI 偏好保存在 `localStorage`，AI 配置持久化在 `ai-settings.json`。
 
-v1.0 AI 能力：
+当前 AI 能力（v0.8.0 预发布）：
 
 - **AI Hub** 页面标签：`Overview / Models / Sandboxes / MCP / Assistant`
 - **Models** 标签已支持 Ollama 运行状态、本地模型列表、拉取 / 删除与存储可见性
@@ -297,7 +297,7 @@ cratebay status
 
 示例输出：
 ```
-CrateBay v1.0.0
+CrateBay v0.8.0
 Platform: macOS aarch64 (Virtualization.framework available)
 Rosetta x86_64: available
 Docker: connected (~/.colima/default/docker.sock)

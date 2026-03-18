@@ -50,8 +50,10 @@ struct Args {
     shared_dirs: Vec<String>,
     /// Vsock forwards in "guest_port:unix_socket_path" format.
     vsock_forwards: Vec<String>,
-    /// TCP forwards in "guest_port:unix_socket_path" format (connects to guest IP).
+    /// TCP forwards in "guest_port:unix_socket_path" format (guest connects back to host).
     tcp_forwards: Vec<String>,
+    /// Reverse TCP forwards in "bind_host:bind_port=unix_socket_path" format.
+    reverse_tcp_forwards: Vec<String>,
     /// Host TCP listeners forwarded to target host:port pairs.
     host_tcp_forwards: Vec<String>,
     /// Internal HTTP CONNECT proxies bound on the host bridge.
@@ -66,6 +68,7 @@ impl Args {
          [--console-log <path>] [--rosetta] [--share tag:host_path[:ro]] \
          [--vsock-forward guest_port:unix_socket_path] \
          [--tcp-forward guest_port:unix_socket_path] \
+         [--reverse-tcp-forward bind_host:bind_port=unix_socket_path] \
          [--host-tcp-forward bind_host:bind_port=target_host:target_port] \
          [--http-connect-proxy bind_host:bind_port]\n"
     }
@@ -83,6 +86,7 @@ impl Args {
         let mut shared_dirs: Vec<String> = Vec::new();
         let mut vsock_forwards: Vec<String> = Vec::new();
         let mut tcp_forwards: Vec<String> = Vec::new();
+        let mut reverse_tcp_forwards: Vec<String> = Vec::new();
         let mut host_tcp_forwards: Vec<String> = Vec::new();
         let mut http_connect_proxies: Vec<String> = Vec::new();
 
@@ -172,6 +176,12 @@ impl Args {
                             .ok_or_else(|| "--tcp-forward requires a value".to_string())?,
                     );
                 }
+                "--reverse-tcp-forward" => {
+                    reverse_tcp_forwards.push(
+                        it.next()
+                            .ok_or_else(|| "--reverse-tcp-forward requires a value".to_string())?,
+                    );
+                }
                 "--host-tcp-forward" => {
                     host_tcp_forwards.push(
                         it.next()
@@ -207,6 +217,7 @@ impl Args {
             shared_dirs,
             vsock_forwards,
             tcp_forwards,
+            reverse_tcp_forwards,
             host_tcp_forwards,
             http_connect_proxies,
         })
@@ -364,22 +375,20 @@ fn run(args: Args) -> Result<(), String> {
         forward_threads.push(thread);
     }
 
-    // Set up TCP forwards (host unix socket -> guest tcp:port). This mode does
-    // not require guest AF_VSOCK support; it discovers the guest IP from the
-    // serial console log (printed by the runtime init).
+    for spec in &args.reverse_tcp_forwards {
+        let ((bind_host, bind_port), sock_path) = parse_reverse_tcp_forward(spec)?;
+        let thread =
+            start_reverse_tcp_forward(bind_host, bind_port, sock_path, shutdown_requested.clone())?;
+        forward_threads.push(thread);
+    }
+
+    // Set up TCP forwards (host unix socket -> guest docker over a guest-
+    // initiated TCP tunnel). This avoids the less reliable direct host->guest
+    // TCP path on Apple Virtualization shared networking.
     if !args.tcp_forwards.is_empty() {
-        let console_log = args.console_log.as_ref().ok_or_else(|| {
-            "--tcp-forward requires --console-log for guest IP discovery".to_string()
-        })?;
-        wait_for_guest_ip(console_log, std::time::Duration::from_secs(30))?;
         for spec in &args.tcp_forwards {
             let (guest_port, sock_path) = parse_vsock_forward(spec)?;
-            let thread = start_tcp_forward(
-                console_log.clone(),
-                guest_port,
-                sock_path,
-                shutdown_requested.clone(),
-            )?;
+            let thread = start_tcp_forward(guest_port, sock_path, shutdown_requested.clone())?;
             forward_threads.push(thread);
         }
     }
@@ -542,6 +551,30 @@ fn parse_host_tcp_forward(
 }
 
 #[cfg(target_os = "macos")]
+fn parse_reverse_tcp_forward(
+    spec: &str,
+) -> Result<(HostTcpForwardEndpoint, std::path::PathBuf), String> {
+    let (bind_spec, socket_spec) = spec.split_once('=').ok_or_else(|| {
+        format!(
+            "Invalid --reverse-tcp-forward '{}': expected bind_host:bind_port=unix_socket_path",
+            spec
+        )
+    })?;
+
+    let socket_spec = socket_spec.trim();
+    if socket_spec.is_empty() {
+        return Err(format!(
+            "Invalid --reverse-tcp-forward '{}': unix_socket_path must not be empty",
+            spec
+        ));
+    }
+
+    Ok((
+        parse_host_port(bind_spec, "reverse tcp forward bind")?,
+        socket_spec.into(),
+    ))
+}
+
 fn start_vsock_forward(
     handle: std::sync::Arc<ffi::VmHandle>,
     guest_port: u32,
@@ -578,6 +611,13 @@ fn start_vsock_forward(
                 Ok((stream, _addr)) => {
                     let handle = handle.clone();
                     std::thread::spawn(move || {
+                        if let Err(error) = stream.set_nonblocking(false) {
+                            tracing::warn!(
+                                "failed to switch accepted unix stream to blocking: {}",
+                                error
+                            );
+                            return;
+                        }
                         let connection = match handle.vsock_connect(guest_port) {
                             Ok(connection) => connection,
                             Err(e) => {
@@ -617,50 +657,13 @@ fn start_vsock_forward(
 }
 
 #[cfg(target_os = "macos")]
-fn wait_for_guest_ip(
-    console_log_path: &std::path::Path,
-    timeout: std::time::Duration,
-) -> Result<std::net::IpAddr, String> {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        if let Some(ip) = latest_guest_ip_from_console(console_log_path) {
-            tracing::info!("guest ip discovered: {}", ip);
-            return Ok(ip);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    Err(format!(
-        "Timed out waiting for guest_ip=... in console log: {}",
-        console_log_path.display()
-    ))
-}
-
-#[cfg(target_os = "macos")]
-fn latest_guest_ip_from_console(console_log_path: &std::path::Path) -> Option<std::net::IpAddr> {
-    let content = std::fs::read_to_string(console_log_path).ok()?;
-    for line in content.lines().rev().take(300) {
-        let Some(idx) = line.find("guest_ip=") else {
-            continue;
-        };
-        let rest = &line[idx + "guest_ip=".len()..];
-        let token = rest.split_whitespace().next().unwrap_or_default();
-        if let Ok(ip) = token.parse::<std::net::IpAddr>() {
-            return Some(ip);
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "macos")]
 fn start_tcp_forward(
-    console_log_path: std::path::PathBuf,
     guest_port: u32,
     sock_path: std::path::PathBuf,
     shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<std::thread::JoinHandle<()>, String> {
-    use std::io;
-    use std::net::TcpStream;
+    use std::io::{self, Write as _};
+    use std::net::TcpListener;
     use std::os::unix::net::UnixListener;
     use std::time::Duration;
 
@@ -684,78 +687,121 @@ fn start_tcp_forward(
         .set_nonblocking(true)
         .map_err(|e| format!("Failed to set socket nonblocking: {}", e))?;
 
-    let initial_guest_ip = wait_for_guest_ip(&console_log_path, std::time::Duration::from_secs(5))
-        .map_err(|e| format!("Failed to discover guest IP for TCP forward: {}", e))?;
-    let current_guest_ip = std::sync::Arc::new(std::sync::Mutex::new(initial_guest_ip));
+    let guest_bind_addr = format!("0.0.0.0:{}", port);
+    let guest_listener = TcpListener::bind(&guest_bind_addr).map_err(|e| {
+        format!(
+            "Failed to bind guest reverse listener {}: {}",
+            guest_bind_addr, e
+        )
+    })?;
+    guest_listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to set guest reverse listener nonblocking: {}", e))?;
 
     tracing::info!(
-        "tcp forward enabled: {} -> guest tcp:{}:{}",
+        "tcp forward enabled: {} <- guest tcp:{}",
         sock_path.display(),
-        initial_guest_ip,
         port
     );
 
     Ok(std::thread::spawn(move || {
         while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
             match listener.accept() {
-                Ok((stream, _addr)) => {
-                    let console_log_path = console_log_path.clone();
-                    let current_guest_ip = current_guest_ip.clone();
-                    std::thread::spawn(move || {
-                        let latest_guest_ip = latest_guest_ip_from_console(&console_log_path);
-                        let fallback_guest_ip = *current_guest_ip
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-                        let mut candidate_ips = Vec::new();
-                        if let Some(ip) = latest_guest_ip {
-                            if ip != fallback_guest_ip {
-                                tracing::info!(
-                                    "tcp forward guest ip updated: {} -> {}",
-                                    fallback_guest_ip,
-                                    ip
+                Ok((mut stream, addr)) => {
+                    tracing::debug!(
+                        "tcp forward accepted unix client on {} from {:?}",
+                        sock_path.display(),
+                        addr
+                    );
+                    let accepted = loop {
+                        if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                            break None;
+                        }
+                        match guest_listener.accept() {
+                            Ok((tcp, guest_addr)) => {
+                                tracing::debug!(
+                                    "tcp forward accepted guest reverse tcp {} for {}",
+                                    guest_addr,
+                                    sock_path.display()
                                 );
+                                break Some((tcp, guest_addr));
                             }
-                            *current_guest_ip
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = ip;
-                            candidate_ips.push(ip);
-                        }
-                        if !candidate_ips.contains(&fallback_guest_ip) {
-                            candidate_ips.push(fallback_guest_ip);
-                        }
-
-                        let mut tcp = None;
-                        let mut last_error = None;
-                        for guest_ip in candidate_ips {
-                            match TcpStream::connect_timeout(
-                                &std::net::SocketAddr::new(guest_ip, port),
-                                Duration::from_secs(2),
-                            ) {
-                                Ok(stream) => {
-                                    tcp = Some(stream);
-                                    break;
-                                }
-                                Err(error) => {
-                                    last_error = Some(format!("{}:{}: {}", guest_ip, port, error));
-                                }
+                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(Duration::from_millis(100));
                             }
-                        }
-
-                        let tcp = match tcp {
-                            Some(stream) => stream,
-                            None => {
+                            Err(error) => {
                                 tracing::warn!(
-                                    "tcp connect failed (port {}): {}",
-                                    port,
-                                    last_error.unwrap_or_else(|| "unknown error".to_string())
+                                    "guest reverse tcp accept failed on {}: {}",
+                                    guest_bind_addr,
+                                    error
+                                );
+                                break None;
+                            }
+                        }
+                    };
+
+                    let Some((mut tcp, guest_addr)) = accepted else {
+                        break;
+                    };
+
+                    let sock_path = sock_path.clone();
+                    std::thread::spawn(move || {
+                        if let Err(error) = stream.set_nonblocking(false) {
+                            tracing::warn!(
+                                "failed to switch accepted unix client to blocking on {}: {}",
+                                sock_path.display(),
+                                error
+                            );
+                            return;
+                        }
+                        if let Err(error) = tcp.set_nonblocking(false) {
+                            tracing::warn!(
+                                "failed to switch guest reverse tcp to blocking on {}: {}",
+                                sock_path.display(),
+                                error
+                            );
+                            return;
+                        }
+                        let _ = tcp.set_nodelay(true);
+                        let preface = match capture_http_request_preface(&mut stream) {
+                            Ok(preface) => preface,
+                            Err(error) => {
+                                tracing::warn!(
+                                    "failed to capture unix client request preface on {}: {}",
+                                    sock_path.display(),
+                                    error
+                                );
+                                Vec::new()
+                            }
+                        };
+                        if !preface.is_empty() {
+                            tracing::debug!(
+                                "tcp forward rewrote request preface ({} bytes) on {}",
+                                preface.len(),
+                                sock_path.display()
+                            );
+                            if let Err(error) = tcp.write_all(&preface) {
+                                tracing::warn!(
+                                    "failed to write request preface to guest tcp on {}: {}",
+                                    sock_path.display(),
+                                    error
                                 );
                                 return;
                             }
-                        };
-                        let _ = tcp.set_nodelay(true);
-                        if let Err(e) = proxy_bidirectional_tcp(stream, tcp) {
-                            tracing::debug!("tcp proxy ended: {}", e);
+                        }
+                        tracing::debug!(
+                            "tcp forward starting proxy: {} <-> guest {}",
+                            sock_path.display(),
+                            guest_addr
+                        );
+                        if let Err(error) = proxy_bidirectional_tcp(stream, tcp) {
+                            tracing::debug!(
+                                "tcp proxy ended with error on {}: {}",
+                                sock_path.display(),
+                                error
+                            );
+                        } else {
+                            tracing::debug!("tcp proxy completed on {}", sock_path.display());
                         }
                     });
                 }
@@ -775,6 +821,172 @@ fn start_tcp_forward(
 
         let _ = std::fs::remove_file(&sock_path);
     }))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_http_request_preface(
+    stream: &mut std::os::unix::net::UnixStream,
+) -> Result<Vec<u8>, String> {
+    use std::io::{ErrorKind, Read};
+    use std::time::Duration;
+
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("set unix client read timeout: {}", error))?;
+
+    let mut request = Vec::with_capacity(2048);
+    let mut scratch = [0u8; 1024];
+    let mut header_complete = false;
+
+    while request.len() < 64 * 1024 {
+        match stream.read(&mut scratch) {
+            Ok(0) => break,
+            Ok(read) => {
+                request.extend_from_slice(&scratch[..read]);
+                if find_http_header_end(&request).is_some() {
+                    header_complete = true;
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                ) =>
+            {
+                break;
+            }
+            Err(error) => {
+                let _ = stream.set_read_timeout(None);
+                return Err(format!("read unix client preface: {}", error));
+            }
+        }
+    }
+
+    let _ = stream.set_read_timeout(None);
+
+    if !header_complete {
+        return Ok(request);
+    }
+
+    Ok(rewrite_http_request_preface(&request).unwrap_or(request))
+}
+
+#[cfg(target_os = "macos")]
+fn find_http_header_end(buf: &[u8]) -> Option<usize> {
+    if let Some(index) = buf.windows(4).position(|chunk| chunk == b"\r\n\r\n") {
+        return Some(index + 4);
+    }
+    buf.windows(2)
+        .position(|chunk| chunk == b"\n\n")
+        .map(|index| index + 2)
+}
+
+#[cfg(target_os = "macos")]
+fn rewrite_http_request_preface(request: &[u8]) -> Option<Vec<u8>> {
+    let header_end = find_http_header_end(request)?;
+    let request_head = std::str::from_utf8(&request[..header_end]).ok()?;
+    let mut lines = request_head.lines();
+    let request_line = lines.next()?.trim_end_matches('\r');
+    let mut request_line_parts = request_line.split_whitespace();
+    let _method = request_line_parts.next()?;
+    let _target = request_line_parts.next()?;
+    let version = request_line_parts.next()?;
+    if !version.starts_with("HTTP/") {
+        return None;
+    }
+
+    let mut header_lines = Vec::new();
+    let mut has_content_length = false;
+    let mut has_transfer_encoding = false;
+    let mut is_upgrade = false;
+
+    for line in lines {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+
+        let (name, value) = line.split_once(':')?;
+        let name = name.trim();
+        let value = value.trim();
+
+        if name.eq_ignore_ascii_case("connection") {
+            if value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+            {
+                is_upgrade = true;
+            }
+            continue;
+        }
+
+        if name.eq_ignore_ascii_case("upgrade") {
+            is_upgrade = true;
+        } else if name.eq_ignore_ascii_case("content-length") {
+            has_content_length = true;
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            has_transfer_encoding = true;
+        }
+
+        header_lines.push(format!("{}: {}", name, value));
+    }
+
+    if is_upgrade {
+        return None;
+    }
+
+    let mut rewritten = Vec::with_capacity(request.len() + 64);
+    rewritten.extend_from_slice(request_line.as_bytes());
+    rewritten.extend_from_slice(b"\r\n");
+    for line in header_lines {
+        rewritten.extend_from_slice(line.as_bytes());
+        rewritten.extend_from_slice(b"\r\n");
+    }
+    if !has_content_length && !has_transfer_encoding {
+        rewritten.extend_from_slice(b"Content-Length: 0\r\n");
+    }
+    rewritten.extend_from_slice(b"Connection: close\r\n");
+    rewritten.extend_from_slice(b"\r\n");
+    rewritten.extend_from_slice(&request[header_end..]);
+    Some(rewritten)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::rewrite_http_request_preface;
+
+    #[test]
+    fn rewrites_plain_http_request_for_single_shot_proxying() {
+        let request = b"GET /version HTTP/1.1\r\nHost: docker\r\nUser-Agent: test\r\n\r\n";
+        let rewritten = rewrite_http_request_preface(request).expect("request should rewrite");
+        let text = String::from_utf8(rewritten).expect("valid utf-8");
+
+        assert!(text.starts_with("GET /version HTTP/1.1\r\n"));
+        assert!(text.contains("Host: docker\r\n"));
+        assert!(text.contains("User-Agent: test\r\n"));
+        assert!(text.contains("Content-Length: 0\r\n"));
+        assert!(text.contains("Connection: close\r\n"));
+    }
+
+    #[test]
+    fn keeps_existing_content_length() {
+        let request =
+            b"POST /containers/create HTTP/1.1\r\nHost: docker\r\nContent-Length: 17\r\n\r\n{\"Image\":\"nginx\"}";
+        let rewritten = rewrite_http_request_preface(request).expect("request should rewrite");
+        let text = String::from_utf8(rewritten).expect("valid utf-8");
+
+        assert!(text.contains("Content-Length: 17\r\n"));
+        assert!(!text.contains("Content-Length: 0\r\n"));
+        assert!(text.contains("Connection: close\r\n"));
+        assert!(text.ends_with("{\"Image\":\"nginx\"}"));
+    }
+
+    #[test]
+    fn skips_upgrade_requests() {
+        let request = b"POST /exec/1/start HTTP/1.1\r\nHost: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n";
+        assert!(rewrite_http_request_preface(request).is_none());
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -833,6 +1045,82 @@ fn start_host_tcp_forward(
                 }
                 Err(error) => {
                     tracing::warn!("host tcp forward accept failed on {}: {}", bind_addr, error);
+                    break;
+                }
+            }
+        }
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn start_reverse_tcp_forward(
+    bind_host: String,
+    bind_port: u16,
+    sock_path: std::path::PathBuf,
+    shutdown_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    use std::io;
+    use std::net::TcpListener;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let bind_addr = format!("{}:{}", bind_host, bind_port);
+    let listener = TcpListener::bind(&bind_addr).map_err(|error| {
+        format!(
+            "Failed to bind reverse TCP forward {} -> {}: {}",
+            bind_addr,
+            sock_path.display(),
+            error
+        )
+    })?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("Failed to set reverse TCP forward nonblocking: {}", error))?;
+
+    tracing::info!(
+        "reverse tcp forward enabled on {} -> {}",
+        bind_addr,
+        sock_path.display()
+    );
+
+    Ok(std::thread::spawn(move || {
+        while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((client, _addr)) => {
+                    let sock_path = sock_path.clone();
+                    std::thread::spawn(move || match UnixStream::connect(&sock_path) {
+                        Ok(unix) => {
+                            if let Err(error) = client.set_nonblocking(false) {
+                                tracing::warn!(
+                                    "failed to switch reverse tcp client to blocking on {}: {}",
+                                    sock_path.display(),
+                                    error
+                                );
+                                return;
+                            }
+                            let _ = client.set_nodelay(true);
+                            if let Err(error) = proxy_bidirectional_tcp(unix, client) {
+                                tracing::debug!("reverse tcp forward ended: {}", error);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "reverse tcp forward connect failed ({}): {}",
+                                sock_path.display(),
+                                error
+                            );
+                        }
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "reverse tcp forward accept failed on {}: {}",
+                        bind_addr,
+                        error
+                    );
                     break;
                 }
             }
@@ -975,18 +1263,22 @@ fn proxy_bidirectional(
         .map_err(|e| format!("vsock clone: {}", e))?;
     let mut vsock_w = vsock;
 
-    let t1 = std::thread::spawn(move || {
-        let _ = std::io::copy(&mut unix_r, &mut vsock_w);
+    let t1 = std::thread::spawn(move || -> Result<(), String> {
+        std::io::copy(&mut unix_r, &mut vsock_w).map_err(|e| format!("unix->vsock copy: {}", e))?;
         let _ = unsafe { libc::shutdown(vsock_w.as_raw_fd(), libc::SHUT_WR) };
+        Ok(())
     });
 
-    let t2 = std::thread::spawn(move || {
-        let _ = std::io::copy(&mut vsock_r, &mut unix_w);
+    let t2 = std::thread::spawn(move || -> Result<(), String> {
+        std::io::copy(&mut vsock_r, &mut unix_w).map_err(|e| format!("vsock->unix copy: {}", e))?;
         let _ = unix_w.shutdown(Shutdown::Write);
+        Ok(())
     });
 
-    let _ = t1.join();
-    let _ = t2.join();
+    t1.join()
+        .map_err(|_| "unix->vsock proxy thread panicked".to_string())??;
+    t2.join()
+        .map_err(|_| "vsock->unix proxy thread panicked".to_string())??;
     Ok(())
 }
 
@@ -1003,18 +1295,22 @@ fn proxy_bidirectional_tcp(
     let mut tcp_r = tcp.try_clone().map_err(|e| format!("tcp clone: {}", e))?;
     let mut tcp_w = tcp;
 
-    let t1 = std::thread::spawn(move || {
-        let _ = std::io::copy(&mut unix_r, &mut tcp_w);
+    let t1 = std::thread::spawn(move || -> Result<(), String> {
+        std::io::copy(&mut unix_r, &mut tcp_w).map_err(|e| format!("unix->tcp copy: {}", e))?;
         let _ = tcp_w.shutdown(Shutdown::Write);
+        Ok(())
     });
 
-    let t2 = std::thread::spawn(move || {
-        let _ = std::io::copy(&mut tcp_r, &mut unix_w);
+    let t2 = std::thread::spawn(move || -> Result<(), String> {
+        std::io::copy(&mut tcp_r, &mut unix_w).map_err(|e| format!("tcp->unix copy: {}", e))?;
         let _ = unix_w.shutdown(Shutdown::Write);
+        Ok(())
     });
 
-    let _ = t1.join();
-    let _ = t2.join();
+    t1.join()
+        .map_err(|_| "unix->tcp proxy thread panicked".to_string())??;
+    t2.join()
+        .map_err(|_| "tcp->unix proxy thread panicked".to_string())??;
     Ok(())
 }
 

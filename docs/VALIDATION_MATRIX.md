@@ -1,6 +1,6 @@
 # Validation Matrix
 
-> This document answers one question: how do we automatically prove that core CrateBay workflows are usable, correct, and regression-safe before v1.0?
+> This document answers one question: how do we automatically prove that core CrateBay workflows are usable, correct, and regression-safe before public release?
 
 ## Coverage Rules
 
@@ -13,11 +13,11 @@ A feature is not considered release-ready until it is covered by as many of the 
 - **Real dependency integration** — Docker / VM / provider / MCP runtime state validated against real dependencies or protocol-compatible runtime canaries.
 - **Release gate** — CI and release scripts fail if the required layers regress.
 
-## Public v1 Product Scope
+## Current Public Product Scope
 
-- **Primary v1 surfaces** — AI Hub Sandboxes, AI Hub Models, MCP, and provider / CLI bridges.
+- **Primary current surfaces** — AI Hub Sandboxes, AI Hub Models, MCP, and provider / CLI bridges.
 - **Supporting runtime** — Containers, images, and volumes remain in scope as the enabling runtime for those AI workflows.
-- **Experimental / post-v1** — VMs and Kubernetes remain visible in the product and matrix, but they are not release-blocking for the AI-first v1 until dedicated runtime runners exist.
+- **Experimental / future track** — VMs and Kubernetes remain visible in the product and matrix, but they are not release-blocking until dedicated runtime runners exist.
 
 ## Matrix
 
@@ -27,12 +27,12 @@ A feature is not considered release-ready until it is covered by as many of the 
 | Containers | Create / list / env / lifecycle | ✅ | ✅ | ✅ | ✅ | Real Docker CLI smoke runs in Linux CI against both the host engine path and the bundled Linux runtime path, and Linux desktop smoke exercises create → env → login command → stop/start → remove through the real Tauri shell |
 | Images | Search / run / pack / inspect | ✅ | ✅ | ⏳ | ✅ | Real registry + Docker image smoke runs in Linux CI |
 | Volumes | Create / inspect / remove | ✅ | ✅ | ⏳ | ✅ | Real Docker volume lifecycle is asserted in Linux CI |
-| VMs | Create / port forwarding / login command / console | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but explicitly treated as an experimental post-v1 surface until dedicated hypervisor runners exist |
-| Kubernetes | Pod list / log viewing | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but kept on the post-v1 track until a real K3s runner is wired in |
+| VMs | Create / port forwarding / login command / console | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but explicitly treated as an experimental future-track surface until dedicated hypervisor runners exist |
+| Kubernetes | Pod list / log viewing | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but kept on the future track until a real K3s runner is wired in |
 | AI Hub Models | Status / list / pull / delete / storage | ✅ | ✅ | ⏳ | ⏳ | Runtime canary now exercises the real HTTP + local CLI path with a protocol-compatible Ollama stub; real Ollama daemon CI is still pending |
 | AI Hub Sandboxes | Create / execute / restart / delete / audit | ✅ | ✅ | ⏳ | ✅ | Real Docker-backed sandbox smoke now runs in CI; sandbox creation also auto-pulls missing images |
 | MCP | Registry / start-stop / export / logs | ✅ | ✅ | ✅ | ✅ | Real local process lifecycle smoke runs in CI via backend tests, and Linux desktop smoke now covers create → save → start → logs → stop in the real shell |
-| Assistant / Skills | Plan / run / schema validation / confirmation denial | ✅ | ✅ | ⏳ | ⏳ | Contract + browser coverage is strong; the v1 release proof point is the provider / CLI bridge canary path rather than a broader agent platform claim |
+| Assistant / Skills | Plan / run / schema validation / confirmation denial | ✅ | ✅ | ⏳ | ⏳ | Contract + browser coverage is strong; the current release proof point is the provider / CLI bridge canary path rather than a broader agent platform claim |
 | Security guardrails | Schema validation / destructive confirmation | ✅ | ✅ | ⏳ | n/a | Covered |
 
 ## What Is Automated Today
@@ -46,7 +46,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 - `scripts/ci-local.sh` and `scripts/release-readiness.sh` include these runtime smokes as release gates; `release-readiness` also runs controlled provider canaries when configured (and safely skips when not).
 - `scripts/provider-canary-smoke.sh`, `scripts/ollama-daemon-smoke.sh`, and `.github/workflows/provider-canary.yml` now wire controlled provider probes onto dedicated runners without persisting secrets into the app keychain.
 
-## What Still Needs To Reach v1.0 Confidence
+## What Still Needs To Reach Release Confidence
 
 1. **Controlled provider canaries**
    - OpenAI / Anthropic `ai_test_connection` smoke against locked-down test credentials
@@ -57,7 +57,7 @@ A feature is not considered release-ready until it is covered by as many of the 
    - Docker runtime smoke for the supporting container engine
    - AI runtime smoke for local model, sandbox, and MCP process flows
 
-## Public v1.0 Closure Plan
+## Public Release Closure Plan
 
 ### P0 — Finish the provider evidence chain
 
@@ -76,7 +76,7 @@ A feature is not considered release-ready until it is covered by as many of the 
   - `scripts/ollama-daemon-smoke.sh`
   - `.github/workflows/provider-canary.yml`
 
-## Post-v1 Expansion Tracks
+## Future Expansion Tracks
 
 ### Kubernetes
 
@@ -89,7 +89,7 @@ A feature is not considered release-ready until it is covered by as many of the 
   - `scripts/k3s-runtime-smoke.sh`
   - `.github/workflows/k3s-runtime-smoke.yml`
 - **Scope note**:
-  - Treat Kubernetes as experimental / post-v1 until a dedicated Linux runner is stable.
+  - Treat Kubernetes as experimental / future-track until a dedicated Linux runner is stable.
 
 ### VM Backends
 
@@ -114,13 +114,13 @@ A feature is not considered release-ready until it is covered by as many of the 
   - Start as `workflow_dispatch` on self-hosted runners.
   - Promote to a required release gate once runner stability is proven.
 
-## v1.0 Exit Criteria
+## Release Exit Criteria
 
 - Linux desktop smoke proves at least one real runtime action chain through the actual Tauri shell.
 - Docker runtime smoke remains green for both the supporting container engine and the bundled Linux runtime path.
 - AI runtime smoke remains green for local model, sandbox, and MCP process flows.
 - Controlled provider canaries pass on dedicated infrastructure without leaking secrets or high-cost prompts.
-- VMs and Kubernetes remain explicitly outside the v1 release gate until dedicated runners exist.
+- VMs and Kubernetes remain explicitly outside the current release gate until dedicated runners exist.
 
 ## Commands
 
