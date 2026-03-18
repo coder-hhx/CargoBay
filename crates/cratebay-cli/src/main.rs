@@ -89,7 +89,9 @@ enum Commands {
         #[arg(long)]
         guest_ip: String,
         #[arg(long)]
-        port: u16,
+        listen_port: u16,
+        #[arg(long)]
+        target_port: u16,
     },
 }
 
@@ -702,27 +704,35 @@ async fn ensure_windows_runtime_terminal_host() -> Result<String, String> {
         .map_err(|e| format!("Failed to start CrateBay Runtime (WSL2): {}", e))?;
     let (guest_ip, port) = parse_tcp_docker_host_endpoint(&guest)
         .ok_or_else(|| format!("Invalid WSL Docker host '{}'", guest))?;
-    let localhost = format!("tcp://127.0.0.1:{port}");
 
-    if wait_for_docker_http_ready(&localhost, Duration::from_secs(2))
+    if wait_for_docker_http_ready(&guest, Duration::from_secs(5))
         .await
         .is_ok()
     {
-        return Ok(localhost);
+        return Ok(guest);
     }
 
     let _ = kill_runtime_proxy_process();
-    spawn_runtime_proxy_detached(&guest_ip, port)?;
+    let relay_port = pick_free_localhost_port()?;
+    let relay_host = format!("tcp://127.0.0.1:{relay_port}");
+    spawn_runtime_proxy_detached(&guest_ip, relay_port, port)?;
 
-    if wait_for_docker_http_ready(&localhost, Duration::from_secs(20))
+    if wait_for_docker_http_ready(&relay_host, Duration::from_secs(20))
         .await
         .is_ok()
     {
-        return Ok(localhost);
+        return Ok(relay_host);
     }
 
-    wait_for_docker_http_ready(&guest, Duration::from_secs(5)).await?;
-    Ok(guest)
+    wait_for_docker_http_ready(&guest, Duration::from_secs(5))
+        .await
+        .map(|_| guest)
+        .map_err(|relay_error| {
+            format!(
+                "Failed to reach CrateBay Runtime (WSL2) through the direct guest endpoint or detached local relay: {}",
+                relay_error
+            )
+        })
 }
 
 fn connect_docker_with_host(host: &str) -> Result<Docker, String> {
@@ -881,12 +891,18 @@ async fn run_cli(cli: Cli) {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "cratebay", &mut std::io::stdout());
         }
-        Commands::InternalRuntimeProxy { guest_ip, port } => {
+        Commands::InternalRuntimeProxy {
+            guest_ip,
+            listen_port,
+            target_port,
+        } => {
             #[cfg(windows)]
             {
-                if let Err(error) =
-                    cratebay_core::runtime::run_wsl_host_relay_server(port, &guest_ip, port)
-                {
+                if let Err(error) = cratebay_core::runtime::run_wsl_host_relay_server(
+                    listen_port,
+                    &guest_ip,
+                    target_port,
+                ) {
                     eprintln!("Error: {}", error);
                     std::process::exit(1);
                 }
@@ -894,7 +910,7 @@ async fn run_cli(cli: Cli) {
 
             #[cfg(not(windows))]
             {
-                let _ = (guest_ip, port);
+                let _ = (guest_ip, listen_port, target_port);
                 eprintln!("Error: internal runtime proxy is only available on Windows.");
                 std::process::exit(1);
             }
@@ -994,6 +1010,16 @@ fn runtime_proxy_pid_path() -> PathBuf {
 }
 
 #[cfg(windows)]
+fn pick_free_localhost_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .map_err(|e| format!("Failed to reserve a local relay port: {}", e))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|e| format!("Failed to inspect local relay port: {}", e))
+}
+
+#[cfg(windows)]
 fn kill_runtime_proxy_process() -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command as ProcessCommand;
@@ -1059,7 +1085,11 @@ fn kill_runtime_proxy_process() -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn spawn_runtime_proxy_detached(guest_ip: &str, port: u16) -> Result<u32, String> {
+fn spawn_runtime_proxy_detached(
+    guest_ip: &str,
+    listen_port: u16,
+    target_port: u16,
+) -> Result<u32, String> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command as ProcessCommand, Stdio};
 
@@ -1077,8 +1107,10 @@ fn spawn_runtime_proxy_detached(guest_ip: &str, port: u16) -> Result<u32, String
         .arg("internal-runtime-proxy")
         .arg("--guest-ip")
         .arg(guest_ip)
-        .arg("--port")
-        .arg(port.to_string())
+        .arg("--listen-port")
+        .arg(listen_port.to_string())
+        .arg("--target-port")
+        .arg(target_port.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -3957,6 +3989,16 @@ mod tests {
         };
 
         assert_eq!(docker_pull_platform_for_engine(&version), None);
+    }
+
+    #[test]
+    fn normalize_docker_platform_os_aliases_macos() {
+        assert_eq!(normalize_docker_platform_os("macos"), Some("darwin"));
+    }
+
+    #[test]
+    fn normalize_docker_platform_arch_aliases_x86_64() {
+        assert_eq!(normalize_docker_platform_arch("x86_64"), Some("amd64"));
     }
 
     #[test]

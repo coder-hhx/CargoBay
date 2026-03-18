@@ -2174,6 +2174,7 @@ fn wsl_runtime_diagnostics(distro: &str) -> String {
 
 #[cfg(target_os = "windows")]
 struct ProcessLocalWslHostRelay {
+    host: String,
     target: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
@@ -2245,11 +2246,6 @@ fn ensure_process_local_wsl_host_relay(
     guest_ip: &str,
     port: u16,
 ) -> Result<String, HypervisorError> {
-    let localhost = format!("tcp://127.0.0.1:{port}");
-    if docker_http_ping_host(&localhost).is_ok() {
-        return Ok(localhost);
-    }
-
     let target_addr = format!("{guest_ip}:{port}");
     let relay_state = process_local_wsl_host_relay();
     let mut relay = relay_state
@@ -2261,16 +2257,26 @@ fn ensure_process_local_wsl_host_relay(
             .target
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = target_addr;
-        return Ok(localhost);
+        return Ok(existing.host.clone());
     }
 
     let listener =
-        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).map_err(|error| {
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|error| {
             HypervisorError::CreateFailed(format!(
-                "Failed to bind local Docker relay on 127.0.0.1:{}: {}",
-                port, error
+                "Failed to bind local Docker relay on 127.0.0.1: {}",
+                error
             ))
         })?;
+    let relay_port = listener
+        .local_addr()
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!(
+                "Failed to resolve local Docker relay address: {}",
+                error
+            ))
+        })?
+        .port();
+    let host = format!("tcp://127.0.0.1:{relay_port}");
 
     let target = std::sync::Arc::new(std::sync::Mutex::new(target_addr));
     let thread_target = std::sync::Arc::clone(&target);
@@ -2284,8 +2290,11 @@ fn ensure_process_local_wsl_host_relay(
             ))
         })?;
 
-    *relay = Some(ProcessLocalWslHostRelay { target });
-    Ok(localhost)
+    *relay = Some(ProcessLocalWslHostRelay {
+        host: host.clone(),
+        target,
+    });
+    Ok(host)
 }
 
 #[cfg(target_os = "windows")]
@@ -2386,21 +2395,16 @@ pub fn ensure_runtime_wsl_guest_host() -> Result<String, HypervisorError> {
 ///
 /// Returns a docker-compatible `DOCKER_HOST` value that is reachable from the
 /// current process (prefer the direct host-reachable WSL guest IP, falling
-/// back to `tcp://127.0.0.1:2375` or a local relay only when needed).
+/// back to a CrateBay-managed local relay only when needed).
 #[cfg(target_os = "windows")]
 pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
     let guest = ensure_runtime_wsl_guest_host()?;
     let (guest_ip, port) = docker_host_tcp_endpoint(&guest).ok_or_else(|| {
         HypervisorError::CreateFailed(format!("Invalid WSL guest Docker host '{}'", guest))
     })?;
-    let localhost = format!("tcp://127.0.0.1:{port}");
 
     if wait_for_docker_http_ping_host(&guest, std::time::Duration::from_secs(5)).is_ok() {
         return Ok(guest);
-    }
-
-    if wait_for_docker_http_ping_host(&localhost, std::time::Duration::from_secs(2)).is_ok() {
-        return Ok(localhost);
     }
 
     if let Ok(host) = ensure_process_local_wsl_host_relay(&guest_ip, port) {
@@ -2421,8 +2425,8 @@ pub fn ensure_runtime_wsl_running() -> Result<String, HypervisorError> {
     }
 
     Err(HypervisorError::CreateFailed(format!(
-        "CrateBay Runtime (WSL2) is running in the guest but is not reachable from Windows at {} or {}",
-        guest, localhost
+        "CrateBay Runtime (WSL2) is running in the guest but is not reachable from Windows at {} or through a local CrateBay relay",
+        guest
     )))
 }
 

@@ -66,9 +66,9 @@ On Windows, CrateBay Runtime is implemented as a bundled **WSL2 distro** that ru
   - TCP: `0.0.0.0:2375` (inside WSL, for host access)
 - Host connection:
   - Preferred (when the host can route to the WSL guest directly): `DOCKER_HOST=tcp://<wsl-ip>:2375`
-  - Fallback: `DOCKER_HOST=tcp://127.0.0.1:2375`
+  - Fallback: a CrateBay-managed local relay on loopback, e.g. `DOCKER_HOST=tcp://127.0.0.1:<relay-port>`
 
-At startup, CrateBay waits briefly for the direct WSL guest endpoint to answer before falling back to `127.0.0.1` or the process-local relay. This avoids cold-start cases where localhost probes succeed earlier than longer streaming Docker API requests.
+At startup, CrateBay waits briefly for the direct WSL guest endpoint to answer before falling back to a CrateBay-managed local relay on loopback. This avoids Windows localhost-forwarding cases where health probes succeed but Linux image pulls still get treated like Windows-platform requests.
 
 Runtime assets are bundled into the desktop app as `runtime-wsl/<arch>/rootfs.tar`; on first use CrateBay imports the distro via `wsl.exe --import`.
 

@@ -66,9 +66,9 @@ Linux release 会把 helper、所需共享库和 QEMU data files 一起打进 `r
   - TCP：`0.0.0.0:2375`（WSL 内，用于宿主访问）
 - Host 侧连接方式：
   - 优先（宿主可直接路由到 WSL guest 时）：`DOCKER_HOST=tcp://<wsl-ip>:2375`
-  - 兜底：`DOCKER_HOST=tcp://127.0.0.1:2375`
+  - 兜底：CrateBay 自己管理的 loopback relay，例如 `DOCKER_HOST=tcp://127.0.0.1:<relay-port>`
 
-启动时，CrateBay 会先短暂等待直连的 WSL guest endpoint 就绪，再回退到 `127.0.0.1` 或进程内本地 relay。这样可以避开冷启动阶段里“localhost 探活先成功，但更长的 Docker 流式 API 请求仍然失败”的窗口。
+启动时，CrateBay 会先短暂等待直连的 WSL guest endpoint 就绪，再回退到 CrateBay 自己管理的 loopback relay。这样可以避开 Windows localhost 转发里“探活先成功，但 Linux 镜像拉取仍被当成 Windows 平台请求”的问题。
 
 运行时资产随桌面应用打包在 `runtime-wsl/<arch>/rootfs.tar`；首次使用时，CrateBay 会通过 `wsl.exe --import` 导入该 distro。
 
