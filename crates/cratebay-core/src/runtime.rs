@@ -1385,7 +1385,21 @@ fn run_windows_command_with_timeout(
 #[cfg(target_os = "windows")]
 fn wsl_distro_exists(name: &str) -> Result<bool, HypervisorError> {
     let distros = wsl_list_distros()?;
-    Ok(distros.iter().any(|d| d == name))
+    if distros.iter().any(|d| d == name) {
+        return Ok(true);
+    }
+
+    let install_dir = wsl_install_dir(name);
+    if !install_dir.is_dir() {
+        return Ok(false);
+    }
+
+    let mut entries = std::fs::read_dir(&install_dir)?;
+    if entries.next().is_none() {
+        return Ok(false);
+    }
+
+    wsl_distro_is_usable(name)
 }
 
 #[cfg(target_os = "windows")]
@@ -1527,7 +1541,64 @@ fn wsl_import_runtime_distro(distro: &str) -> Result<(), HypervisorError> {
         )));
     }
 
+    wsl_wait_for_distro_usable(distro)?;
     Ok(())
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn wsl_output_indicates_missing_distro(output: &str) -> bool {
+    let normalized = output.trim().to_ascii_lowercase();
+    normalized.contains("there is no distribution with the supplied name")
+        || normalized.contains("distribution with the supplied name")
+        || normalized.contains("wsl_e_distrolistnotfound")
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_distro_is_usable(distro: &str) -> Result<bool, HypervisorError> {
+    use std::process::Command;
+
+    let mut command = Command::new("wsl.exe");
+    command.args(["-d", distro, "--", "sh", "-lc", "true"]);
+    let description = format!("wsl.exe probe '{}'", distro);
+    let out = run_windows_command_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(20),
+        &description,
+    )?;
+
+    if out.status.success() {
+        return Ok(true);
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let combined = format!("{stderr}\n{stdout}");
+    if wsl_output_indicates_missing_distro(&combined) {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_wait_for_distro_usable(distro: &str) -> Result<(), HypervisorError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut last_error = "distro registration is still settling".to_string();
+
+    while std::time::Instant::now() < deadline {
+        match wsl_distro_is_usable(distro) {
+            Ok(true) => return Ok(()),
+            Ok(false) => last_error = "distro is not registered yet".to_string(),
+            Err(error) => last_error = error.to_string(),
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Err(HypervisorError::CreateFailed(format!(
+        "WSL distro '{}' did not become usable after import: {}",
+        distro, last_error
+    )))
 }
 
 #[cfg(target_os = "windows")]
@@ -2630,5 +2701,18 @@ Local:
         assert!(command.contains("--ip6tables=false"));
         assert!(command.contains("--ip-forward=false"));
         assert!(command.contains("--ip-masq=false"));
+    }
+
+    #[test]
+    fn wsl_output_indicates_missing_distro_detects_known_error_text() {
+        let output = "Wsl/Service/WSL_E_DISTROLISTNOTFOUND: There is no distribution with the supplied name.";
+        assert!(wsl_output_indicates_missing_distro(output));
+    }
+
+    #[test]
+    fn wsl_output_indicates_missing_distro_ignores_other_errors() {
+        let output =
+            "The process cannot access the file because it is being used by another process.";
+        assert!(!wsl_output_indicates_missing_distro(output));
     }
 }
