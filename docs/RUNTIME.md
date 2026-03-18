@@ -77,8 +77,8 @@ Local Windows `tauri dev` / `tauri build` now performs the same asset preparatio
 CrateBay waits until the Docker API is actually reachable before reporting the Windows runtime as ready, and it auto-recovers a stale partial WSL import directory before re-importing the bundled distro.
 When Windows must fall back from `127.0.0.1` to the guest address, CrateBay now prefers the host-reachable WSL NAT IP and skips bridge-only addresses such as Docker's `172.17.0.1`.
 If a `wsl.exe` probe stalls during startup, CrateBay now fails that probe with a bounded timeout instead of hanging the whole `cratebay runtime start` flow indefinitely.
-Windows now asks the bundled Alpine WSL distro to start Docker through OpenRC service scripts first, so the runtime follows the distro's native service lifecycle instead of relying only on an ad-hoc shell bootstrap.
-If the OpenRC path still exits before the Docker API answers, CrateBay retries once with a compatibility-safe direct `dockerd` profile and validates readiness by pinging `/_ping` inside the guest instead of relying on log text alone.
+Windows now asks the bundled Alpine WSL distro to start Docker through OpenRC service scripts first, so the runtime follows the distro's native service lifecycle when that path is healthy.
+If the Docker API still does not come up promptly, CrateBay stops any partial startup and retries once by spawning a detached `wsl.exe` foreground `dockerd` process with a compatibility-safe profile, then validates readiness by pinging `/_ping` inside the guest instead of relying on log text alone.
 For deeper diagnosis, `CRATEBAY_RUNTIME_PROGRESS=1` prints the Windows WSL startup phases and probe command boundaries to stderr.
 
 ## Runtime images

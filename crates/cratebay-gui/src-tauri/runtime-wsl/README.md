@@ -18,4 +18,4 @@ runtime-wsl/
 Notes:
 
 - Release builds should include **only the matching host arch** to keep the app smaller.
-- In the repo, these start as placeholders. Local `tauri dev` / `tauri build` and release packaging now generate the real `rootfs.tar` locally from Alpine packages, including bundled OpenRC service files for `containerd` and `docker`, before bundling the Windows app.
+- In the repo, these start as placeholders. Local `tauri dev` / `tauri build` and release packaging now generate the real `rootfs.tar` locally from Alpine packages, including bundled OpenRC service files for `containerd` and `docker`; at runtime CrateBay can still fall back to a detached direct `dockerd` bootstrap if the OpenRC path does not reach Docker API health.
