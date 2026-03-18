@@ -1904,7 +1904,7 @@ fn wsl_try_start_dockerd_via_openrc(distro: &str, port: u16) -> Result<bool, Hyp
          fi"
     );
 
-    let output = wsl_exec_with_timeout(distro, command, std::time::Duration::from_secs(45))?;
+    let output = wsl_exec_with_timeout(distro, &command, std::time::Duration::from_secs(45))?;
     Ok(output.lines().any(|line| line.trim() == "started"))
 }
 
