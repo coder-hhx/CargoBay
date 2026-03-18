@@ -1893,8 +1893,14 @@ fn wsl_try_start_dockerd_via_openrc(distro: &str, port: u16) -> Result<bool, Hyp
              'DOCKER_ERRFILE=\"/var/log/dockerd.log\"' \
              >/etc/conf.d/docker; \
            printf '%s\\n' default > /run/openrc/softlevel; \
+           if [ -x /etc/init.d/sysfs ]; then \
+             rc-service sysfs start >> /var/log/openrc.log 2>&1 || true; \
+           fi; \
            if [ -x /etc/init.d/cgroups ]; then \
              rc-service cgroups start >> /var/log/openrc.log 2>&1 || true; \
+           fi; \
+           if [ -x /etc/init.d/networking ]; then \
+             rc-service networking start >> /var/log/openrc.log 2>&1 || true; \
            fi; \
            if [ -x /etc/init.d/containerd ]; then \
              rc-service containerd start >> /var/log/openrc.log 2>&1 || true; \

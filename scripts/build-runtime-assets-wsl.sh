@@ -253,6 +253,14 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 SH
 chmod 0755 "$rootfs_dir/etc/profile.d/cratebay.sh"
 
+if [[ -f "$rootfs_dir/etc/init.d/containerd" ]]; then
+  perl -0pi -e 's/need sysfs cgroups/after sysfs cgroups/' "$rootfs_dir/etc/init.d/containerd"
+fi
+
+if [[ -f "$rootfs_dir/etc/init.d/docker" ]]; then
+  perl -0pi -e 's/need sysfs cgroups net/after sysfs cgroups net/' "$rootfs_dir/etc/init.d/docker"
+fi
+
 for svc in cgroups containerd docker; do
   if [[ -e "$rootfs_dir/etc/init.d/$svc" ]]; then
     ln -sf "../../init.d/$svc" "$rootfs_dir/etc/runlevels/default/$svc"
