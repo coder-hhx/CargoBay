@@ -3207,15 +3207,49 @@ async fn handle_docker(cmd: DockerCommands) -> Result<(), String> {
 
 async fn docker_pull_image(docker: &Docker, reference: &str) -> Result<(), String> {
     let (from_image, tag) = split_image_reference(reference);
+    let platform = docker
+        .version()
+        .await
+        .ok()
+        .and_then(|version| docker_pull_platform_for_engine(&version))
+        .unwrap_or_default();
     let opts = CreateImageOptions {
         from_image,
         tag,
+        platform,
         ..Default::default()
     };
 
     let mut stream = docker.create_image(Some(opts), None, None);
     while let Some(_progress) = stream.try_next().await.map_err(format_bollard_error)? {}
     Ok(())
+}
+
+fn docker_pull_platform_for_engine(version: &bollard::system::Version) -> Option<String> {
+    let os = normalize_docker_platform_os(version.os.as_deref()?)?;
+    let arch = normalize_docker_platform_arch(version.arch.as_deref()?)?;
+    Some(format!("{os}/{arch}"))
+}
+
+fn normalize_docker_platform_os(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => None,
+        "linux" => Some("linux"),
+        "windows" => Some("windows"),
+        "darwin" | "macos" | "macosx" => Some("darwin"),
+        _ => None,
+    }
+}
+
+fn normalize_docker_platform_arch(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => None,
+        "amd64" | "x86_64" => Some("amd64"),
+        "arm64" | "aarch64" => Some("arm64"),
+        "arm" => Some("arm"),
+        "386" | "i386" | "i686" => Some("386"),
+        _ => None,
+    }
 }
 
 fn format_bollard_error(error: bollard::errors::Error) -> String {
@@ -3898,6 +3932,31 @@ mod tests {
             parse_docker_host_target("ssh://docker@example"),
             DockerHostTarget::Unsupported("ssh://docker@example".into())
         );
+    }
+
+    #[test]
+    fn docker_pull_platform_uses_engine_os_and_arch() {
+        let version = bollard::system::Version {
+            os: Some("linux".into()),
+            arch: Some("x86_64".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            docker_pull_platform_for_engine(&version).as_deref(),
+            Some("linux/amd64")
+        );
+    }
+
+    #[test]
+    fn docker_pull_platform_rejects_unknown_engine_values() {
+        let version = bollard::system::Version {
+            os: Some("linux".into()),
+            arch: Some("sparc".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(docker_pull_platform_for_engine(&version), None);
     }
 
     #[test]
