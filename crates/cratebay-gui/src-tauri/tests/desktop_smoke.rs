@@ -451,17 +451,18 @@ async fn desktop_shell_renders_and_navigates() {
         }
 
         click_css(&client, "[data-testid='nav-settings']").await?;
-
-        let settings_page = client
-            .source()
-            .await
-            .map_err(|e| format!("failed to read settings source: {e}"))?;
-        if !settings_page.contains("General") {
-            return Err("settings general tab should render".into());
-        }
-        if !settings_page.contains("AI") {
-            return Err("settings AI tab should render".into());
-        }
+        wait_for_css(
+            &client,
+            "[data-testid='settings-tab-general']",
+            Duration::from_secs(15),
+        )
+        .await?;
+        wait_for_css(
+            &client,
+            "[data-testid='settings-tab-ai']",
+            Duration::from_secs(15),
+        )
+        .await?;
 
         Ok(())
     }

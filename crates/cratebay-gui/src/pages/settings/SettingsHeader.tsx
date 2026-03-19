@@ -40,11 +40,19 @@ export function SettingsHeader({
 
         <Tabs value={settingsTab} onValueChange={(value) => setSettingsTab(value as SettingsTab)}>
           <TabsList className="w-fit">
-            <TabsTrigger value="general" className="flex-none gap-2 px-3">
+            <TabsTrigger
+              value="general"
+              data-testid="settings-tab-general"
+              className="flex-none gap-2 px-3"
+            >
               <span className={`[&_svg]:size-4 ${iconStroke}`}>{I.settings}</span>
               {t("settingsGeneralTab")}
             </TabsTrigger>
-            <TabsTrigger value="ai" className="flex-none gap-2 px-3">
+            <TabsTrigger
+              value="ai"
+              data-testid="settings-tab-ai"
+              className="flex-none gap-2 px-3"
+            >
               <span className={`[&_svg]:size-4 ${iconStroke}`}>{I.aiAssistant}</span>
               {t("settingsAiTab")}
             </TabsTrigger>
