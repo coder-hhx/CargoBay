@@ -6,12 +6,14 @@ CrateBay Runtime is CrateBay’s built-in Docker-compatible engine path. On macO
 
 - Host VM runner: `cratebay-vz` (spawned by `cratebay-core`)
 - Host Docker socket: `~/.cratebay/run/docker.sock`
-- Transport: **guest-initiated TCP tunnel**
-  - Host side creates the Unix socket and listens on port `6237` for a guest-initiated control/data channel.
-  - Guest side runs `cratebay-guest-agent`, connecting back to the host gateway on TCP `6237`, then proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
-  - The host-side socket bridge normalizes plain Docker HTTP requests to `Connection: close` and an explicit `Content-Length: 0` when needed so standard Docker clients do not leave the single reverse tunnel wedged on keep-alive reads.
+- Transport:
+  - Default: **TCP forwarding over the guest NAT IP**
+    - Host side creates the Unix socket and, for each connection, opens a TCP connection to the guest (NAT IP) on port `6237`.
+    - Guest side runs `cratebay-guest-agent`, listening on TCP `0.0.0.0:6237`, proxying traffic to the guest Docker socket (`/var/run/docker.sock`).
+  - Optional override: **virtio-vsock**
+    - When the guest exposes AF_VSOCK, the same guest agent can also proxy the Docker socket over the guest vsock port.
 - Default transport selection:
-  - CrateBay now defaults to a guest-initiated TCP tunnel on both Intel and Apple Silicon because Apple Virtualization's direct host->guest TCP and virtio-vsock paths are both less predictable in real runtime use.
+  - macOS currently defaults to TCP forwarding on both Intel and Apple Silicon.
   - `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` can override the default for debugging or targeted regression checks.
 
 ### macOS signing note (required on newer macOS)
@@ -21,15 +23,19 @@ On newer macOS versions, Virtualization.framework requires the VM runner process
 - `com.apple.security.virtualization`
 - `com.apple.security.hypervisor`
 
-Local development builds can use ad-hoc signing (what `scripts/install-local-macos-app.sh` does).
+Local development builds can use ad-hoc signing. `scripts/prepare-tauri-external-bins.sh` now signs the bundled `cratebay-vz` binary with the repo entitlements plist, and `scripts/install-local-macos-app.sh` re-signs the installed app bundle.
+
+Local macOS `tauri dev` / `tauri build` now auto-prepares both the runtime image assets and the signed `cratebay-vz` external binary before packaging. `scripts/runtime-smoke-cli-only.sh` also self-prepares that runner and exports `CRATEBAY_VZ_RUNNER_PATH`, so local CLI runtime smoke no longer depends on a previously installed app bundle.
+
+The built-in macOS runtime now keeps Rosetta disabled by default because the bundled runtime guest already matches the host architecture. If you explicitly need to debug the Rosetta share path, opt in with `CRATEBAY_RUNTIME_ROSETTA=1`.
 
 ### Guest requirements (runtime image)
 
 The runtime OS image must include and start on boot:
 
 - Docker Engine (`dockerd`) listening on **Unix socket** `/var/run/docker.sock`
-- `cratebay-guest-agent` establishing a **TCP** connection back to the host gateway on `6237`
-- `cratebay-guest-agent` available on vsock as the fallback bridge path when the guest exposes AF_VSOCK
+- `cratebay-guest-agent` listening on **TCP** `0.0.0.0:6237`
+- When AF_VSOCK is available, `cratebay-guest-agent` can also serve the same Docker socket on the guest vsock port for optional host-side vsock forwarding
 - Early boot clock sync from the host via `cratebay_host_epoch`, so TLS-based image pulls do not fail on a cold boot due to an epoch-skewed guest clock
 
 CrateBay exposes the host-side socket via `docker`-compatible clients by setting:
@@ -120,6 +126,7 @@ Shipping an install-and-use runtime means the desktop app must include a Linux k
 - `CRATEBAY_LINUX_RUNTIME_CMDLINE`: override the Linux runtime guest kernel cmdline
 - `CRATEBAY_RUNTIME_HTTP_PROXY`: override the runtime image-pull proxy (macOS also falls back to the system proxy from `scutil --proxy` when present)
 - `CRATEBAY_RUNTIME_SOCKET_FORWARD`: override the macOS runtime socket bridge (`tcp` or `vsock`)
+- `CRATEBAY_RUNTIME_ROSETTA`: opt in to mounting the Rosetta share for the macOS built-in runtime
 - `CRATEBAY_VZ_RUNNER_PATH`: override the macOS VM runner binary path
 - `CRATEBAY_WSL_DOCKER_PORT`: override the WSL dockerd TCP port (Windows only)
 - `CRATEBAY_WSL_ROOTFS_TAR`: override the WSL rootfs tar path (Windows only)

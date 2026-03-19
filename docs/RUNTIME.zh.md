@@ -6,12 +6,14 @@ CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS
 
 - Host VM runner：`cratebay-vz`（由 `cratebay-core` 拉起）
 - Host Docker socket：`~/.cratebay/run/docker.sock`
-- 传输：**guest 主动回连 host 的 TCP 通道**
-  - Host 侧创建 Unix socket，并在 `6237` 端口等待 guest 主动建立控制/数据通道。
-  - Guest 侧运行 `cratebay-guest-agent`，主动回连 host gateway 的 TCP `6237`，再把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
-  - Host 侧 socket bridge 会在安全前提下把普通 Docker HTTP 请求规范化成 `Connection: close` + 显式 `Content-Length: 0`，避免标准 Docker 客户端把这条单反向通道卡死在 keep-alive 读取上。
+- 传输：
+  - 默认：**通过 guest NAT IP 的 TCP 转发**
+    - Host 侧创建 Unix socket；每次有连接时，Host 会连接到 guest（NAT IP）的 TCP `6237` 并做转发。
+    - Guest 侧运行 `cratebay-guest-agent`，监听 TCP `0.0.0.0:6237`，把流量转发到 guest 内的 Docker socket（`/var/run/docker.sock`）。
+  - 可选覆盖：**virtio-vsock**
+    - 当 guest 暴露 AF_VSOCK 时，同一个 guest agent 也可以通过 guest vsock 端口代理 Docker socket。
 - 默认传输选择：
-  - Intel 与 Apple Silicon 现在都默认走 guest 主动回连的 TCP 通道，因为 Apple Virtualization 里的 direct host→guest TCP 与 virtio-vsock 路径在真实运行时场景下都不够稳定。
+  - macOS 目前在 Intel 和 Apple Silicon 上都默认走 TCP 转发。
   - 如需调试或做定向回归验证，可通过 `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp|vsock` 覆盖默认值。
 
 ### macOS 签名说明（较新 macOS 版本必需）
@@ -21,15 +23,19 @@ CrateBay Runtime 是 CrateBay 内置的 Docker 兼容运行时路径：在 macOS
 - `com.apple.security.virtualization`
 - `com.apple.security.hypervisor`
 
-本地开发可使用 ad-hoc 签名（`scripts/install-local-macos-app.sh` 已自动处理）。
+本地开发可使用 ad-hoc 签名。`scripts/prepare-tauri-external-bins.sh` 现在会使用仓库里的 entitlements plist 为打包用的 `cratebay-vz` 自动签名，`scripts/install-local-macos-app.sh` 则会在安装到应用目录后再次签名整个 app bundle。
+
+本地 macOS `tauri dev` / `tauri build` 现在会在打包前自动准备 runtime 镜像资产和已签名的 `cratebay-vz` external bin。`scripts/runtime-smoke-cli-only.sh` 也会自行准备该 runner 并导出 `CRATEBAY_VZ_RUNNER_PATH`，因此本地 CLI runtime smoke 不再依赖先安装一个桌面 app bundle。
+
+内置的 macOS runtime 现在默认不再开启 Rosetta，因为随应用打包的 runtime guest 本身就与宿主架构匹配。如果你确实要调试 Rosetta share 路径，可显式设置 `CRATEBAY_RUNTIME_ROSETTA=1` 再启用。
 
 ### Guest 侧要求（运行时镜像）
 
 运行时 OS 镜像需要包含并在开机时启动：
 
 - Docker Engine（`dockerd`），通过 **Unix socket** `/var/run/docker.sock` 对外提供服务
-- `cratebay-guest-agent`，主动回连 host gateway 的 **TCP** `6237`
-- `cratebay-guest-agent`，在 guest 暴露 AF_VSOCK 时也可作为兜底的 vsock bridge 路径
+- `cratebay-guest-agent`，监听 **TCP** `0.0.0.0:6237`
+- 当 AF_VSOCK 可用时，`cratebay-guest-agent` 也可以在 guest 的 vsock 端口上暴露同一个 Docker socket，供可选的 host 侧 vsock 转发使用
 - 通过 `cratebay_host_epoch` 在早期启动阶段同步 host 时间，避免冷启动后 guest 时钟仍停在 Unix epoch 而导致 TLS 拉取镜像失败
 
 要让 `docker` 兼容客户端连接到 CrateBay Runtime，可设置：
@@ -118,6 +124,7 @@ CrateBay 将 Runtime VM 视作一种 OS image：
 - `CRATEBAY_LINUX_RUNTIME_CMDLINE`：覆盖 Linux runtime guest 的 kernel cmdline
 - `CRATEBAY_RUNTIME_HTTP_PROXY`：覆盖 runtime 拉取镜像时使用的代理（macOS 在未显式设置时也会回退读取 `scutil --proxy` 的系统代理）
 - `CRATEBAY_RUNTIME_SOCKET_FORWARD`：覆盖 macOS runtime socket 桥接方式（`tcp` 或 `vsock`）
+- `CRATEBAY_RUNTIME_ROSETTA`：为 macOS 内置 runtime 显式开启 Rosetta share
 - `CRATEBAY_VZ_RUNNER_PATH`：覆盖 macOS VM runner 二进制路径
 - `CRATEBAY_WSL_DOCKER_PORT`：覆盖 WSL 内 dockerd 的 TCP 端口（仅 Windows）
 - `CRATEBAY_WSL_ROOTFS_TAR`：覆盖 WSL rootfs tar 的路径（仅 Windows）

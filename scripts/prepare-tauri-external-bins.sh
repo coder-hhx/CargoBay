@@ -4,6 +4,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
+has_virtualization_entitlements() {
+  local binary_path="$1"
+  command -v codesign >/dev/null 2>&1 || return 1
+  codesign -d --entitlements :- "$binary_path" 2>&1 | grep -Fq "com.apple.security.virtualization"
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "SKIP: prepare-tauri-external-bins.sh is macOS-only."
   exit 0
@@ -38,5 +44,24 @@ dst="${bin_dir}/cratebay-vz-${target}"
 cp "$src" "$dst"
 chmod +x "$dst"
 
-echo "External bin ready: ${dst}"
+if [[ "${CRATEBAY_SKIP_CODESIGN:-0}" != "1" ]]; then
+  if command -v codesign >/dev/null 2>&1; then
+    entitlements="$repo_root/scripts/macos-entitlements.plist"
+    if [[ -f "$entitlements" ]]; then
+      identity="${CRATEBAY_CODESIGN_IDENTITY:--}"
+      echo "== Codesign cratebay-vz (${target}) =="
+      codesign --force --sign "$identity" --options runtime --entitlements "$entitlements" "$dst"
+    else
+      echo "WARN: entitlements plist not found: $entitlements"
+    fi
+  else
+    echo "WARN: codesign not available; cratebay-vz may fail on newer macOS versions."
+  fi
+fi
 
+if [[ "${CRATEBAY_SKIP_CODESIGN:-0}" != "1" ]] && ! has_virtualization_entitlements "$dst"; then
+  echo "ERROR: cratebay-vz was staged without virtualization entitlements: $dst" >&2
+  exit 1
+fi
+
+echo "External bin ready: ${dst}"

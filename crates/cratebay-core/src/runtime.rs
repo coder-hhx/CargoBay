@@ -21,6 +21,24 @@ static DOCKER_VSOCK_PORT: OnceLock<u32> = OnceLock::new();
 static DOCKER_SOCKET_PATH: OnceLock<PathBuf> = OnceLock::new();
 static RUNTIME_OS_IMAGE_ID: OnceLock<String> = OnceLock::new();
 
+fn env_flag_truthy(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|raw| env_flag_truthy(&raw))
+        .unwrap_or(false)
+}
+
+fn runtime_rosetta_enabled(hv: &dyn Hypervisor) -> bool {
+    env_flag_enabled("CRATEBAY_RUNTIME_ROSETTA") && hv.rosetta_available()
+}
+
 /// The VM name CrateBay uses for its built-in container runtime.
 pub fn runtime_vm_name() -> &'static str {
     RUNTIME_VM_NAME
@@ -638,7 +656,7 @@ fn create_runtime_vm(hv: &dyn Hypervisor, image_id: &str) -> Result<String, Hype
         cpus: 2,
         memory_mb: 2048,
         disk_gb: 20,
-        rosetta: hv.rosetta_available(),
+        rosetta: runtime_rosetta_enabled(hv),
         shared_dirs: vec![],
         os_image: Some(image_id.to_string()),
         kernel_path: Some(paths.kernel_path.to_string_lossy().into_owned()),
@@ -1026,12 +1044,41 @@ pub fn stop_runtime_linux() -> Result<(), HypervisorError> {
 }
 
 #[cfg(target_os = "linux")]
+fn linux_runtime_port_conflict_message(host: &str) -> String {
+    format!(
+        "Linux runtime Docker host {} is already serving another endpoint; stop the conflicting service or set CRATEBAY_LINUX_DOCKER_PORT to a different port",
+        host
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_runtime_host_port_available(host: &str) -> Result<(), HypervisorError> {
+    let (tcp_host, port) = docker_host_tcp_endpoint(host)
+        .ok_or_else(|| HypervisorError::CreateFailed(format!("invalid Docker host '{}'", host)))?;
+
+    std::net::TcpListener::bind((tcp_host.as_str(), port))
+        .map(drop)
+        .map_err(|error| {
+            HypervisorError::CreateFailed(format!(
+                "{} ({})",
+                linux_runtime_port_conflict_message(host),
+                error
+            ))
+        })
+}
+
+#[cfg(target_os = "linux")]
 pub fn ensure_runtime_linux_running() -> Result<String, HypervisorError> {
     let _guard = crate::lock_or_recover(linux_runtime_lock());
     let host = runtime_linux_docker_host();
 
     if docker_http_ping_host(&host).is_ok() {
-        return Ok(host);
+        if runtime_linux_is_running() {
+            return Ok(host);
+        }
+        return Err(HypervisorError::CreateFailed(
+            linux_runtime_port_conflict_message(&host),
+        ));
     }
 
     if runtime_linux_is_running() {
@@ -1048,6 +1095,7 @@ pub fn ensure_runtime_linux_running() -> Result<String, HypervisorError> {
     let runtime_dir = runtime_linux_dir();
     std::fs::create_dir_all(&runtime_dir)?;
     let _ = std::fs::remove_file(runtime_linux_pidfile_path());
+    ensure_linux_runtime_host_port_available(&host)?;
 
     let console_log = runtime_linux_console_log_path();
     let _ = std::fs::OpenOptions::new()
@@ -2581,6 +2629,20 @@ mod tests {
         );
         assert_eq!(docker_host_tcp_endpoint("tcp://:2375"), None);
         assert_eq!(docker_host_tcp_endpoint("tcp://127.0.0.1"), None);
+    }
+
+    #[test]
+    fn env_flag_truthy_accepts_common_true_values() {
+        for value in ["1", "true", "TRUE", " yes ", "On"] {
+            assert!(env_flag_truthy(value), "expected truthy: {value}");
+        }
+    }
+
+    #[test]
+    fn env_flag_truthy_rejects_non_true_values() {
+        for value in ["", "0", "false", "off", "no", "debug"] {
+            assert!(!env_flag_truthy(value), "expected falsey: {value}");
+        }
     }
 
     #[test]

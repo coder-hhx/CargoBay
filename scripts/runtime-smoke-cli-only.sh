@@ -18,6 +18,72 @@ else
   cratebay_bin="$repo_root/target/debug/cratebay"
 fi
 
+ready_runtime_file() {
+  local file_path="$1"
+  [[ -f "$file_path" ]] || return 1
+  local file_size
+  file_size="$(wc -c <"$file_path" | tr -d ' ')"
+  if [[ "$file_size" -lt 1024 ]] && grep -Fq "PLACEHOLDER" "$file_path" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
+has_virtualization_entitlements() {
+  local binary_path="$1"
+  command -v codesign >/dev/null 2>&1 || return 1
+  codesign -d --entitlements :- "$binary_path" 2>&1 | grep -Fq "com.apple.security.virtualization"
+}
+
+prepare_macos_runtime() {
+  local host_arch runtime_arch runner_path entitlements
+
+  host_arch="$(uname -m)"
+  runtime_arch="$host_arch"
+  if [[ "$runtime_arch" == "arm64" ]]; then
+    runtime_arch="aarch64"
+  fi
+  if [[ "$runtime_arch" != "aarch64" && "$runtime_arch" != "x86_64" ]]; then
+    echo "ERROR: unsupported macOS arch '$host_arch'" >&2
+    exit 1
+  fi
+
+  if ! ready_runtime_file "$repo_root/crates/cratebay-gui/src-tauri/runtime-images/cratebay-runtime-${runtime_arch}/vmlinuz" \
+    || ! ready_runtime_file "$repo_root/crates/cratebay-gui/src-tauri/runtime-images/cratebay-runtime-${runtime_arch}/initramfs"; then
+    echo "== Prepare macOS runtime assets (${runtime_arch}) =="
+    bash "$repo_root/scripts/build-runtime-assets-alpine.sh" "$runtime_arch"
+  fi
+
+  runner_path="${CRATEBAY_VZ_RUNNER_PATH:-}"
+  if [[ -z "$runner_path" ]]; then
+    echo "== Build cratebay-vz =="
+    cargo build -p cratebay-vz >/dev/null
+    runner_path="$repo_root/target/debug/cratebay-vz"
+  fi
+
+  if [[ ! -x "$runner_path" ]]; then
+    echo "ERROR: macOS VM runner not found: $runner_path" >&2
+    exit 1
+  fi
+
+  if [[ "${CRATEBAY_SKIP_CODESIGN:-0}" != "1" ]] && command -v codesign >/dev/null 2>&1; then
+    entitlements="$repo_root/scripts/macos-entitlements.plist"
+    if [[ -f "$entitlements" ]]; then
+      echo "== Codesign cratebay-vz for Virtualization.framework =="
+      codesign --force --sign "${CRATEBAY_CODESIGN_IDENTITY:--}" --options runtime --entitlements "$entitlements" "$runner_path"
+    else
+      echo "WARN: entitlements plist not found: $entitlements" >&2
+    fi
+  fi
+
+  if [[ "${CRATEBAY_SKIP_CODESIGN:-0}" != "1" ]] && ! has_virtualization_entitlements "$runner_path"; then
+    echo "ERROR: macOS VM runner is missing virtualization entitlements: $runner_path" >&2
+    exit 1
+  fi
+
+  export CRATEBAY_VZ_RUNNER_PATH="$runner_path"
+}
+
 assert_contains() {
   local haystack="$1"
   local needle="$2"
@@ -60,13 +126,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  prepare_macos_runtime
+fi
+
 echo "== Build cratebay CLI =="
 cargo build -p cratebay-cli >/dev/null
-
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  echo "== Build cratebay-vz runner =="
-  cargo build -p cratebay-vz >/dev/null
-fi
 
 if [[ ! -x "$cratebay_bin" ]]; then
   echo "ERROR: built cratebay binary not found at $cratebay_bin"
