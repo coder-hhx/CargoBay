@@ -362,7 +362,7 @@ PY
 else
   echo "== Extract kernel modules from modloop (squashfs) =="
   rm -rf "$tmp_dir/modloop-root"
-  unsquashfs -d "$tmp_dir/modloop-root" "$tmp_dir/modloop" >/dev/null
+  unsquashfs -f -d "$tmp_dir/modloop-root" "$tmp_dir/modloop" >/dev/null
 
   mod_ver="$(ls "$tmp_dir/modloop-root/modules" 2>/dev/null | head -n 1 || true)"
   if [[ -z "$mod_ver" ]]; then
@@ -816,7 +816,6 @@ if command -v ctr >/dev/null 2>&1; then
 fi
 
 if [ -x /usr/local/bin/cratebay-guest-agent ]; then
-  guest_gateway_ip="$(ip route | awk '/default/ {print $3; exit}')"
   if [ -e /proc/net/vsock ]; then
     log "starting cratebay-guest-agent (vsock -> /var/run/docker.sock)"
     /usr/local/bin/cratebay-guest-agent --port "${docker_proxy_port}" --docker-sock /var/run/docker.sock &
@@ -825,16 +824,9 @@ if [ -x /usr/local/bin/cratebay-guest-agent ]; then
     agent_pid=""
     log "skipping cratebay-guest-agent (vsock): no vsock device"
   fi
-  if [ -n "$guest_gateway_ip" ]; then
-    log "starting cratebay-guest-agent (tcp connect ${guest_gateway_ip}:${docker_proxy_port} -> 127.0.0.1:${docker_api_port})"
-    /usr/local/bin/cratebay-guest-agent --connect "${guest_gateway_ip}:${docker_proxy_port}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
-    agent_tcp_pid="$!"
-  else
-    log "WARN: failed to detect guest gateway ip; falling back to guest TCP listen mode"
-    log "starting cratebay-guest-agent (tcp listen ${docker_proxy_port} -> 127.0.0.1:${docker_api_port})"
-    /usr/local/bin/cratebay-guest-agent --tcp --port "${docker_proxy_port}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
-    agent_tcp_pid="$!"
-  fi
+  log "starting cratebay-guest-agent (tcp listen ${docker_proxy_port} -> 127.0.0.1:${docker_api_port})"
+  /usr/local/bin/cratebay-guest-agent --tcp --port "${docker_proxy_port}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
+  agent_tcp_pid="$!"
   sleep 0.2
   if [ -n "$agent_pid" ] && ! kill -0 "$agent_pid" >/dev/null 2>&1; then
     log "WARN: cratebay-guest-agent (vsock) exited early"

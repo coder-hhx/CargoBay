@@ -32,6 +32,17 @@ if [[ -z "$rust_target" ]]; then
   exit 1
 fi
 
+ready_runtime_file() {
+  local file_path="$1"
+  [[ -f "$file_path" ]] || return 1
+  local file_size
+  file_size="$(wc -c <"$file_path" | tr -d ' ')"
+  if [[ "$file_size" -lt 1024 ]] && grep -Fq "PLACEHOLDER" "$file_path" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
 ensure_node_runtime() {
   if command -v node >/dev/null 2>&1; then
     local current_major
@@ -69,8 +80,14 @@ if ! ensure_node_runtime; then
   exit 1
 fi
 
-echo "== Prepare bundled runtime assets (${runtime_arch}) =="
-bash "$repo_root/scripts/build-runtime-assets-alpine.sh" "$runtime_arch"
+runtime_image_dir="$repo_root/crates/cratebay-gui/src-tauri/runtime-images/cratebay-runtime-${runtime_arch}"
+if ready_runtime_file "$runtime_image_dir/vmlinuz" && ready_runtime_file "$runtime_image_dir/initramfs"; then
+  echo "== Prepare bundled runtime assets (${runtime_arch}) =="
+  echo "Bundled runtime assets already present."
+else
+  echo "== Prepare bundled runtime assets (${runtime_arch}) =="
+  bash "$repo_root/scripts/build-runtime-assets-alpine.sh" "$runtime_arch"
+fi
 
 echo "== Prepare Tauri external binaries (${rust_target}) =="
 bash "$repo_root/scripts/prepare-tauri-external-bins.sh" "$rust_target"
