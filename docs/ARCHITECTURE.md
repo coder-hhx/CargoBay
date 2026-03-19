@@ -77,6 +77,8 @@ CrateBay/
 - `crates/cratebay-gui/src-tauri/src/lib.rs` 现在主要保留共享应用装配、assistant 编排、测试与 Tauri 启动逻辑。
 - Tauri 后端按领域拆分到 `crates/cratebay-gui/src-tauri/src/docker.rs`、`crates/cratebay-gui/src-tauri/src/vm.rs`、`crates/cratebay-gui/src-tauri/src/kubernetes.rs`、`crates/cratebay-gui/src-tauri/src/tray.rs`、`crates/cratebay-gui/src-tauri/src/ai.rs` 与 `crates/cratebay-gui/src-tauri/src/update.rs`。
 - CLI 命令处理拆分到 `crates/cratebay-cli/src/runtime.rs`、`crates/cratebay-cli/src/vm.rs`、`crates/cratebay-cli/src/image.rs`、`crates/cratebay-cli/src/docker.rs`、`crates/cratebay-cli/src/volume.rs` 与 `crates/cratebay-cli/src/k3s.rs`，`crates/cratebay-cli/src/main.rs` 主要负责命令定义与入口装配。
+- GUI 侧的 AI Hub 现在把页头、Models、Sandboxes、MCP 等标签页内容拆分到 `crates/cratebay-gui/src/pages/ai-hub/` 目录，`crates/cratebay-gui/src/pages/AiHub.tsx` 主要保留状态编排与命令处理。
+- `crates/cratebay-gui/src/App.tsx` 现在按页面懒加载 Dashboard / AI Hub / Containers / Images / Volumes / Settings，减少首屏 bundle 体积并让桌面导航装配更清晰。
 - 默认桌面导航当前只对外暴露 Dashboard、AI Hub、Containers、Images、Volumes 与 Settings。VM 和 Kubernetes 的后端代码仍保留用于后续阶段，但在专用 runtime 验证补齐前会继续从默认 GUI 中隐藏。
 
 ## 关键设计决策

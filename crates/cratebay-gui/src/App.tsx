@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { Suspense, lazy, useState, useEffect, useCallback, useMemo } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { messages } from "./i18n/messages"
@@ -16,13 +16,16 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Toaster } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
-import { Dashboard } from "./pages/Dashboard"
-import { Containers } from "./pages/Containers"
-import { Images } from "./pages/Images"
-import { Volumes } from "./pages/Volumes"
-import { Settings, type SettingsTab } from "./pages/Settings"
-import { AiHub, type AiHubTab } from "./pages/AiHub"
+import type { SettingsTab } from "./pages/Settings"
+import type { AiHubTab } from "./pages/AiHub"
 import type { DockerRuntimeSetupResult, NavPage, Theme, LocalImageInfo } from "./types"
+
+const DashboardPage = lazy(async () => ({ default: (await import("./pages/Dashboard")).Dashboard }))
+const ContainersPage = lazy(async () => ({ default: (await import("./pages/Containers")).Containers }))
+const ImagesPage = lazy(async () => ({ default: (await import("./pages/Images")).Images }))
+const VolumesPage = lazy(async () => ({ default: (await import("./pages/Volumes")).Volumes }))
+const SettingsPage = lazy(async () => ({ default: (await import("./pages/Settings")).Settings }))
+const AiHubPage = lazy(async () => ({ default: (await import("./pages/AiHub")).AiHub }))
 
 function App() {
   const [activePage, setActivePage] = useState<NavPage>("dashboard")
@@ -279,7 +282,7 @@ function App() {
     switch (activePage) {
       case "dashboard":
         return (
-          <Dashboard
+          <DashboardPage
             containers={containers.containers}
             running={containers.running}
             imgResultsCount={images.imgResults.length}
@@ -293,7 +296,7 @@ function App() {
         )
       case "containers":
         return (
-          <Containers
+          <ContainersPage
             containers={containers.containers}
             groups={containers.groups}
             loading={containers.loading}
@@ -318,7 +321,7 @@ function App() {
         )
       case "images":
         return (
-          <Images
+          <ImagesPage
             {...images}
             onSearch={images.doSearch}
             onTags={images.doTags}
@@ -346,7 +349,7 @@ function App() {
         )
       case "volumes":
         return (
-          <Volumes
+          <VolumesPage
             volumes={volumeHook.volumes}
             loading={volumeHook.loading}
             error={volumeHook.error}
@@ -380,10 +383,10 @@ function App() {
           />
         )
       case "ai":
-        return <AiHub t={t} initialTab={aiTabIntent} />
+        return <AiHubPage t={t} initialTab={aiTabIntent} />
       case "settings":
         return (
-          <Settings
+          <SettingsPage
             theme={theme}
             setTheme={setTheme}
             lang={lang}
@@ -532,7 +535,9 @@ function App() {
             key={activePage}
             className="h-full overflow-auto px-6 py-5 animate-in fade-in-0 slide-in-from-top-1 duration-200"
           >
-            {renderPage()}
+            <Suspense fallback={<div className="p-2 text-sm text-muted-foreground">{t("working")}</div>}>
+              {renderPage()}
+            </Suspense>
           </div>
         </div>
       </div>
