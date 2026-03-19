@@ -16,11 +16,33 @@ else
   test_args=(--workspace --exclude cratebay-gui --exclude cratebay-vz -- --test-threads=1)
 fi
 
+ready_runtime_file() {
+  local file_path="$1"
+  [[ -f "$file_path" ]] || return 1
+  local file_size
+  file_size="$(wc -c <"$file_path" | tr -d ' ')"
+  if [[ "$file_size" -lt 1024 ]] && grep -Fq "PLACEHOLDER" "$file_path" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
 echo "== Local CI: Rust clippy =="
 cargo clippy "${clippy_args[@]}"
 
 echo "== Local CI: Rust tests =="
 cargo test "${test_args[@]}"
+
+if [[ "$os_name" == "Darwin" ]]; then
+  rust_target="$(rustc -vV | awk '/^host:/ {print $2}' | head -n 1)"
+  tauri_runner="$repo_root/crates/cratebay-gui/src-tauri/bin/cratebay-vz-${rust_target}"
+  if ready_runtime_file "$tauri_runner"; then
+    echo "== Local CI: Tauri external bin already present =="
+  else
+    echo "== Local CI: Prepare Tauri external bin (${rust_target}) =="
+    bash "$repo_root/scripts/prepare-tauri-external-bins.sh" "$rust_target"
+  fi
+fi
 
 echo "== Local CI: GUI backend Rust check =="
 cargo check -p cratebay-gui
