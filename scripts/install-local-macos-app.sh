@@ -37,8 +37,13 @@ ready_runtime_file() {
   [[ -f "$file_path" ]] || return 1
   local file_size
   file_size="$(wc -c <"$file_path" | tr -d ' ')"
-  if [[ "$file_size" -lt 1024 ]] && grep -Fq "PLACEHOLDER" "$file_path" 2>/dev/null; then
-    return 1
+  if [[ "$file_size" -lt 1024 ]]; then
+    if grep -Fq "PLACEHOLDER" "$file_path" 2>/dev/null; then
+      return 1
+    fi
+    if grep -Fq "version https://git-lfs.github.com/spec/v1" "$file_path" 2>/dev/null; then
+      return 1
+    fi
   fi
   return 0
 }

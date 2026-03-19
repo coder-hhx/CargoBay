@@ -76,7 +76,11 @@ function fileHasPlaceholderMarker(filePath) {
   if (!stat.isFile() || stat.size >= 1024) {
     return false
   }
-  return fs.readFileSync(filePath, "utf8").includes("PLACEHOLDER")
+  const content = fs.readFileSync(filePath, "utf8")
+  return (
+    content.includes("PLACEHOLDER") ||
+    content.includes("version https://git-lfs.github.com/spec/v1")
+  )
 }
 
 function readyFile(filePath) {

@@ -429,7 +429,10 @@ fn file_contains_placeholder_marker(path: &Path) -> bool {
     }
 
     std::fs::read_to_string(path)
-        .map(|txt| txt.contains("PLACEHOLDER"))
+        .map(|txt| {
+            txt.contains("PLACEHOLDER")
+                || txt.contains("version https://git-lfs.github.com/spec/v1")
+        })
         .unwrap_or(false)
 }
 
@@ -599,7 +602,7 @@ fn install_runtime_image_from_assets(image_id: &str) -> Result<(), HypervisorErr
         }
         if file_contains_placeholder_marker(&src) {
             return Err(HypervisorError::CreateFailed(format!(
-                "Runtime asset '{}' is a placeholder. Fetch real assets before using CrateBay Runtime.",
+                "Runtime asset '{}' is a placeholder or Git LFS pointer. Fetch real assets before using CrateBay Runtime.",
                 src.display()
             )));
         }
@@ -1530,7 +1533,7 @@ fn runtime_wsl_rootfs_tar_path() -> Result<PathBuf, HypervisorError> {
 
     if file_contains_placeholder_marker(&path) {
         return Err(HypervisorError::CreateFailed(format!(
-            "WSL runtime asset '{}' is a placeholder. Fetch real assets before using CrateBay Runtime.",
+            "WSL runtime asset '{}' is a placeholder or Git LFS pointer. Fetch real assets before using CrateBay Runtime.",
             path.display()
         )));
     }
@@ -2643,6 +2646,28 @@ mod tests {
         for value in ["", "0", "false", "off", "no", "debug"] {
             assert!(!env_flag_truthy(value), "expected falsey: {value}");
         }
+    }
+
+    #[test]
+    fn placeholder_marker_detection_rejects_git_lfs_pointers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        std::fs::write(
+            &path,
+            "version https://git-lfs.github.com/spec/v1\noid sha256:deadbeef\nsize 42\n",
+        )
+        .unwrap();
+
+        assert!(file_contains_placeholder_marker(&path));
+    }
+
+    #[test]
+    fn placeholder_marker_detection_ignores_real_large_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vmlinuz");
+        std::fs::write(&path, vec![0u8; 2048]).unwrap();
+
+        assert!(!file_contains_placeholder_marker(&path));
     }
 
     #[test]
