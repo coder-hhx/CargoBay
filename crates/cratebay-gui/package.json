@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build",
     "tauri:predev": "node scripts/prepare-runtime-assets.mjs dev && vite",
     "tauri:prebuild": "node scripts/prepare-runtime-assets.mjs build && npm run build",
+    "tauri:icon": "tauri icon app-icon.png --output src-tauri/icons && rm -rf src-tauri/icons/64x64.png src-tauri/icons/android src-tauri/icons/ios",
     "check:i18n": "node scripts/check-i18n.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
