@@ -2,7 +2,7 @@
 
 > **English** · [中文](TUTORIAL.zh.md)
 >
-> CrateBay is a free, open-source desktop app for Docker containers and lightweight Linux VMs, with a native GUI (Tauri + React) and a Rust-powered CLI.
+> CrateBay is an open-source desktop control plane for local AI workflows, with a native GUI (Tauri + React), a Rust-powered CLI, and container runtime management built in.
 
 ---
 
@@ -157,7 +157,7 @@ npm run test:e2e:install
 npx playwright test
 ```
 
-The Playwright suite validates the real built frontend with a mocked Tauri bridge and covers app shell navigation, containers/images/volumes, VMs/Kubernetes, AI Hub flows, assistant flows, and security guardrails.
+The Playwright suite validates the real built frontend with a mocked Tauri bridge and covers app shell navigation, containers/images/volumes, AI Hub flows, assistant flows, and security guardrails.
 
 For runtime-level confidence, add these targeted gates:
 
@@ -186,7 +186,6 @@ The default landing page. Shows a card-based overview:
 | Card | Description |
 |------|-------------|
 | **Containers** | Total container count, click to jump to container management |
-| **Virtual Machines** | VM count (experimental) |
 | **Images** | Image search result count (last search) |
 | **System** | Docker connection status |
 
@@ -213,20 +212,6 @@ Full container management page:
 
 The container list auto-refreshes every 3 seconds. Connection status is shown in the top-right pill.
 
-### Kubernetes
-
-The Kubernetes page provides:
-
-- **K3s Cluster Management** — Install, start, stop, and uninstall K3s directly from the GUI
-- **Cluster Status** — Version, node count, kubeconfig path
-- **Pods Tab** — View all pods across namespaces, with status, ready count, restarts, and age
-- **Services Tab** — View cluster services with type, cluster IP, and ports
-- **Deployments Tab** — View deployments with replica status
-- **Namespace Selector** — Filter by namespace or view all
-- **Pod Logs** — Click to view logs for any pod
-
-> Note: K3s is Linux-only. On macOS/Windows, K3s will run inside a CrateBay Linux VM in a future release.
-
 ### Volumes
 
 Docker volume management:
@@ -236,21 +221,13 @@ Docker volume management:
 - **Inspect volume** — View volume details (labels, options, scope)
 - **Delete volume** — Remove unused volumes
 
-### Virtual Machines (虚拟机)
+### Experimental backend surfaces
 
-Experimental (future track, not part of the current release gate):
+VM and Kubernetes codepaths remain in the Rust backend and CLI as future-track work, but they are intentionally hidden from the default desktop navigation until dedicated runtime runners exist.
 
-- **Create / start / stop / delete / list** with full lifecycle management
-- **CPU / Memory / Disk** parameters on creation
-- **ACPI graceful shutdown** (3-phase: requestStop → poll → force stop)
-- **Rosetta toggle** (macOS Apple Silicon only; availability depends on macOS 13+)
-- **VirtioFS file sharing** (real mount with tag validation and guest hints)
-- **Port forwarding** (TCP proxy for VM services)
-- **Resource monitoring** (CPU / memory / disk / network stats)
-- **OS image download** (Alpine, Ubuntu — auto-download kernel/initrd)
-- **Login command**: generates an `ssh user@host -p <port>` string
-
-> Note: VM metadata is persisted to `vms.json` under the Config directory. The VM runtime backend uses Virtualization.framework (macOS), KVM (Linux), or Hyper-V (Windows).
+- **VM backend scope** — create / start / stop / delete / list, port forwarding, VirtioFS, console, stats, and OS image download flows remain implemented behind the backend / CLI surface.
+- **Kubernetes backend scope** — K3s lifecycle helpers and read-only cluster inspection remain implemented behind the backend / CLI surface.
+- **Release policy** — these paths are not part of the current public release gate and should be treated as experimental until dedicated Linux/macOS/Windows runtime validation lands.
 
 ### Images (镜像)
 

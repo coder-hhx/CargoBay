@@ -17,7 +17,7 @@ A feature is not considered release-ready until it is covered by as many of the 
 
 - **Primary current surfaces** — AI Hub Sandboxes, AI Hub Models, MCP, and provider / CLI bridges.
 - **Supporting runtime** — Containers, images, and volumes remain in scope as the enabling runtime for those AI workflows.
-- **Experimental / future track** — VMs and Kubernetes remain visible in the product and matrix, but they are not release-blocking until dedicated runtime runners exist.
+- **Experimental / future track** — VM and Kubernetes backends remain in the repo, but the default desktop navigation now hides them until dedicated runtime runners exist, so they are not release-blocking.
 
 ## Matrix
 
@@ -27,8 +27,8 @@ A feature is not considered release-ready until it is covered by as many of the 
 | Containers | Create / list / env / lifecycle | ✅ | ✅ | ✅ | ✅ | Real Docker CLI smoke runs in Linux CI against both the host engine path and the bundled Linux runtime path, and Linux desktop smoke exercises create → env → login command → stop/start → remove through the real Tauri shell |
 | Images | Search / run / pack / inspect | ✅ | ✅ | ⏳ | ✅ | Real registry + Docker image smoke runs in Linux CI |
 | Volumes | Create / inspect / remove | ✅ | ✅ | ⏳ | ✅ | Real Docker volume lifecycle is asserted in Linux CI |
-| VMs | Create / port forwarding / login command / console | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but explicitly treated as an experimental future-track surface until dedicated hypervisor runners exist |
-| Kubernetes | Pod list / log viewing | ✅ | ✅ | ⏳ | ⏳ | Browser-covered today, but kept on the future track until a real K3s runner is wired in |
+| VMs | Create / port forwarding / login command / console | ✅ | ⏳ | ⏳ | ⏳ | Backend and CLI flows remain implemented, but the GUI route is intentionally hidden until dedicated hypervisor runners exist |
+| Kubernetes | Pod list / log viewing | ✅ | ⏳ | ⏳ | ⏳ | Backend helpers remain in place, but the GUI route is intentionally hidden until a real K3s runner is wired in |
 | AI Hub Models | Status / list / pull / delete / storage | ✅ | ✅ | ⏳ | ⏳ | Runtime canary now exercises the real HTTP + local CLI path with a protocol-compatible Ollama stub; real Ollama daemon CI is still pending |
 | AI Hub Sandboxes | Create / execute / restart / delete / audit | ✅ | ✅ | ⏳ | ✅ | Real Docker-backed sandbox smoke now runs in CI; sandbox creation also auto-pulls missing images |
 | MCP | Registry / start-stop / export / logs | ✅ | ✅ | ✅ | ✅ | Real local process lifecycle smoke runs in CI via backend tests, and Linux desktop smoke now covers create → save → start → logs → stop in the real shell |

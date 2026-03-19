@@ -56,66 +56,6 @@ vi.mock("./hooks/useImageSearch", () => ({
   }),
 }))
 
-vi.mock("./hooks/useVms", () => ({
-  useVms: () => ({
-    vms: [{ id: "vm-1", name: "dev-vm", state: "stopped", cpus: 2, memory_mb: 2048, disk_gb: 20, rosetta_enabled: false, mounts: [], port_forwards: [], os_image: null }],
-    running: [],
-    vmLoading: false,
-    vmError: "",
-    setVmError: vi.fn(),
-    vmName: "",
-    setVmName: vi.fn(),
-    vmCpus: 2,
-    setVmCpus: vi.fn(),
-    vmMem: 2048,
-    setVmMem: vi.fn(),
-    vmDisk: 20,
-    setVmDisk: vi.fn(),
-    vmRosetta: false,
-    setVmRosetta: vi.fn(),
-    vmActing: "",
-    vmLoginUser: "",
-    setVmLoginUser: vi.fn(),
-    vmLoginHost: "",
-    setVmLoginHost: vi.fn(),
-    vmLoginPort: 22,
-    setVmLoginPort: vi.fn(),
-    mountVmId: "",
-    setMountVmId: vi.fn(),
-    mountTag: "",
-    setMountTag: vi.fn(),
-    mountHostPath: "",
-    setMountHostPath: vi.fn(),
-    mountGuestPath: "",
-    setMountGuestPath: vi.fn(),
-    mountReadonly: false,
-    setMountReadonly: vi.fn(),
-    pfVmId: "",
-    setPfVmId: vi.fn(),
-    pfHostPort: 0,
-    setPfHostPort: vi.fn(),
-    pfGuestPort: 0,
-    setPfGuestPort: vi.fn(),
-    pfProtocol: "tcp",
-    setPfProtocol: vi.fn(),
-    fetchVms: vi.fn(),
-    vmAction: vi.fn(),
-    createVm: vi.fn(),
-    getLoginCmd: vi.fn(),
-    addMount: vi.fn(),
-    removeMount: vi.fn(),
-    osImages: [],
-    selectedOsImage: "",
-    setSelectedOsImage: vi.fn(),
-    downloadingImage: "",
-    downloadProgress: 0,
-    downloadOsImage: vi.fn(),
-    deleteOsImage: vi.fn(),
-    addPortForward: vi.fn(),
-    removePortForward: vi.fn(),
-  }),
-}))
-
 vi.mock("./hooks/useVolumes", () => ({
   useVolumes: () => ({
     volumes: [],
@@ -146,10 +86,8 @@ vi.mock("./hooks/useModal", () => ({
 vi.mock("./pages/Dashboard", () => ({ Dashboard: () => <div>Dashboard Page</div> }))
 vi.mock("./pages/Containers", () => ({ Containers: () => <div>Containers Page</div> }))
 vi.mock("./pages/Images", () => ({ Images: () => <div>Images Page</div> }))
-vi.mock("./pages/Vms", () => ({ Vms: () => <div>VMs Page</div> }))
 vi.mock("./pages/Volumes", () => ({ Volumes: () => <div>Volumes Page</div> }))
 vi.mock("./pages/Settings", () => ({ Settings: () => <div>Settings Page</div> }))
-vi.mock("./pages/Kubernetes", () => ({ Kubernetes: () => <div>Kubernetes Page</div> }))
 vi.mock("./pages/AiHub", () => ({ AiHub: () => <div>AI Page</div> }))
 vi.mock("./components/AppModal", () => ({ AppModal: () => null }))
 vi.mock("./components/UpdateChecker", () => ({ UpdateChecker: () => null }))

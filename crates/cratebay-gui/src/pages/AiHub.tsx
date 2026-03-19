@@ -16,6 +16,7 @@ import { formatSandboxError } from "@/lib/sandboxErrors"
 import { cn } from "@/lib/utils"
 import { iconStroke, cardActionDanger, cardActionOutline, cardActionSecondary } from "@/lib/styles"
 import { Assistant } from "./Assistant"
+import { AiHubHeader } from "./ai-hub/AiHubHeader"
 import type {
   AiHubActionResultDto,
   GpuStatusDto,
@@ -609,33 +610,7 @@ export function AiHub({ t, initialTab = "sandboxes" }: AiHubProps) {
 
   return (
     <div className="space-y-4">
-      <Card className="py-0">
-        <CardContent className="py-4 space-y-3">
-          <div className="flex items-start gap-3">
-            <div className="size-10 shrink-0 rounded-lg bg-primary/10 text-primary flex items-center justify-center [&_svg]:size-5 [&_svg]:fill-none [&_svg]:stroke-current [&_svg]:stroke-2 [&_svg]:stroke-linecap-round [&_svg]:stroke-linejoin-round">
-              {I.aiAssistant}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-foreground">{t("ai")}</div>
-                <Badge
-                  variant="secondary"
-                  className="rounded-md border border-brand-cyan/15 bg-brand-cyan/10 px-1.5 py-0 text-[11px] text-brand-cyan"
-                >
-                  {t("aiInfra")}
-                </Badge>
-                <span className="text-muted-foreground/40">•</span>
-                <span className="text-xs text-muted-foreground">
-                  {t("aiHubActiveTab")}: <span className="text-foreground/90 font-medium">{tabLabel}</span>
-                </span>
-              </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {t("aiHubDesc")}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+      <AiHubHeader t={t} tabLabel={tabLabel} />
 
     <Tabs value={tab} onValueChange={(v) => setTab(v as AiHubTab)}>
       <TabsList variant="line" className="w-full justify-start">

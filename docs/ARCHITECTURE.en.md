@@ -72,6 +72,13 @@ CrateBay/
 └── website/               # Official website (GitHub Pages)
 ```
 
+## Current Code Layout
+
+- `crates/cratebay-gui/src-tauri/src/lib.rs` now stays focused on shared app wiring, assistant orchestration, tests, and Tauri bootstrap.
+- Tauri backend domains are split into `crates/cratebay-gui/src-tauri/src/docker.rs`, `crates/cratebay-gui/src-tauri/src/vm.rs`, `crates/cratebay-gui/src-tauri/src/kubernetes.rs`, `crates/cratebay-gui/src-tauri/src/tray.rs`, `crates/cratebay-gui/src-tauri/src/ai.rs`, and `crates/cratebay-gui/src-tauri/src/update.rs`.
+- CLI command handling is split across `crates/cratebay-cli/src/runtime.rs`, `crates/cratebay-cli/src/vm.rs`, `crates/cratebay-cli/src/image.rs`, `crates/cratebay-cli/src/docker.rs`, `crates/cratebay-cli/src/volume.rs`, and `crates/cratebay-cli/src/k3s.rs`, with `crates/cratebay-cli/src/main.rs` focused on command definitions and entry wiring.
+- The default desktop navigation intentionally exposes Dashboard, AI Hub, Containers, Images, Volumes, and Settings. VM and Kubernetes backend code remains available for future-track work, but those routes are hidden from the default GUI until dedicated runtime validation exists.
+
 ## Key Design Decisions
 
 1. **Hybrid IPC model** — Containers connect directly to the Docker socket (performance first); VMs go through the gRPC Daemon (requires privileges and lifecycle management). No unnecessary middleware for Docker.

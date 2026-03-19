@@ -16,10 +16,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { APP_VERSION } from "@/lib/appVersion"
 import { defaultSkillInputValue, formatSkillExecutionOutput, skillNeedsConfirmation, skillUsesPromptInput } from "@/lib/aiSkills"
-import { cardActionOutline, cardActionSecondary, iconStroke } from "@/lib/styles"
+import { cardActionOutline, cardActionSecondary } from "@/lib/styles"
+import { SettingsHeader } from "./settings/SettingsHeader"
 import type {
   AgentCliPreset,
   AgentCliRunResult,
@@ -476,39 +476,12 @@ export function Settings({ theme, setTheme, lang, setLang, t, initialTab = "gene
 
   return (
     <div className="space-y-6">
-      <Card className="py-0">
-        <CardContent className="py-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className={`size-10 shrink-0 rounded-lg bg-primary/10 text-primary flex items-center justify-center [&_svg]:size-5 ${iconStroke}`}>
-              {I.settings}
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-foreground">{t("settings")}</div>
-                <Badge variant="secondary" className="rounded-md px-1.5 py-0 text-[11px]">
-                  {settingsTabLabel}
-                </Badge>
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("settingsGeneralTab")} · {t("settingsAiTab")}
-              </div>
-            </div>
-          </div>
-
-          <Tabs value={settingsTab} onValueChange={(v) => setSettingsTab(v as SettingsTab)}>
-            <TabsList className="w-fit">
-              <TabsTrigger value="general" className="flex-none gap-2 px-3">
-                <span className={`[&_svg]:size-4 ${iconStroke}`}>{I.settings}</span>
-                {t("settingsGeneralTab")}
-              </TabsTrigger>
-              <TabsTrigger value="ai" className="flex-none gap-2 px-3">
-                <span className={`[&_svg]:size-4 ${iconStroke}`}>{I.aiAssistant}</span>
-                {t("settingsAiTab")}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </CardContent>
-      </Card>
+      <SettingsHeader
+        t={t}
+        settingsTab={settingsTab}
+        settingsTabLabel={settingsTabLabel}
+        setSettingsTab={setSettingsTab}
+      />
 
       <section className="space-y-3" hidden={settingsTab !== "general"}>
         <div className="text-xs font-semibold tracking-widest text-muted-foreground">

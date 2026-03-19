@@ -2,7 +2,7 @@
 
 > [English](TUTORIAL.md) · **中文**
 >
-> CrateBay 是一款免费开源的 Docker 容器与轻量 Linux 虚拟机桌面工具，提供 Tauri + React 原生桌面 GUI 与 Rust 命令行。
+> CrateBay 是一个面向本地 AI 工作流的开源桌面控制台，提供 Tauri + React 原生桌面 GUI、Rust 命令行，以及内置容器运行时管理能力。
 
 ---
 
@@ -157,7 +157,7 @@ npm run test:e2e:install
 npx playwright test
 ```
 
-这套 Playwright 用例会运行真实构建后的前端，并注入 Tauri bridge mock，覆盖应用壳导航、容器/镜像/卷、VM/Kubernetes、AI Hub、Assistant 与安全护栏回归场景。
+这套 Playwright 用例会运行真实构建后的前端，并注入 Tauri bridge mock，覆盖应用壳导航、容器/镜像/卷、AI Hub、Assistant 与安全护栏回归场景。
 
 如果要补齐运行时级别信心，可以额外执行：
 
@@ -186,7 +186,6 @@ cargo build --release --bin cratebay
 | 卡片 | 说明 |
 |------|-------------|
 | **Containers** | 容器总数，点击进入容器管理 |
-| **Virtual Machines** | 虚拟机数量（实验） |
 | **Images** | 镜像搜索结果数量（最近一次搜索） |
 | **System** | Docker 连接状态 |
 
@@ -213,20 +212,6 @@ cargo build --release --bin cratebay
 
 容器列表每 3 秒自动刷新；右上角会显示连接状态。
 
-### Kubernetes
-
-Kubernetes 页面提供：
-
-- **K3s 集群管理** — 安装、启动、停止、卸载 K3s
-- **集群状态** — 版本、节点数、kubeconfig 路径
-- **Pods 标签页** — 查看所有命名空间的 Pod 及其状态、就绪数、重启次数、运行时间
-- **Services 标签页** — 查看集群 Service（类型、集群 IP、端口）
-- **Deployments 标签页** — 查看 Deployment 副本状态
-- **命名空间选择器** — 按命名空间筛选或查看全部
-- **Pod 日志** — 点击查看任意 Pod 的日志
-
-> 注意：K3s 仅支持 Linux。macOS/Windows 上将在后续版本中通过 CrateBay Linux VM 运行。
-
 ### Volumes（存储卷）
 
 Docker 存储卷管理：
@@ -236,21 +221,13 @@ Docker 存储卷管理：
 - **查看存储卷** — 查看详细信息（标签、选项、范围）
 - **删除存储卷** — 删除未使用的存储卷
 
-### Virtual Machines（虚拟机）
+### 实验性后端能力
 
-实验特性（后续阶段能力，不属于当前发布门禁）：
+VM 与 Kubernetes 代码路径仍保留在 Rust 后端和 CLI 中作为后续阶段能力，但在专用 runtime runner 就绪前，它们会继续从默认桌面导航中隐藏。
 
-- **创建 / 启动 / 停止 / 删除 / 列表**，完整生命周期管理
-- 创建时可设置 **CPU / 内存 / 磁盘**
-- **ACPI 优雅关机**（三阶段：requestStop → 轮询 → 强制停止）
-- **Rosetta 开关**（仅 macOS Apple Silicon；是否可用取决于 macOS 13+）
-- **VirtioFS 文件共享**（真实挂载，标签校验 + guest hints）
-- **端口转发**（TCP 代理，暴露 VM 服务）
-- **资源监控**（CPU / 内存 / 磁盘 / 网络统计）
-- **OS 镜像下载**（Alpine、Ubuntu — 自动下载 kernel/initrd）
-- **登录命令**：生成 `ssh user@host -p <port>`
-
-> 注意：VM 元数据会持久化到”配置”目录下的 `vms.json`。VM 运行时后端使用 Virtualization.framework（macOS）、KVM（Linux）或 Hyper-V（Windows）。
+- **VM 后端范围** — 仍保留创建 / 启动 / 停止 / 删除 / 列表、端口转发、VirtioFS、控制台、资源统计与 OS 镜像下载等流程。
+- **Kubernetes 后端范围** — 仍保留 K3s 生命周期辅助能力与只读集群查看能力。
+- **发布策略** — 在专用 Linux/macOS/Windows runtime 验证补齐前，这些路径都不属于当前公开发布门禁，应继续视为实验性能力。
 
 ### Images（镜像）
 

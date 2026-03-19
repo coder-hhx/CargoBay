@@ -72,6 +72,13 @@ CrateBay/
 └── website/               # 官方网站（GitHub Pages）
 ```
 
+## 当前代码布局
+
+- `crates/cratebay-gui/src-tauri/src/lib.rs` 现在主要保留共享应用装配、assistant 编排、测试与 Tauri 启动逻辑。
+- Tauri 后端按领域拆分到 `crates/cratebay-gui/src-tauri/src/docker.rs`、`crates/cratebay-gui/src-tauri/src/vm.rs`、`crates/cratebay-gui/src-tauri/src/kubernetes.rs`、`crates/cratebay-gui/src-tauri/src/tray.rs`、`crates/cratebay-gui/src-tauri/src/ai.rs` 与 `crates/cratebay-gui/src-tauri/src/update.rs`。
+- CLI 命令处理拆分到 `crates/cratebay-cli/src/runtime.rs`、`crates/cratebay-cli/src/vm.rs`、`crates/cratebay-cli/src/image.rs`、`crates/cratebay-cli/src/docker.rs`、`crates/cratebay-cli/src/volume.rs` 与 `crates/cratebay-cli/src/k3s.rs`，`crates/cratebay-cli/src/main.rs` 主要负责命令定义与入口装配。
+- 默认桌面导航当前只对外暴露 Dashboard、AI Hub、Containers、Images、Volumes 与 Settings。VM 和 Kubernetes 的后端代码仍保留用于后续阶段，但在专用 runtime 验证补齐前会继续从默认 GUI 中隐藏。
+
 ## 关键设计决策
 
 1. **混合 IPC 模式** — 容器直连 Docker socket（性能优先），VM 走 gRPC Daemon（需要特权和生命周期管理）。不给 Docker 加不必要的中间层。

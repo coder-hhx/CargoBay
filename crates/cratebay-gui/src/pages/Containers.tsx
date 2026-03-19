@@ -3,12 +3,10 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { I } from "../icons"
 import { ErrorBanner } from "../components/ErrorDisplay"
-import { EmptyState } from "../components/EmptyState"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   Dialog,
   DialogContent,
@@ -35,6 +33,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils"
 import { iconStroke, cardActionSecondary, cardActionOutline } from "@/lib/styles"
 import type { ContainerInfo, ContainerGroup, RunContainerResult, ContainerStats, EnvVar, LocalImageInfo } from "../types"
+import { ContainersBody } from "./containers/ContainersBody"
 
 interface ExecEntry {
   command: string
@@ -648,156 +647,24 @@ export function Containers({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={onFetch}>
-          <span className={cn(iconStroke, "[&_svg]:size-4")}>{I.refresh}</span>
-          {t("refresh")}
-        </Button>
-        <Button type="button" onClick={openRunModal} data-testid="containers-run">
-          <span className={cn(iconStroke, "[&_svg]:size-4")}>{I.plus}</span>
-          {t("runNewContainer")}
-        </Button>
-      </div>
-
-      <div className="space-y-3">
-        {/* Inline creating card */}
-        {creating && (
-          <Card className={cn("py-0", createFailed && "border-destructive/30")}>
-            <CardContent className="py-3 flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div
-                  className={cn(
-                    "mt-0.5 size-9 rounded-lg flex items-center justify-center",
-                    createFailed ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"
-                  )}
-                >
-                  {createFailed ? (
-                    <span className={cn(iconStroke, "[&_svg]:size-4")}>{I.alertCircle}</span>
-                  ) : (
-                    <Spinner className="size-4 border-primary/30 border-t-primary" />
-                  )}
-                </div>
-
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-foreground truncate">
-                    {createImageName}
-                  </div>
-                  <div
-                    className={cn(
-                      "mt-0.5 text-xs whitespace-pre-wrap",
-                      createFailed ? "text-destructive/90" : "text-muted-foreground"
-                    )}
-                  >
-                    {createStatus}
-                  </div>
-                  {createFailed && (
-                    <div className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">
-                      {createFailed}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {createFailed && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => {
-                    setCreating(false)
-                    setCreateFailed("")
-                  }}
-                  aria-label={t("close")}
-                >
-                  ×
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-        )}
-      {groups.length === 0 && !creating ? (
-        <EmptyState
-          icon={I.box}
-          title={t("noContainers")}
-          description={t("runContainerTip")}
-          code="docker run -it -p 80:80 docker/getting-started"
-        />
-        ) : (
-          groups.map(g => {
-            if (g.containers.length <= 1) {
-              return renderCard(g.containers[0])
-            }
-
-            const expanded = !!expandedGroups[g.key]
-            return (
-              <Collapsible key={g.key} open={expanded} onOpenChange={() => onToggleGroup(g.key)}>
-                <Card className="py-0 gap-0">
-                  <CardContent className="px-0">
-                    <CollapsibleTrigger asChild>
-                      <button
-                        type="button"
-                        title={expanded ? "Collapse" : "Expand"}
-                        className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-accent/30 transition-colors rounded-xl"
-                      >
-                        <div className="flex items-start gap-3 min-w-0">
-                          <div className="mt-0.5 size-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                            <span className={cn(iconStroke, "[&_svg]:size-4")}>{I.layers}</span>
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-foreground truncate">
-                              {g.key}
-                            </div>
-                            <div className="mt-0.5 text-xs text-muted-foreground">
-                              {g.containers.length} {t("containers")}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          <Badge
-                            variant="secondary"
-                            className={cn(
-                              "rounded-full gap-2 px-3 py-1 text-xs font-medium border border-border/60 bg-popover/40",
-                              g.runningCount > 0 ? "text-brand-green" : "text-muted-foreground"
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "size-1.5 rounded-full",
-                                g.runningCount > 0 ? "bg-brand-green" : "bg-muted-foreground/70"
-                              )}
-                            />
-                            {g.runningCount} {t("running")}
-                          </Badge>
-
-                          {g.stoppedCount > 0 && (
-                            <Badge
-                              variant="secondary"
-                              className="rounded-full gap-2 px-3 py-1 text-xs font-medium border border-border/60 bg-popover/40 text-muted-foreground"
-                            >
-                              <span className="size-1.5 rounded-full bg-muted-foreground/70" />
-                              {g.stoppedCount} {t("stopped")}
-                            </Badge>
-                          )}
-
-                          <span className={cn(iconStroke, "text-muted-foreground [&_svg]:size-4")}>
-                            {expanded ? I.chevronDown : I.chevronRight}
-                          </span>
-                        </div>
-                      </button>
-                    </CollapsibleTrigger>
-                  </CardContent>
-                </Card>
-
-                <CollapsibleContent className="mt-2 space-y-3">
-                  {g.containers.map(c => renderCard(c, { child: true }))}
-                </CollapsibleContent>
-              </Collapsible>
-            )
-          })
-        )}
-      </div>
+      <ContainersBody
+        t={t}
+        creating={creating}
+        createFailed={createFailed}
+        createImageName={createImageName}
+        createStatus={createStatus}
+        groups={groups}
+        expandedGroups={expandedGroups}
+        onFetch={onFetch}
+        onOpenRunModal={openRunModal}
+        onToggleGroup={onToggleGroup}
+        onDismissCreateError={() => {
+          setCreating(false)
+          setCreateFailed("")
+        }}
+        renderCard={renderCard}
+        spinner={<Spinner className="size-4 border-primary/30 border-t-primary" />}
+      />
 
       {/* Run Container Modal */}
       <Dialog open={showRunModal} onOpenChange={setShowRunModal}>
