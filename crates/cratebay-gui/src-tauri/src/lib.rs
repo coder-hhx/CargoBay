@@ -2914,6 +2914,8 @@ exec "$target" "$@"
             .unwrap_or_default()
             .as_secs();
         let sandbox_name = format!("cbx-ai-sandbox-{}-{}", std::process::id(), suffix);
+        let sandbox_image = std::env::var("CRATEBAY_SANDBOX_SMOKE_IMAGE")
+            .unwrap_or_else(|_| "public.ecr.aws/docker/library/alpine:3.20".to_string());
         let mut cleanup = DockerCleanup {
             container_name: Some(sandbox_name.clone()),
             image_tag: None,
@@ -2922,7 +2924,7 @@ exec "$target" "$@"
         let created = sandbox_create(SandboxCreateRequest {
             template_id: "python-dev".to_string(),
             name: Some(sandbox_name.clone()),
-            image: Some("alpine:3.20".to_string()),
+            image: Some(sandbox_image),
             command: Some("sleep 300".to_string()),
             env: Some(vec!["CRATEBAY_E2E=1".to_string()]),
             cpu_cores: Some(1),
