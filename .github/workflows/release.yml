@@ -274,6 +274,20 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (Apple Developer ID)
+          # Required secrets: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+          #                   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD,
+          #                   APPLE_TEAM_ID
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing (Authenticode / Azure Trusted Signing)
+          # Required secrets: WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: crates/cratebay-gui
           args: --target ${{ matrix.target }}
@@ -314,6 +328,16 @@ jobs:
       - name: Display downloaded artifacts
         run: find artifacts -type f | sort
 
+      - name: Generate SHA256 checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "cratebay" -o -name "cratebay-daemon" \) -exec sha256sum {} + | sort > ../SHA256SUMS.txt
+          cd ..
+          echo "## SHA256 Checksums" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Verify downloaded release artifacts
         run: ./scripts/verify-release-artifacts.sh --mode downloaded --artifacts-root artifacts
 
@@ -325,5 +349,6 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             artifacts/**/*
+            SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,8 +2,9 @@
 # CrateBay Performance Benchmark
 # Validates the performance claims in README.md:
 #   1. <20MB install (binary size)
-#   2. <200MB idle RAM
-#   3. <3s startup
+#   2. <3s startup
+#   3. <200MB idle RAM
+#   4. Criterion micro-benchmarks (cratebay-core)
 #
 # Usage:
 #   ./scripts/bench-perf.sh [--release-dir DIR]
@@ -256,6 +257,43 @@ else
             DAEMON_PID=""
         fi
     fi
+fi
+echo ""
+
+# ══════════════════════════════════════════════════════════════════
+# 4. Criterion Benchmarks (cratebay-core)
+# ══════════════════════════════════════════════════════════════════
+echo "──────────────────────────────────────────────────────"
+echo " 4. Criterion Benchmarks (cratebay-core)"
+echo "──────────────────────────────────────────────────────"
+
+# Check if cargo is available
+if ! command -v cargo &>/dev/null; then
+    printf "  [$(warn)] cargo not found, skipping Criterion benchmarks\n"
+    record "criterion bench" "N/A" "run" "SKIP"
+    SKIPS=$((SKIPS + 1))
+else
+    echo "  Running Criterion benchmarks..."
+    BENCH_OUTPUT_FILE=$(mktemp)
+
+    if cargo bench -p cratebay-core 2>&1 | tee "$BENCH_OUTPUT_FILE"; then
+        printf "  Criterion benchmarks  [$(pass)]\n"
+        record "criterion bench" "completed" "run" "PASS"
+
+        # Extract and display key results (time values from Criterion output)
+        echo ""
+        echo "  Key benchmark results:"
+        # Criterion outputs lines like: "bench_name    time:   [123.45 µs 124.56 µs 125.67 µs]"
+        while IFS= read -r line; do
+            printf "    %s\n" "$line"
+        done < <(grep -E "^[a-z_/]+.*time:" "$BENCH_OUTPUT_FILE" 2>/dev/null || true)
+    else
+        printf "  Criterion benchmarks  [$(fail)]  cargo bench returned non-zero\n"
+        record "criterion bench" "error" "run" "FAIL"
+        FAILURES=$((FAILURES + 1))
+    fi
+
+    rm -f "$BENCH_OUTPUT_FILE"
 fi
 echo ""
 

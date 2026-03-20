@@ -1,101 +1,76 @@
-/// Acquire a mutex lock, recovering from poisoning.
-///
-/// If a thread panics while holding a mutex, the mutex becomes "poisoned".
-/// Rather than propagating the panic via `.unwrap()`, this function recovers
-/// the inner data so the rest of the application can continue.
-pub fn lock_or_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    match mutex.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
+//! CrateBay Core — shared library for all CrateBay binaries.
+//!
+//! This crate contains business logic, storage, runtime management,
+//! and Docker integration. Binary crates (gui, cli, mcp) depend on this.
 
-pub mod docker_auth;
-pub mod fsutil;
-pub mod hypervisor;
-pub mod images;
-pub mod k3s;
-pub mod logging;
-pub mod plugin;
-pub mod portfwd;
+pub mod audit;
+pub mod container;
+pub mod docker;
+pub mod error;
+pub mod llm_proxy;
+pub mod mcp;
+pub mod models;
 pub mod runtime;
-pub mod store;
+pub mod storage;
 pub mod validation;
-pub mod vm;
 
-#[cfg(target_os = "linux")]
-pub mod linux;
-#[cfg(target_os = "macos")]
-pub mod macos;
-#[cfg(target_os = "windows")]
-pub mod windows;
+// Re-export commonly used types
+pub use error::AppError;
+pub use models::*;
 
-pub mod proto {
-    tonic::include_proto!("cratebay");
+/// Extension trait for safe mutex locking (never `.lock().unwrap()`).
+pub trait MutexExt<T> {
+    fn lock_or_recover(&self) -> Result<std::sync::MutexGuard<'_, T>, AppError>;
 }
 
-/// Create the platform-appropriate hypervisor implementation.
-///
-/// - macOS: Apple Virtualization.framework (Rosetta + VirtioFS)
-/// - Linux: KVM via rust-vmm (VirtioFS via virtiofsd)
-/// - Windows: Hyper-V / Windows Hypervisor Platform (Plan 9 / SMB sharing)
-pub fn create_hypervisor() -> Box<dyn hypervisor::Hypervisor> {
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(macos::MacOSHypervisor::new())
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Box::new(linux::LinuxHypervisor::new())
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Box::new(windows::WindowsHypervisor::new())
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        Box::new(vm::StubHypervisor::new())
+impl<T> MutexExt<T> for std::sync::Mutex<T> {
+    fn lock_or_recover(&self) -> Result<std::sync::MutexGuard<'_, T>, AppError> {
+        self.lock().map_err(|e| {
+            tracing::error!("Mutex poisoned, attempting recovery: {}", e);
+            AppError::Runtime(format!("Mutex poisoned: {}", e))
+        })
     }
 }
 
-/// Get platform information string.
-pub fn platform_info() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "macOS (Virtualization.framework)"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_error_display_validation() {
+        let err = AppError::Validation("invalid name".to_string());
+        assert_eq!(err.to_string(), "Validation error: invalid name");
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        "Linux (KVM)"
+    #[test]
+    fn app_error_display_not_found() {
+        let err = AppError::NotFound {
+            entity: "container".to_string(),
+            id: "abc123".to_string(),
+        };
+        assert_eq!(err.to_string(), "Not found: container with id abc123");
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        "Windows (Hyper-V)"
+    #[test]
+    fn app_error_display_permission_denied() {
+        let err = AppError::PermissionDenied("host volume mount".to_string());
+        assert_eq!(
+            err.to_string(),
+            "Permission denied: host volume mount"
+        );
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        "Unknown (Stub)"
+    #[test]
+    fn app_error_serializes_as_string() {
+        let err = AppError::Validation("test".to_string());
+        let json = serde_json::to_string(&err).unwrap();
+        assert_eq!(json, "\"Validation error: test\"");
     }
-}
 
-pub fn config_dir() -> std::path::PathBuf {
-    store::config_dir()
-}
-
-pub fn data_dir() -> std::path::PathBuf {
-    store::data_dir()
-}
-
-pub fn log_dir() -> std::path::PathBuf {
-    store::log_dir()
-}
-
-pub fn vm_console_log_path(vm_id: &str) -> std::path::PathBuf {
-    store::vm_console_log_path(vm_id)
+    #[test]
+    fn mutex_ext_works() {
+        let mutex = std::sync::Mutex::new(42);
+        let guard = mutex.lock_or_recover().unwrap();
+        assert_eq!(*guard, 42);
+    }
 }

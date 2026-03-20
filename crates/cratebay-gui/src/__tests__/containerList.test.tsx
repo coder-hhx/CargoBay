@@ -1,0 +1,212 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { mockInvoke, resetTauriMocks } from "@/__mocks__/tauriMock";
+
+// Mock Tauri before importing components that use stores
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: mockInvoke,
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  emit: vi.fn(),
+}));
+vi.mock("@/lib/tauri", () => ({
+  invoke: mockInvoke,
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  isTauri: vi.fn(() => false),
+}));
+
+import { ContainerList } from "@/components/container/ContainerList";
+import { useContainerStore } from "@/stores/containerStore";
+import type { ContainerInfo } from "@/types/container";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const makeContainer = (overrides: Partial<ContainerInfo> = {}): ContainerInfo => ({
+  id: "c-1",
+  shortId: "c-1abc",
+  name: "node-01",
+  templateId: "node-dev",
+  image: "node:20-slim",
+  status: "running",
+  createdAt: new Date().toISOString(),
+  cpuCores: 2,
+  memoryMb: 2048,
+  ports: [],
+  ...overrides,
+});
+
+function resetStore() {
+  useContainerStore.setState({
+    containers: [],
+    loading: false,
+    error: null,
+    selectedContainerId: null,
+    templates: [],
+    filter: { status: "all", search: "", templateId: null },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+describe("ContainerList", () => {
+  beforeEach(() => {
+    resetStore();
+    resetTauriMocks();
+  });
+
+  it("shows loading state", () => {
+    useContainerStore.setState({ loading: true });
+    render(<ContainerList />);
+
+    expect(screen.getByText("Loading containers...")).toBeInTheDocument();
+  });
+
+  it("shows empty state when no containers", () => {
+    render(<ContainerList />);
+
+    expect(
+      screen.getByText("No containers found. Create one to get started."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders container table with headers", () => {
+    useContainerStore.setState({
+      containers: [makeContainer()],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("Name")).toBeInTheDocument();
+    expect(screen.getByText("Image")).toBeInTheDocument();
+    expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getByText("CPU")).toBeInTheDocument();
+    expect(screen.getByText("Memory")).toBeInTheDocument();
+    expect(screen.getByText("Actions")).toBeInTheDocument();
+  });
+
+  it("renders container name and shortId", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ name: "my-node", shortId: "abc123" })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("my-node")).toBeInTheDocument();
+    expect(screen.getByText("abc123")).toBeInTheDocument();
+  });
+
+  it("renders container image", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ image: "python:3.12-slim" })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("python:3.12-slim")).toBeInTheDocument();
+  });
+
+  it("renders Running badge for running containers", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ status: "running" })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+
+  it("renders Stopped badge for stopped containers", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ status: "stopped" })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("Stopped")).toBeInTheDocument();
+  });
+
+  it("renders CPU and memory info", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ cpuCores: 4, memoryMb: 4096 })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("4 cores")).toBeInTheDocument();
+    expect(screen.getByText("4096 MB")).toBeInTheDocument();
+  });
+
+  it("renders multiple containers", () => {
+    useContainerStore.setState({
+      containers: [
+        makeContainer({ id: "c-1", name: "node-01" }),
+        makeContainer({ id: "c-2", name: "py-dev", image: "python:3.12-slim" }),
+        makeContainer({ id: "c-3", name: "rust-box", image: "rust:1.75-slim", status: "stopped" }),
+      ],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("node-01")).toBeInTheDocument();
+    expect(screen.getByText("py-dev")).toBeInTheDocument();
+    expect(screen.getByText("rust-box")).toBeInTheDocument();
+  });
+
+  it("shows stop button for running containers", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ status: "running" })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByLabelText("Stop container")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Start container")).not.toBeInTheDocument();
+  });
+
+  it("shows start button for stopped containers", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ status: "stopped" })],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByLabelText("Start container")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Stop container")).not.toBeInTheDocument();
+  });
+
+  it("always shows delete button", () => {
+    useContainerStore.setState({
+      containers: [makeContainer()],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByLabelText("Delete container")).toBeInTheDocument();
+  });
+
+  it("always shows view details button", () => {
+    useContainerStore.setState({
+      containers: [makeContainer()],
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByLabelText("View details")).toBeInTheDocument();
+  });
+
+  it("clicking view details selects the container", () => {
+    useContainerStore.setState({
+      containers: [makeContainer({ id: "c-42" })],
+    });
+    render(<ContainerList />);
+
+    fireEvent.click(screen.getByLabelText("View details"));
+    expect(useContainerStore.getState().selectedContainerId).toBe("c-42");
+  });
+
+  it("respects filter — only shows filtered containers", () => {
+    useContainerStore.setState({
+      containers: [
+        makeContainer({ id: "c-1", name: "node-01", image: "node:20-slim", status: "running" }),
+        makeContainer({ id: "c-2", name: "py-dev", image: "python:3.12-slim", status: "stopped" }),
+      ],
+      filter: { status: "running", search: "", templateId: null },
+    });
+    render(<ContainerList />);
+
+    expect(screen.getByText("node-01")).toBeInTheDocument();
+    expect(screen.queryByText("py-dev")).not.toBeInTheDocument();
+  });
+});

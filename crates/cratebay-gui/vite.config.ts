@@ -1,22 +1,24 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { resolve } from "path";
 
-// https://vite.dev/config/
+// https://tauri.app/start/frontend/vite/
 export default defineConfig({
-  define: {
-    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.8.0'),
-  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      "@": resolve(__dirname, "./src"),
     },
   },
+  // Vite options tailored for Tauri development
+  clearScreen: false,
   server: {
-    host: '127.0.0.1',
-    port: 5173,
+    port: 1420,
     strictPort: true,
+    watch: {
+      // Tell Vite to ignore watching `src-tauri`
+      ignored: ["**/src-tauri/**"],
+    },
   },
-})
+});

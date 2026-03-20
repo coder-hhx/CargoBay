@@ -1,2 +1,1 @@
-[patch.crates-io]
-wry = { path = "vendor/wry-0.54.2-patched" }
+# CrateBay Cargo configuration

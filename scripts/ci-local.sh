@@ -109,6 +109,10 @@ npm run lint
 npm run build
 npm run check:i18n
 npm run test:unit
+
+echo "== Local CI: Frontend coverage =="
+npm run test:coverage || echo "Coverage report may have non-zero exit if thresholds not met"
+
 echo "== Local CI: Playwright browser install =="
 npx playwright install chromium
 echo "== Local CI: Frontend E2E tests =="
@@ -124,6 +128,15 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 else
   echo "== Local CI: Docker runtime smoke skipped =="
   echo "Docker daemon is not available on this machine."
+fi
+
+# Performance benchmarks (optional — requires release binaries)
+if [[ -f "${RELEASE_DIR:-target/release}/cratebay" ]]; then
+  echo "== Local CI: Performance benchmarks =="
+  ./scripts/bench-perf.sh
+else
+  echo "== Local CI: Performance benchmarks skipped =="
+  echo "Run 'cargo build --release -p cratebay-cli -p cratebay-daemon' first, then re-run."
 fi
 
 echo "== Local CI complete =="

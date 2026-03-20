@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, rewrite/v2]
   pull_request:
-    branches: [master]
+    branches: [master, rewrite/v2]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -352,6 +352,47 @@ jobs:
 
       - name: Unit tests
         run: npm run test:unit
+
+      - name: Unit tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage-node${{ matrix.node-version }}
+          path: crates/cratebay-gui/coverage
+          if-no-files-found: ignore
+
+  # -----------------------------------------------------------
+  # Frontend Canary — non-blocking real-LLM smoke tests
+  # -----------------------------------------------------------
+  frontend-canary:
+    name: Frontend Canary (Mock LLM)
+    runs-on: ubuntu-latest
+    needs: frontend
+    continue-on-error: true
+    if: github.event_name == 'push'
+    defaults:
+      run:
+        working-directory: crates/cratebay-gui
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: crates/cratebay-gui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run canary tests
+        run: npx vitest run src/__tests__/canary.test.ts
+        env:
+          LLM_API_KEY: ${{ secrets.CANARY_LLM_API_KEY }}
 
   # -----------------------------------------------------------
   # Frontend E2E — Playwright browser validation

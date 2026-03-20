@@ -1,0 +1,185 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { AppLayout } from "@/components/layout/AppLayout";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { TopBar } from "@/components/layout/TopBar";
+import { StatusBar } from "@/components/layout/StatusBar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { useAppStore } from "@/stores/appStore";
+
+// Mock @tauri-apps/api to avoid native module errors
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  emit: vi.fn(),
+}));
+
+/**
+ * Helper to wrap a component with TooltipProvider (required by Sidebar).
+ */
+function WithTooltip({ children }: { children: React.ReactNode }) {
+  return <TooltipProvider>{children}</TooltipProvider>;
+}
+
+// ---------------------------------------------------------------------------
+// AppLayout (already wraps children with TooltipProvider)
+// ---------------------------------------------------------------------------
+describe("AppLayout", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      currentPage: "chat",
+      sidebarOpen: true,
+      sidebarWidth: 260,
+      dockerConnected: false,
+      runtimeStatus: "stopped",
+      theme: "dark",
+    });
+  });
+
+  it("renders sidebar, content area, and status bar", () => {
+    render(
+      <AppLayout>
+        <div data-testid="child-content">Page Content</div>
+      </AppLayout>,
+    );
+
+    // Sidebar renders the app name (also in TopBar breadcrumb, so use getAllByText)
+    const crateBayElements = screen.getAllByText("CrateBay");
+    expect(crateBayElements.length).toBeGreaterThanOrEqual(1);
+    // Children are rendered
+    expect(screen.getByTestId("child-content")).toBeInTheDocument();
+    // Version is rendered (appears in both Sidebar bottom and StatusBar)
+    const versionElements = screen.getAllByText(/v2\.0\.0/);
+    expect(versionElements.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders navigation items in sidebar", () => {
+    render(
+      <AppLayout>
+        <div>Content</div>
+      </AppLayout>,
+    );
+
+    // "Chat" appears in both Sidebar nav and TopBar breadcrumb, use getAllByText
+    const chatElements = screen.getAllByText("Chat");
+    expect(chatElements.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Containers")).toBeInTheDocument();
+    expect(screen.getByText("MCP")).toBeInTheDocument();
+    // "Settings" only in Sidebar nav (TopBar shows "Chat" since currentPage=chat)
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sidebar (requires TooltipProvider wrapper)
+// ---------------------------------------------------------------------------
+describe("Sidebar", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      currentPage: "chat",
+      sidebarOpen: true,
+      sidebarWidth: 260,
+    });
+  });
+
+  it("renders all nav items", () => {
+    render(
+      <WithTooltip>
+        <Sidebar />
+      </WithTooltip>,
+    );
+
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+    expect(screen.getByText("Containers")).toBeInTheDocument();
+    expect(screen.getByText("MCP")).toBeInTheDocument();
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+
+  it("clicking a nav item changes currentPage in appStore", () => {
+    render(
+      <WithTooltip>
+        <Sidebar />
+      </WithTooltip>,
+    );
+
+    fireEvent.click(screen.getByText("Settings"));
+    expect(useAppStore.getState().currentPage).toBe("settings");
+
+    fireEvent.click(screen.getByText("Containers"));
+    expect(useAppStore.getState().currentPage).toBe("containers");
+
+    fireEvent.click(screen.getByText("Chat"));
+    expect(useAppStore.getState().currentPage).toBe("chat");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TopBar
+// ---------------------------------------------------------------------------
+describe("TopBar", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      currentPage: "chat",
+      sidebarOpen: true,
+    });
+  });
+
+  it("displays current page label in breadcrumb", () => {
+    render(<TopBar />);
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+  });
+
+  it("updates breadcrumb when page changes", () => {
+    const { rerender } = render(<TopBar />);
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+
+    useAppStore.setState({ currentPage: "settings" });
+    rerender(<TopBar />);
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+
+  it("toggles sidebar when toggle button is clicked", () => {
+    render(<TopBar />);
+    expect(useAppStore.getState().sidebarOpen).toBe(true);
+
+    const toggleBtn = screen.getByLabelText("Collapse sidebar");
+    fireEvent.click(toggleBtn);
+    expect(useAppStore.getState().sidebarOpen).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// StatusBar
+// ---------------------------------------------------------------------------
+describe("StatusBar", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      dockerConnected: false,
+      runtimeStatus: "stopped",
+    });
+  });
+
+  it("shows Docker Disconnected by default", () => {
+    render(<StatusBar />);
+    expect(screen.getByText("Docker Disconnected")).toBeInTheDocument();
+  });
+
+  it("shows Docker Connected when connected", () => {
+    useAppStore.setState({ dockerConnected: true });
+    render(<StatusBar />);
+    expect(screen.getByText("Docker Connected")).toBeInTheDocument();
+  });
+
+  it("shows runtime status", () => {
+    useAppStore.setState({ runtimeStatus: "running" });
+    render(<StatusBar />);
+    expect(screen.getByText(/Runtime: Running/)).toBeInTheDocument();
+  });
+
+  it("shows version number", () => {
+    render(<StatusBar />);
+    expect(screen.getByText("v2.0.0")).toBeInTheDocument();
+  });
+});

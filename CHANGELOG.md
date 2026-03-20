@@ -1,135 +1,114 @@
 # Changelog
 
-> **English** · [中文](CHANGELOG.zh.md)
-
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0-alpha.1] — 2026-03-20
+
+Complete rewrite of CrateBay as a desktop AI development control plane.
 
 ### Added
 
-#### AI Hub Preview
-- New top-level AI Hub page with `Overview / Models / Sandboxes / MCP / Assistant` tabs.
-- Ollama phase 1 in GUI (`ollama_status`, `ollama_list_models`) with runtime status and local model listing.
-- AI bootstrap script `scripts/setup-ai.sh` for prerequisite checks and optional best-effort install flow.
-- OpenSandbox local scaffold under `tools/opensandbox/` with template config and setup notes.
-- Skills runtime defaults now include direct Codex CLI and Claude Code prompt entries.
-- Settings AI section now supports direct skill execution for local sandbox and agent bridge entries.
-- Assistant now exposes quick skills for direct Codex / Claude / managed sandbox execution without generating a plan first.
-- Built-in skills now enforce schema validation before runtime dispatch.
-- Public vision docs (`docs/VISION.md`, `docs/VISION.zh.md`) with the AI Hub direction and versioning policy.
+#### Project Foundation (Step 0-1)
+- Rust workspace with 4 crates: `cratebay-core`, `cratebay-gui`, `cratebay-cli`, `cratebay-mcp`
+- 16 technical specification documents covering architecture, API, frontend, backend, database, runtime, MCP, agent, and testing
+- AGENTS.md as universal AI agent entry point (compatible with 20+ AI coding tools)
+- Spec-Driven development workflow with mandatory spec-first approach
+- MIT license
 
-#### Automated Validation
-- Playwright end-to-end coverage for the GUI, including app shell navigation, runtime flows, AI Hub, assistant flows, and security guardrails.
-- Local CI, release-readiness, and GitHub Actions now run automated browser validation and persist Playwright artifacts for debugging.
-- Added a validation matrix and Linux desktop-shell smoke harness for real Tauri shell verification.
-- Added real Docker runtime smoke and AI runtime smoke gates to local CI, release-readiness, and Linux CI.
-- Added backend runtime smokes for Ollama-compatible model flows, MCP lifecycle, and Docker-backed sandbox lifecycle.
-- AI sandboxes now auto-pull their image when the requested image is missing locally.
+#### Core Infrastructure (Step 2-3)
+- **SQLite Storage Layer**: 12 tables with WAL mode, migration system, and full CRUD operations
+  - Provider, Model, Conversation, Message, Settings, API Key (encrypted), Audit Log
+- **Docker Integration**: Container CRUD via bollard SDK
+- **LLM Proxy**: Streaming proxy supporting 3 API formats (Anthropic, OpenAI Responses, OpenAI Completions)
+  - Dual header authentication (Authorization + x-api-key)
+  - SSE streaming with cancellation support (CancellationToken)
+  - `/v1/models` endpoint passthrough
+- **30 Tauri Commands**: Container(9) + LLM(9) + Storage(6) + MCP(8) + System(3)
+- **85 integration tests** for storage, LLM, and audit layers
+
+#### Frontend (Step 4)
+- **React 19 + Vite 6.x** frontend with TypeScript strict mode
+- **Chat Interface**: ChatPage with Streamdown markdown rendering, @mention autocomplete
+- **Container Management**: ContainerList, ContainerDetail components with useContainerActions hook
+- **MCP Management**: McpServerList, McpToolList, McpPage components
+- **6 Zustand Stores**: app, chat, container, mcp, settings, workflow
+- **17 Agent Tools**: 8 container + 3 filesystem + 1 shell + 2 mcp + 3 system tools
+- **i18n System**: Internationalization support
+- **shadcn/ui + Radix UI** component library with Tailwind CSS v4
+- **pi-agent-core** integration for chat-first AI agent interface
+
+#### Built-in Container Runtime (Step 5)
+- **RuntimeManager trait** with unified API across platforms
+- **macOS**: VZ.framework (Virtualization.framework) VM runtime
+- **Linux**: KVM/QEMU VM runtime with complete command-line builder and /proc resource monitoring
+- **Windows**: WSL2 runtime with distro management and socket forwarding
+- **External Docker detection** for pre-existing Docker installations
+- **Health monitor** for runtime status tracking
+
+#### MCP Server + Client (Step 6)
+- **MCP Server** (`cratebay-mcp`): Standalone binary with JSON-RPC stdio transport
+  - 11 sandbox tools (list, create, inspect, exec, start, stop, delete, cleanup, templates, put_path, get_path)
+  - 4 sandbox templates (node-dev, python-dev, rust-dev, go-dev)
+  - Path validation (CRATEBAY_MCP_WORKSPACE_ROOT) to prevent traversal attacks
+  - JSONL audit logging
+- **MCP Client** (`cratebay-core/mcp/`): 5-module architecture
+  - stdio + SSE dual transport support
+  - `.mcp.json` configuration parsing with `${VAR}` environment variable expansion
+  - Server Discovery with config merging (project + user level)
+  - McpManager for server lifecycle and tool inventory
+  - Retry strategy for resilient connections
+- **MCP Tauri Commands**: 8 commands (list, start, stop, add, remove, export, save, logs)
+- **MCP Tool Bridge**: Frontend integration via mcpTools.ts + useMcpToolSync.ts hook
+
+#### Testing & CI/CD (Step 7)
+- **Rust Tests**: 269 passed, 0 failed, 5 ignored (Docker-dependent)
+  - Storage, LLM proxy, audit, Docker integration, runtime, MCP server/client
+- **Frontend Tests**: 197 Vitest tests passed, 2 skipped
+  - Stores (chatStore, containerStore, mcpStore, settingsStore), components (ContainerList, McpServerList, ToolCallCard), hooks (useContainerActions, useMcpToolSync)
+- **E2E Tests**: 68 Playwright tests with 5 Page Object Models
+  - Navigation (9), chat-flow (12), settings (12), containers (16), mcp-servers (18), example (1)
+  - Tauri webview-optimized Playwright config with CI/retry support
+- **Agent Tests**: Mock LLM/Tauri + golden file tests + canary tests (conditional real LLM)
+- **Security Tests**: 24 tests covering 4 attack categories
+  - Path traversal (8 tests), JSON-RPC injection (9 tests), SQL injection (4 tests), API key leakage prevention (3 tests)
+- **Performance Benchmarks**: Criterion benchmarks
+  - startup_bench (5 benchmarks): AppState init, Docker connect, SQLite init, runtime init, full startup
+  - storage_bench (4 benchmarks): message insert, message query, provider CRUD, conversation CRUD
+- **CI/CD Pipelines**: 3 GitHub Actions workflows
+  - `ci.yml`: 4-stage pipeline (check/fmt/clippy/lint → test → size-check/perf-bench → canary), 3-platform matrix (macOS/Linux/Windows), coverage reporting
+  - `release.yml`: Triggered by `v*` tags, code signing, SHA256 checksums, multi-platform builds
+  - `pages.yml`: Automatic website deployment from `website/` directory
+- **Coverage**: @vitest/coverage-v8 with configurable thresholds
 
 ### Changed
 
-- Reset the public preview line to `v0.7.0`; reserve `v1.0.0` for GA only.
-- Refreshed website layout and aligned README / Roadmap / Tutorial wording with the preview policy.
-- Updated roadmap milestones to make AI Hub completion and pre-v1 validation explicit.
-- Clarified that CrateBay-managed sandboxes are the primary path and external sandbox compatibility remains experimental.
+- License changed from previous license to MIT
+- Architecture rewritten from v1 monolith to 4-crate workspace
+- Frontend migrated to React 19 + Tailwind CSS v4 (from v1 stack)
+- Deferred Ollama integration and gRPC daemon to v2.1+
 
-### Fixed
+### Spec Documents Updated
 
-- GUI: surface container run errors in the inline “creating” card (no silent failures).
-- GUI: default Run Container CPU/memory inputs to `2` cores and `512` MB.
+| Document | Version | Changes |
+|----------|---------|---------|
+| api-spec.md | 1.2.0 | 9 missing commands added, `settings_set` → `settings_update` |
+| backend-spec.md | 1.2.0 | MCP Client directory structure (5-module), new command signatures |
+| architecture.md | 1.1.0 | MCP Client module description |
+| agent-spec.md | 1.2.0 | Tool definitions, pi-agent-core execute signature adaptation |
+| database-spec.md | 1.1.0 | Schema refinements |
+| frontend-spec.md | 1.1.0 | Vite 6.x correction, store definitions |
+| mcp-spec.md | 1.1.0 | execute signature adaptation, setTools API |
+| testing-spec.md | 1.1.0 | Step 7 implementation results, updated test counts and CI/CD details |
 
-## [0.7.0] - 2026-03-02
+### Known Issues
 
-### Added
+- tauri-specta/specta uses RC versions (2.0.0-rc.21/rc.22)
+- Docker-dependent tests are ignored when Docker is unavailable (5 tests)
+- AGENTS.md previously stated "Vite 7.x" which does not exist; corrected to Vite 6.x
 
-#### VM Lifecycle & Platform Backends
-- Virtualization.framework FFI (Swift bridge) for real VM start/stop on macOS.
-- Linux KVM VM backend (kvm-ioctls, vCPU, memory, kernel loading, serial console).
-- Windows Hyper-V VM backend scaffolding.
-- ACPI graceful shutdown (VZ bridge 3-phase: requestStop -> poll -> force stop).
-- Real VM execution end-to-end (OS image download -> kernel/initrd -> boot).
-- VM console (serial output) for all platforms.
-- VM port forwarding (TCP proxy).
-- VM/container resource monitoring (CPU / memory / disk / network).
-- OS image catalog and download management.
+---
 
-#### VirtioFS & File Sharing
-- Real VirtioFS mount implementation (tag validation, mount tracking, guest hints).
-- VirtioFS mount management (UI + daemon).
-
-#### Kubernetes
-- K3s integration (on-demand download, install, start, stop, uninstall).
-- Kubernetes dashboard (pods, services, deployments, namespace selector, pod logs).
-
-#### Container & Image Management
-- Container log streaming (real-time follow).
-- Container exec / terminal integration.
-- Container environment variable viewer.
-- Local image management (list, remove, tag, inspect).
-- Docker volume management (list, create, inspect, remove).
-- CLI: image search (`cratebay image search`) and tag listing (`cratebay image tags`).
-- CLI: image import/push (`cratebay image load` / `cratebay image push`) and container snapshot packaging (`cratebay image pack-container`).
-- CLI: run containers with optional CPU/memory limits (`cratebay docker run --cpus/--memory`) and optional pull (`--pull`).
-- CLI: print container login command (`cratebay docker login-cmd`).
-- GUI: Images page (search Docker Hub/Quay, list tags for registry references, run container with CPU/memory, import/push images).
-- GUI: VM page (VM lifecycle UI, VirtioFS mount tracking, login command generator).
-- GUI: show container login commands and package a container as an image (docker commit).
-- Images import modal: native file picker dialog for selecting `.tar` archives (via `tauri-plugin-dialog`).
-
-#### GUI Enhancements
-- UI Design System specification (`docs/DESIGN_SYSTEM.md`) — unified design tokens, button/input/modal specs.
-- Containers page: "Run Container" button with run modal for directly creating containers by image name.
-- Navigation reordered: Images now appears before VMs.
-- GUI: redesign Settings page with responsive width, section icons, and custom toggle switches.
-- GUI: redesign error displays — structured ErrorBanner with icon/title/action, ErrorInline with dismiss button.
-- GUI: improve panel components with icon titles, hover effects, and visual hierarchy.
-- GUI: replace all hardcoded theme colors with CSS custom properties (`--purple-hover`, `--red-dim`).
-- Auto-update checker (GitHub releases).
-
-#### Developer Experience & Infrastructure
-- Shell completion (bash, zsh, fish, elvish, powershell).
-- Roadmap document (`docs/ROADMAP.md`).
-- CI/CD pipeline (GitHub Actions: CI + release builds).
-- Comprehensive test suite (177+ tests across core, CLI, daemon, integration).
-- Security audit & hardening (input validation, path traversal prevention, log sanitization).
-
-### Fixed
-
-- CI: fix Clippy/rustfmt failures (VZ explicit auto-deref, async env lock in tests, Docker port type formatting).
-- GUI: group containers by name prefix (collapsible), and make `tauri dev` resilient to `localhost` DNS issues / double logger initialization.
-- GUI: fix Images page search results table overflow with flexible `minmax()` columns.
-
-### Changed
-
-- GUI: unified button heights (32px default, 28px small), input heights (32px), icon stroke-width (2).
-- GUI: Images toolbar simplified — removed limit input and Clear button.
-- GUI: `.btn.small` -> `.btn.sm`, `.btn.tiny` -> `.btn.xs`, removed `.input.small`.
-- GUI: refactor monolithic App.tsx (1164 lines) into 17 modular files — types, icons, 5 custom hooks, 3 shared components, 5 page components.
-- GUI: optimize VMs page information architecture — VM list moved above create form.
-
-## [0.1.0] - 2026-02-28
-
-### Added
-
-- Tauri + Rust + React GUI application for container management.
-- Docker container lifecycle management (list, start, stop, remove).
-- Auto-detection of Docker socket paths (Colima, OrbStack, default `/var/run/docker.sock`).
-- CLI tool with VM commands (`list`, `start`, `stop`, `status`) and Docker commands (`ps`, `start`, `stop`, `rm`).
-- Dark and Light theme support with CSS custom properties.
-- Multi-language support (English, 中文).
-- Responsive layout with sidebar collapse on small windows.
-- Custom CrateBay logo and branding.
-- VM engine abstraction with `Hypervisor` trait (macOS Virtualization.framework, Linux KVM).
-- gRPC service definitions for VM management.
-- Daemon scaffolding for background services.
-- Rust workspace with 4 crates: `cratebay-core`, `cratebay-cli`, `cratebay-daemon`, `cratebay-gui`.
-- Cross-platform design with conditional compilation (`#[cfg(target_os)]`).
-- Bollard crate for Docker API communication.
-
-[Unreleased]: https://github.com/coder-hhx/CrateBay/compare/v0.7.0...HEAD
-[0.7.0]: https://github.com/coder-hhx/CrateBay/compare/v0.1.0...v0.7.0
-[0.1.0]: https://github.com/coder-hhx/CrateBay/releases/tag/v0.1.0
+[2.0.0-alpha.1]: https://github.com/nicepkg/CrateBay/releases/tag/v2.0.0-alpha.1
