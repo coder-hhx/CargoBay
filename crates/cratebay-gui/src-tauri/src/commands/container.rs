@@ -28,7 +28,7 @@ pub async fn container_list(
     filters: Option<ContainerListFilters>,
 ) -> Result<Vec<ContainerInfo>, AppError> {
     let docker = state.require_docker()?;
-    container::list(docker, true, filters).await
+    container::list(&docker, true, filters).await
 }
 
 /// Create a new container.
@@ -45,7 +45,7 @@ pub async fn container_create(
         validation::validate_resource_limits(cpu, mem)?;
     }
 
-    let result = container::create(docker, request).await?;
+    let result = container::create(&docker, request).await?;
 
     // Audit
     let db = state.db.lock_or_recover()?;
@@ -61,7 +61,7 @@ pub async fn container_start(
     id: String,
 ) -> Result<(), AppError> {
     let docker = state.require_docker()?;
-    container::start(docker, &id).await?;
+    container::start(&docker, &id).await?;
 
     let db = state.db.lock_or_recover()?;
     audit::log_action(&db, &AuditAction::ContainerStart, &id, None, "user")?;
@@ -76,7 +76,7 @@ pub async fn container_stop(
     timeout: Option<u32>,
 ) -> Result<(), AppError> {
     let docker = state.require_docker()?;
-    container::stop(docker, &id, timeout).await?;
+    container::stop(&docker, &id, timeout).await?;
 
     let db = state.db.lock_or_recover()?;
     audit::log_action(&db, &AuditAction::ContainerStop, &id, None, "user")?;
@@ -91,7 +91,7 @@ pub async fn container_delete(
     force: Option<bool>,
 ) -> Result<(), AppError> {
     let docker = state.require_docker()?;
-    container::delete(docker, &id, force.unwrap_or(false)).await?;
+    container::delete(&docker, &id, force.unwrap_or(false)).await?;
 
     let db = state.db.lock_or_recover()?;
     audit::log_action(&db, &AuditAction::ContainerDelete, &id, None, "user")?;
@@ -107,7 +107,7 @@ pub async fn container_exec(
     working_dir: Option<String>,
 ) -> Result<ExecResult, AppError> {
     let docker = state.require_docker()?;
-    let result = container::exec(docker, &id, cmd, working_dir).await?;
+    let result = container::exec(&docker, &id, cmd, working_dir).await?;
 
     let db = state.db.lock_or_recover()?;
     audit::log_action(&db, &AuditAction::ContainerExec, &id, None, "user")?;
@@ -123,7 +123,7 @@ pub async fn container_logs(
     options: Option<LogOptions>,
 ) -> Result<Vec<LogEntry>, AppError> {
     let docker = state.require_docker()?;
-    container::logs(docker, &id, options).await
+    container::logs(&docker, &id, options).await
 }
 
 /// Inspect a container for detailed information.
@@ -133,7 +133,7 @@ pub async fn container_inspect(
     id: String,
 ) -> Result<ContainerDetail, AppError> {
     let docker = state.require_docker()?;
-    container::inspect(docker, &id).await
+    container::inspect(&docker, &id).await
 }
 
 /// Execute a command with streaming output via Tauri Events.
@@ -154,7 +154,7 @@ pub async fn container_exec_stream(
     let app_handle = app.clone();
 
     container::exec_stream(
-        docker,
+        &docker,
         &id,
         cmd,
         working_dir,

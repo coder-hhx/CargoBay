@@ -11,7 +11,7 @@ interface Notification {
 
 interface AppState {
   // Navigation
-  currentPage: "chat" | "containers" | "mcp" | "settings";
+  currentPage: "chat" | "containers" | "images" | "mcp" | "settings";
   setCurrentPage: (page: AppState["currentPage"]) => void;
 
   // Theme
@@ -29,6 +29,10 @@ interface AppState {
   runtimeStatus: "starting" | "running" | "stopped" | "error";
   setDockerConnected: (connected: boolean) => void;
   setRuntimeStatus: (status: AppState["runtimeStatus"]) => void;
+
+  // Runtime control operations
+  runtimeLoading: boolean;
+  setRuntimeLoading: (loading: boolean) => void;
 
   // Notifications
   notifications: Notification[];
@@ -48,7 +52,8 @@ export const useAppStore = create<AppState>()((set) => ({
   toggleTheme: () =>
     set((state) => {
       const next = state.theme === "dark" ? "light" : "dark";
-      document.documentElement.classList.toggle("light", next === "light");
+      document.documentElement.classList.toggle("dark", next === "dark");
+      document.documentElement.style.colorScheme = next;
       return { theme: next };
     }),
 
@@ -63,6 +68,10 @@ export const useAppStore = create<AppState>()((set) => ({
   runtimeStatus: "stopped",
   setDockerConnected: (connected) => set({ dockerConnected: connected }),
   setRuntimeStatus: (status) => set({ runtimeStatus: status }),
+
+  // Runtime control operations
+  runtimeLoading: false,
+  setRuntimeLoading: (loading) => set({ runtimeLoading: loading }),
 
   // Notifications
   notifications: [],
