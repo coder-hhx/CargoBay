@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import type { McpServerConfig } from "@/types/mcp";
 import type { McpServerInfo } from "@/types/mcp";
 import {
@@ -30,6 +31,7 @@ export function McpServerConfigDialog({
   onClose,
   onSave,
 }: McpServerConfigProps) {
+  const { t } = useI18n();
   const isEditing = server !== undefined;
 
   const [name, setName] = useState(server?.name ?? "");
@@ -75,17 +77,17 @@ export function McpServerConfigDialog({
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-[450px]">
         <DialogHeader>
-          <DialogTitle>{isEditing ? "Edit MCP Server" : "Add MCP Server"}</DialogTitle>
+          <DialogTitle>{isEditing ? t("mcp", "editServerTitle") : t("mcp", "addServerTitle")}</DialogTitle>
           <DialogDescription>
             {isEditing
-              ? "Update the MCP server configuration."
-              : "Configure a new MCP server to connect external tools."}
+              ? t("mcp", "editServerDesc")
+              : t("mcp", "addServerDesc")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="mcp-name">Name</Label>
+            <Label htmlFor="mcp-name">{t("mcp", "name")}</Label>
             <Input
               id="mcp-name"
               value={name}
@@ -95,7 +97,7 @@ export function McpServerConfigDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="mcp-command">Command</Label>
+            <Label htmlFor="mcp-command">{t("mcp", "command")}</Label>
             <Input
               id="mcp-command"
               value={command}
@@ -106,7 +108,7 @@ export function McpServerConfigDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="mcp-args">Arguments (space-separated)</Label>
+            <Label htmlFor="mcp-args">{t("mcp", "arguments")}</Label>
             <Input
               id="mcp-args"
               value={argsStr}
@@ -117,7 +119,7 @@ export function McpServerConfigDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="mcp-env">Environment Variables (KEY=VALUE, one per line)</Label>
+            <Label htmlFor="mcp-env">{t("mcp", "envVars")}</Label>
             <textarea
               id="mcp-env"
               value={envStr}
@@ -131,10 +133,10 @@ export function McpServerConfigDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t("common", "cancel")}
           </Button>
           <Button onClick={handleSave} disabled={!canSave}>
-            {isEditing ? "Save Changes" : "Add Server"}
+            {isEditing ? t("mcp", "saveChanges") : t("mcp", "addServer")}
           </Button>
         </DialogFooter>
       </DialogContent>

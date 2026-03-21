@@ -96,6 +96,7 @@ describe("chatStore", () => {
     useChatStore.setState({
       sessions: [],
       activeSessionId: null,
+      sessionsLoaded: false,
       messages: {},
       isStreaming: false,
       streamingMessageId: null,
@@ -105,25 +106,25 @@ describe("chatStore", () => {
     });
   });
 
-  it("creates a new session", () => {
-    const session = useChatStore.getState().createSession();
+  it("creates a new session", async () => {
+    const session = await useChatStore.getState().createSession();
     expect(session.id).toBeDefined();
     expect(session.title).toBe("New Chat");
     expect(useChatStore.getState().sessions).toHaveLength(1);
     expect(useChatStore.getState().activeSessionId).toBe(session.id);
   });
 
-  it("deletes a session and clears activeSessionId if needed", () => {
-    const session = useChatStore.getState().createSession();
+  it("deletes a session and clears activeSessionId if needed", async () => {
+    const session = await useChatStore.getState().createSession();
     expect(useChatStore.getState().activeSessionId).toBe(session.id);
 
-    useChatStore.getState().deleteSession(session.id);
+    await useChatStore.getState().deleteSession(session.id);
     expect(useChatStore.getState().sessions).toHaveLength(0);
     expect(useChatStore.getState().activeSessionId).toBeNull();
   });
 
-  it("adds messages to a session", () => {
-    const session = useChatStore.getState().createSession();
+  it("adds messages to a session", async () => {
+    const session = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage(session.id, {
       id: "msg-1",
       sessionId: session.id,
@@ -138,8 +139,8 @@ describe("chatStore", () => {
     expect(msgs[0].content).toBe("Hello");
   });
 
-  it("updates an existing message", () => {
-    const session = useChatStore.getState().createSession();
+  it("updates an existing message", async () => {
+    const session = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage(session.id, {
       id: "msg-1",
       sessionId: session.id,
@@ -159,8 +160,8 @@ describe("chatStore", () => {
     expect(msg.status).toBe("complete");
   });
 
-  it("appends stream chunks to a message", () => {
-    const session = useChatStore.getState().createSession();
+  it("appends stream chunks to a message", async () => {
+    const session = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage(session.id, {
       id: "msg-1",
       sessionId: session.id,

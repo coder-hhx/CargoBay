@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import { useMcpStore } from "@/stores/mcpStore";
 import type { McpServerInfo } from "@/types/mcp";
 import { Badge } from "@/components/ui/badge";
@@ -25,13 +26,14 @@ export function McpServerList({
   onSelectServer,
   onEditServer,
 }: McpServerListProps) {
+  const { t } = useI18n();
   const servers = useMcpStore((s) => s.servers);
   const loading = useMcpStore((s) => s.loading);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-        Loading MCP servers...
+        {t("mcp", "loadingServers")}
       </div>
     );
   }
@@ -40,8 +42,8 @@ export function McpServerList({
     return (
       <div className="flex flex-col items-center justify-center py-8 text-center text-sm text-muted-foreground">
         <Unplug className="mb-2 h-8 w-8 opacity-30" />
-        <p>No MCP servers configured.</p>
-        <p className="mt-1 text-xs">Add a server to connect external tools.</p>
+        <p>{t("mcp", "noServers")}</p>
+        <p className="mt-1 text-xs">{t("mcp", "noServersHint")}</p>
       </div>
     );
   }
@@ -69,6 +71,7 @@ interface McpServerRowProps {
 }
 
 function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProps) {
+  const { t } = useI18n();
   const startServer = useMcpStore((s) => s.startServer);
   const stopServer = useMcpStore((s) => s.stopServer);
   const removeServer = useMcpStore((s) => s.removeServer);
@@ -114,7 +117,7 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
       {/* Tool count */}
       {server.toolCount > 0 && (
         <Badge variant="outline" className="text-[10px]">
-          {server.toolCount} tools
+          {server.toolCount} {t("mcp", "tools")}
         </Badge>
       )}
 
@@ -123,11 +126,11 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-xs" onClick={onEdit} aria-label="Edit server">
+              <Button variant="ghost" size="icon-xs" onClick={onEdit} aria-label={t("mcp", "editServer")}>
                 <Settings className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Edit</TooltipContent>
+            <TooltipContent>{t("common", "edit")}</TooltipContent>
           </Tooltip>
 
           {isConnected ? (
@@ -137,12 +140,12 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
                   variant="ghost"
                   size="icon-xs"
                   onClick={() => void stopServer(server.id)}
-                  aria-label="Stop server"
+                  aria-label={t("mcp", "stopServer")}
                 >
                   <Square className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Stop</TooltipContent>
+              <TooltipContent>{t("common", "stop")}</TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>
@@ -152,12 +155,12 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
                   size="icon-xs"
                   onClick={() => void startServer(server.id)}
                   disabled={isStarting}
-                  aria-label="Start server"
+                  aria-label={t("mcp", "startServer")}
                 >
                   <Play className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Start</TooltipContent>
+              <TooltipContent>{t("common", "start")}</TooltipContent>
             </Tooltip>
           )}
 
@@ -167,12 +170,12 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => void removeServer(server.id)}
-                aria-label="Remove server"
+                aria-label={t("mcp", "removeServer")}
               >
                 <Trash2 className="h-3.5 w-3.5 text-destructive" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Remove</TooltipContent>
+            <TooltipContent>{t("common", "remove")}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </div>
@@ -181,21 +184,22 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
 }
 
 function StatusBadge({ status }: { status: McpServerInfo["status"] }) {
-  const config: Record<typeof status, { label: string; className: string }> = {
+  const { t } = useI18n();
+  const config: Record<typeof status, { labelKey: "connected" | "disconnected" | "error" | "starting"; className: string }> = {
     connected: {
-      label: "Connected",
+      labelKey: "connected",
       className: "border-success/30 bg-success/10 text-success",
     },
     disconnected: {
-      label: "Disconnected",
+      labelKey: "disconnected",
       className: "border-muted bg-muted/50 text-muted-foreground",
     },
     error: {
-      label: "Error",
+      labelKey: "error",
       className: "border-destructive/30 bg-destructive/10 text-destructive",
     },
     starting: {
-      label: "Starting",
+      labelKey: "starting",
       className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500",
     },
   };
@@ -204,7 +208,7 @@ function StatusBadge({ status }: { status: McpServerInfo["status"] }) {
 
   return (
     <Badge variant="outline" className={cn("text-[10px]", variant.className)}>
-      {variant.label}
+      {t("mcp", variant.labelKey)}
     </Badge>
   );
 }

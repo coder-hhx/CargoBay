@@ -312,6 +312,107 @@ TaskUpdate: 领取优先级最高的任务
 开始执行
 ```
 
+### 4.5 平台特定测试工作流（MANDATORY — AGENTS.md Rule 6）
+
+> **版本**: 1.0.0 | **强制级别**: 阻塞（所有平台必须 PASS）
+>
+> 此规则在每次新会话中由 AGENTS.md Rule 6 自动加载，无需人工提醒。
+
+#### 4.5.1 团队组成
+
+| 角色 | Agent 名称 | 职责 |
+|------|-----------|------|
+| 测试协调员 | `tester` | 统筹三平台测试、汇总报告、决策 |
+| macOS 测试 | `platform-tester-macos` | macOS 平台全功能验证 |
+| Linux 测试 | `platform-tester-linux` | Linux 平台全功能验证 |
+| Windows 测试 | `platform-tester-windows` | Windows 平台全功能验证 |
+
+#### 4.5.2 触发机制
+
+以下情况**自动触发**三平台测试：
+
+1. **Pre-commit**：暂存文件涉及 `crates/cratebay-cli/`、`crates/cratebay-gui/`、`crates/cratebay-core/`
+2. **PR 创建/更新**：CI 自动在三个平台 runner 上运行完整测试
+3. **手动触发**：team-lead 指令 "运行三平台测试"
+
+#### 4.5.3 执行流程
+
+```
+提交代码变更
+↓
+.githooks/pre-commit Layer 6 触发
+↓
+Step 1: 本地快速检查（cargo check + 单元测试子集）
+↓ PASS
+Step 2: 三平台 tester 并行启动
+┌─────────────────────┬─────────────────────┬─────────────────────┐
+│ platform-tester-    │ platform-tester-    │ platform-tester-    │
+│ macos               │ linux               │ windows             │
+├─────────────────────┼─────────────────────┼─────────────────────┤
+│ 1. 编译验证         │ 1. 编译验证         │ 1. 编译验证         │
+│ 2. CLI 测试 (5)     │ 2. CLI 测试 (5)     │ 2. CLI 测试 (5)     │
+│ 3. 单元测试         │ 3. 单元测试         │ 3. 单元测试         │
+│ 4. GUI 命令 (41)    │ 4. GUI 命令 (41)    │ 4. GUI 命令 (41)    │
+│ 5. 平台特定 (15)    │ 5. 平台特定 (12)    │ 5. 平台特定 (10)    │
+│ 6. 前端测试         │ 6. 前端测试         │ 6. 前端测试         │
+└─────────────────────┴─────────────────────┴─────────────────────┘
+↓
+tester 汇总三份报告
+↓
+ALL PASS → 允许提交
+ANY FAIL → 拒绝提交，报告失败详情
+```
+
+#### 4.5.4 通过标准
+
+**全部满足**才算 PASS：
+
+| 检查项 | 标准 |
+|--------|------|
+| 编译 | 三平台零错误 |
+| CLI 测试 | 三平台各 5/5 通过 |
+| 后端单元测试 | 三平台零失败 |
+| GUI Tauri 命令 | 三平台各 41/41 通过（优雅错误处理算通过） |
+| 平台特定测试 | macOS 12/15、Linux 10/12、Windows 8/10 最低通过率 |
+| 前端测试 | Lint + Build + 单元测试通过 |
+
+#### 4.5.5 失败处理流程
+
+1. **定位**：根据失败报告确定是哪个平台、哪个模块
+2. **隔离**：按平台创建 bug fix 任务，分配给对应的 `platform-tester-{platform}` 和 `backend-dev`/`frontend-dev`
+3. **修复**：开发人员修复后，**仅重测失败的平台**（其他两个不需重跑）
+4. **验证**：修复后所有三个平台必须重新报告 PASS
+5. **提交**：三平台全部 PASS 后允许提交
+
+#### 4.5.6 测试结果持久化
+
+测试结果存储在 `.codebuddy/test-results/` 目录下：
+
+```
+.codebuddy/test-results/
+├── platform-test-macos-{commit-hash}.pass
+├── platform-test-linux-{commit-hash}.pass
+└── platform-test-windows-{commit-hash}.pass
+```
+
+每个 `.pass` 文件包含：
+- 测试时间戳
+- 测试通过的详细统计
+- Agent 名称和版本
+
+#### 4.5.7 跨机器/跨会话自动识别
+
+**此规则通过以下机制确保在任何新会话中自动生效**：
+
+1. **AGENTS.md Rule 6**：所有 AI 工具启动时自动加载 AGENTS.md，Rule 6 明确要求三平台测试
+2. **`.codebuddy/hooks/.pre-commit.spec`**：spec 文件定义了完整的测试门禁配置
+3. **`.githooks/pre-commit` Layer 6**：Git hook 在每次提交时强制检查
+4. **`docs/prompts/platform-test-pre-commit.md`**：Agent Prompt 定义了执行步骤和报告格式
+5. **`.codebuddy/project.yaml`**：团队配置中包含三个平台 tester 角色
+
+**无需人工提醒**——Agent 启动协议（AGENTS.md）中的 Phase Detection 会自动识别当前阶段，
+Rule 6 会强制要求执行三平台测试。
+
 ---
 
 ## 5. 代码审查流程

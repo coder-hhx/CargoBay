@@ -1,9 +1,11 @@
 import { useAppStore } from "@/stores/appStore";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { APP_VERSION } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
 
 export function StatusBar() {
+  const { t } = useI18n();
   const dockerConnected = useAppStore((s) => s.dockerConnected);
   const runtimeStatus = useAppStore((s) => s.runtimeStatus);
 
@@ -19,7 +21,7 @@ export function StatusBar() {
               dockerConnected ? "bg-success" : "bg-destructive",
             )}
           />
-          <span>Docker {dockerConnected ? "Connected" : "Disconnected"}</span>
+          <span>{t("statusbar", "docker")} {dockerConnected ? t("common", "connected") : t("common", "disconnected")}</span>
         </div>
 
         {/* Runtime status */}
@@ -39,30 +41,32 @@ function RuntimeStatusBadge({
 }: {
   status: "starting" | "running" | "stopped" | "error";
 }) {
-  const variants: Record<typeof status, { label: string; className: string }> = {
+  const { t } = useI18n();
+  const variants: Record<typeof status, { labelKey: "starting" | "running" | "stopped"; className: string }> = {
     starting: {
-      label: "Starting",
+      labelKey: "starting",
       className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500",
     },
     running: {
-      label: "Running",
+      labelKey: "running",
       className: "border-success/30 bg-success/10 text-success",
     },
     stopped: {
-      label: "Stopped",
+      labelKey: "stopped",
       className: "border-muted bg-muted/50 text-muted-foreground",
     },
     error: {
-      label: "Error",
+      labelKey: "stopped",
       className: "border-destructive/30 bg-destructive/10 text-destructive",
     },
   };
 
   const variant = variants[status];
+  const label = status === "error" ? t("common", "error") : t("statusbar", variant.labelKey);
 
   return (
     <Badge variant="outline" className={cn("h-4 px-1.5 text-[10px]", variant.className)}>
-      Runtime: {variant.label}
+      {t("statusbar", "runtimeLabel")}: {label}
     </Badge>
   );
 }

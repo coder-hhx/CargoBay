@@ -1,24 +1,22 @@
 /**
- * Tauri invoke/listen wrappers with fallback for non-Tauri environments.
+ * Tauri invoke/listen wrappers using the official @tauri-apps/api package.
+ *
+ * In Tauri v2, the global `window.__TAURI__` is NOT injected by default.
+ * We must use the `@tauri-apps/api` imports which use the IPC postMessage bridge.
  *
  * When running in a browser (e.g., `pnpm dev` without Tauri), these wrappers
- * log a warning and return mock data so the UI can be developed standalone.
+ * detect the absence of `__TAURI_INTERNALS__` and return mock data.
  */
 
-declare global {
-  interface Window {
-    __TAURI__?: {
-      core: {
-        invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      };
-      event: {
-        listen: <T>(
-          event: string,
-          handler: (event: { payload: T }) => void,
-        ) => Promise<() => void>;
-      };
-    };
-  }
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+
+/**
+ * Check whether the app is running inside a Tauri webview.
+ * In Tauri v2, the internal bridge is exposed as `__TAURI_INTERNALS__`.
+ */
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 /**
@@ -26,8 +24,8 @@ declare global {
  * when Tauri is not available (browser-only development).
  */
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (window.__TAURI__) {
-    return window.__TAURI__.core.invoke<T>(cmd, args);
+  if (isTauri()) {
+    return tauriInvoke<T>(cmd, args);
   }
   console.warn(`[tauri-mock] invoke("${cmd}") — Tauri not available, returning mock`);
   return {} as T;
@@ -41,8 +39,8 @@ export async function listen<T>(
   event: string,
   handler: (payload: T) => void,
 ): Promise<() => void> {
-  if (window.__TAURI__) {
-    const unlisten = await window.__TAURI__.event.listen<T>(event, (e) => {
+  if (isTauri()) {
+    const unlisten = await tauriListen<T>(event, (e) => {
       handler(e.payload);
     });
     return unlisten;
@@ -51,11 +49,4 @@ export async function listen<T>(
   return () => {
     /* no-op */
   };
-}
-
-/**
- * Check whether the app is running inside a Tauri webview.
- */
-export function isTauri(): boolean {
-  return window.__TAURI__ !== undefined;
 }

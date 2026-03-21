@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useContainerStore, type ContainerCreateRequest } from "@/stores/containerStore";
+import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,6 +23,7 @@ import {
 import { Plus } from "lucide-react";
 
 export function ContainerCreate() {
+  const { t } = useI18n();
   const createContainer = useContainerStore((s) => s.createContainer);
   const templates = useContainerStore((s) => s.templates);
 
@@ -41,12 +43,12 @@ export function ContainerCreate() {
     setMemoryMb(2048);
   }, []);
 
-  const selectedTemplate = templates.find((t) => t.id === templateId);
+  const selectedTemplate = templates.find((tmpl) => tmpl.id === templateId);
 
   const handleTemplateChange = useCallback(
     (id: string) => {
       setTemplateId(id);
-      const tmpl = templates.find((t) => t.id === id);
+      const tmpl = templates.find((t2) => t2.id === id);
       if (tmpl) {
         setImage(tmpl.image);
         setCpuCores(tmpl.defaultCpuCores);
@@ -82,14 +84,14 @@ export function ContainerCreate() {
       <DialogTrigger asChild>
         <Button size="sm">
           <Plus className="h-4 w-4" />
-          Create Container
+          {t("containers", "create")}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Create Container</DialogTitle>
+          <DialogTitle>{t("containers", "create")}</DialogTitle>
           <DialogDescription>
-            Create a new development sandbox container.
+            {t("containers", "createDesc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -97,15 +99,15 @@ export function ContainerCreate() {
           {/* Template */}
           {templates.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              <Label>Template</Label>
+              <Label>{t("containers", "template")}</Label>
               <Select value={templateId} onValueChange={handleTemplateChange}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a template..." />
+                  <SelectValue placeholder={t("containers", "selectTemplate")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {templates.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name} — {t.description}
+                  {templates.map((tmpl) => (
+                    <SelectItem key={tmpl.id} value={tmpl.id}>
+                      {tmpl.name} — {tmpl.description}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -115,7 +117,7 @@ export function ContainerCreate() {
 
           {/* Name */}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="container-name">Name (optional)</Label>
+            <Label htmlFor="container-name">{t("containers", "nameOptional")}</Label>
             <Input
               id="container-name"
               value={name}
@@ -126,7 +128,7 @@ export function ContainerCreate() {
 
           {/* Image */}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="container-image">Image</Label>
+            <Label htmlFor="container-image">{t("containers", "image")}</Label>
             <Input
               id="container-image"
               value={image}
@@ -138,7 +140,7 @@ export function ContainerCreate() {
           {/* Resources */}
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cpu">CPU Cores</Label>
+              <Label htmlFor="cpu">{t("containers", "cpuCores")}</Label>
               <Input
                 id="cpu"
                 type="number"
@@ -149,7 +151,7 @@ export function ContainerCreate() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="memory">Memory (MB)</Label>
+              <Label htmlFor="memory">{t("containers", "memoryMb")}</Label>
               <Input
                 id="memory"
                 type="number"
@@ -165,10 +167,10 @@ export function ContainerCreate() {
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
-            Cancel
+            {t("common", "cancel")}
           </Button>
           <Button onClick={handleCreate} disabled={!canCreate || creating}>
-            {creating ? "Creating..." : "Create"}
+            {creating ? `${t("containers", "creating")}...` : t("containers", "create")}
           </Button>
         </DialogFooter>
       </DialogContent>

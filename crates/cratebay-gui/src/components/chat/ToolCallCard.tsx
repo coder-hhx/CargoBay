@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import type { ToolCallInfo } from "@/types/chat";
 import {
   CheckCircle,
@@ -27,9 +28,10 @@ interface ToolCallCardProps {
  * - error: Destructive border, error message
  */
 export function ToolCallCard({ toolCall, onRetry }: ToolCallCardProps) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
 
-  const statusConfig = getStatusConfig(toolCall.status);
+  const statusConfig = getStatusConfig(toolCall.status, t);
   const duration = getDuration(toolCall.startedAt, toolCall.completedAt);
 
   return (
@@ -75,7 +77,7 @@ export function ToolCallCard({ toolCall, onRetry }: ToolCallCardProps) {
         <div className="border-t border-border px-3 py-2 text-xs">
           {/* Parameters */}
           <div className="mb-2">
-            <p className="mb-1 font-medium text-muted-foreground">Parameters:</p>
+            <p className="mb-1 font-medium text-muted-foreground">{t("common", "parameters")}:</p>
             <pre className="overflow-x-auto rounded bg-muted/50 p-2 font-mono text-muted-foreground">
               {JSON.stringify(toolCall.parameters, null, 2)}
             </pre>
@@ -84,7 +86,7 @@ export function ToolCallCard({ toolCall, onRetry }: ToolCallCardProps) {
           {/* Result */}
           {toolCall.status === "success" && toolCall.result !== undefined && (
             <div className="mb-2">
-              <p className="mb-1 font-medium text-muted-foreground">Result:</p>
+              <p className="mb-1 font-medium text-muted-foreground">{t("common", "result")}:</p>
               <pre className="overflow-x-auto rounded bg-muted/50 p-2 font-mono text-muted-foreground">
                 {typeof toolCall.result === "string"
                   ? toolCall.result
@@ -96,7 +98,7 @@ export function ToolCallCard({ toolCall, onRetry }: ToolCallCardProps) {
           {/* Error */}
           {toolCall.status === "error" && toolCall.error !== undefined && (
             <div className="mb-2">
-              <p className="mb-1 font-medium text-destructive">Error:</p>
+              <p className="mb-1 font-medium text-destructive">{t("common", "error")}:</p>
               <pre className="overflow-x-auto rounded bg-destructive/10 p-2 font-mono text-destructive">
                 {toolCall.error}
               </pre>
@@ -112,7 +114,7 @@ export function ToolCallCard({ toolCall, onRetry }: ToolCallCardProps) {
               className="mt-1"
             >
               <RotateCcw className="mr-1 h-3 w-3" />
-              Retry
+              {t("common", "retry")}
             </Button>
           )}
         </div>
@@ -129,7 +131,12 @@ interface StatusConfig {
   label: string;
 }
 
-function getStatusConfig(status: ToolCallInfo["status"]): StatusConfig {
+type TranslateFn = <K extends keyof import("@/types/i18n").Translations, S extends keyof import("@/types/i18n").Translations[K]>(
+  namespace: K,
+  key: S,
+) => string;
+
+function getStatusConfig(status: ToolCallInfo["status"], t: TranslateFn): StatusConfig {
   switch (status) {
     case "pending":
       return {
@@ -137,7 +144,7 @@ function getStatusConfig(status: ToolCallInfo["status"]): StatusConfig {
         iconClass: "text-muted-foreground",
         borderClass: "border-border",
         textClass: "text-muted-foreground",
-        label: "Preparing...",
+        label: t("chat", "toolPreparing"),
       };
     case "running":
       return {
@@ -145,7 +152,7 @@ function getStatusConfig(status: ToolCallInfo["status"]): StatusConfig {
         iconClass: "text-primary animate-spin",
         borderClass: "border-primary/50",
         textClass: "text-primary",
-        label: "Executing...",
+        label: t("chat", "toolExecuting"),
       };
     case "success":
       return {
@@ -153,7 +160,7 @@ function getStatusConfig(status: ToolCallInfo["status"]): StatusConfig {
         iconClass: "text-success",
         borderClass: "border-success/50",
         textClass: "text-success",
-        label: "Completed",
+        label: t("chat", "toolCompleted"),
       };
     case "error":
       return {
@@ -161,7 +168,7 @@ function getStatusConfig(status: ToolCallInfo["status"]): StatusConfig {
         iconClass: "text-destructive",
         borderClass: "border-destructive/50",
         textClass: "text-destructive",
-        label: "Failed",
+        label: t("chat", "toolFailed"),
       };
   }
 }

@@ -13,6 +13,8 @@
 5. [CI/CD Pipeline Design](#5-cicd-pipeline-design)
 6. [Performance Benchmarks](#6-performance-benchmarks)
 7. [Security Testing](#7-security-testing)
+8. [Platform-Specific Testing Strategy](#8-platform-specific-testing-strategy)
+9. [Platform-Specific Test Checklist](#9-platform-specific-test-checklist)
 
 ---
 
@@ -1082,3 +1084,309 @@ describe("API Key Security", () => {
 | MCP | MCP server process isolation (no shared state) | P1 |
 | Input | SQL injection in storage layer prevented | P0 |
 | Input | XSS in rendered markdown prevented | P1 |
+
+---
+
+## 8. Platform-Specific Testing Strategy
+
+CrateBay targets three desktop platforms (macOS, Linux, Windows), each with distinct container runtimes and OS-level behaviors. This section defines per-platform tester responsibilities to ensure comprehensive coverage.
+
+### 8.1 macOS Testing Guide
+
+**Owner**: `platform-tester-macos`
+
+#### Runtime Testing — VZ.framework
+
+- **VM lifecycle**: Verify `VZVirtualMachine` creation, start, pause, resume, and stop.
+- **Shared directory**: Validate `VZSharedDirectory` mounting between host and VM.
+- **Network**: Confirm `VZNATNetworkDeviceAttachment` provides outbound connectivity and port forwarding works for Docker socket exposure.
+- **Rosetta**: On Apple Silicon, verify x86_64 container images run correctly via Rosetta 2 translation.
+- **Resource limits**: CPU and memory caps configured via `VZVirtualMachineConfiguration` are respected.
+
+#### Tauri API — macOS-Specific
+
+- **File system permissions**: `NSOpenPanel` / `NSSavePanel` integration returns correct paths and respects sandbox scoping.
+- **Window management**: `setTitleBarStyle`, traffic-light button positions, and `NSWindow` delegate callbacks.
+- **Menu bar**: Application menu, context menus, and system tray icon interactions.
+- **Deep link**: `cratebay://` URL scheme invocation opens the correct page.
+- **Dock**: Badge count and bounce notification on long-running operations.
+
+#### Package Testing — DMG
+
+- **DMG mount**: Double-click `.dmg` opens the installer volume.
+- **Drag-to-Applications**: Copying `CrateBay.app` to `/Applications` works without error.
+- **Code signing**: `codesign --verify --deep --strict CrateBay.app` passes.
+- **Notarization**: `spctl --assess --type execute CrateBay.app` returns "accepted".
+- **Gatekeeper**: First launch shows no "unidentified developer" warning.
+- **Universal binary**: If fat binary, both `x86_64` and `arm64` slices are present (`lipo -info`).
+
+#### Permission Model
+
+- **Full Disk Access**: App functions correctly without FDA; prompts when container runtime needs access.
+- **Network permissions**: macOS firewall dialog appears on first launch; app works after "Allow".
+- **Accessibility**: Screen reader (VoiceOver) can navigate all primary UI elements.
+- **App Sandbox**: If sandboxed, entitlements for network, file access, and virtualization are present and functional.
+
+### 8.2 Linux Testing Guide
+
+**Owner**: `platform-tester-linux`
+
+#### Runtime Testing — KVM/QEMU
+
+- **KVM availability**: Detect `/dev/kvm` presence and fall back gracefully when unavailable.
+- **QEMU VM lifecycle**: Create, start, snapshot, and destroy QEMU VMs via libvirt or direct QEMU invocation.
+- **virtio drivers**: Confirm `virtio-net`, `virtio-blk`, and `virtio-fs` devices are functional inside the VM.
+- **9p / virtiofs**: Host directory sharing via virtiofs for workspace mounts.
+- **Resource limits**: cgroup v2 enforcement of CPU, memory, and I/O limits.
+
+#### Container Testing — Docker Daemon
+
+- **Socket connection**: Connect via `/var/run/docker.sock` (default) and configurable socket path.
+- **Rootless Docker**: Verify operation when Docker is running in rootless mode (`$XDG_RUNTIME_DIR/docker.sock`).
+- **Container commands**: All 10 container commands (`container_templates` through `container_inspect`) execute successfully.
+- **Image pull**: Pull images from Docker Hub and private registries with authentication.
+- **Network modes**: Bridge, host, and none network modes function correctly.
+
+#### Package Testing — AppImage & DEB
+
+- **AppImage**:
+  - Execute permission: `chmod +x CrateBay.AppImage && ./CrateBay.AppImage` launches correctly.
+  - FUSE requirement: Works with `libfuse2`; prints meaningful error without it.
+  - Desktop integration: `--appimage-extract` produces valid `.desktop` file and icon.
+- **DEB**:
+  - Install: `sudo dpkg -i cratebay_*.deb` completes without errors.
+  - Dependencies: `apt-get -f install` resolves all dependencies.
+  - Uninstall: `dpkg -r cratebay` removes cleanly, no orphaned files.
+  - Systemd service: If a daemon component exists, `.service` file is installed and `systemctl start cratebay` works.
+
+#### System Integration
+
+- **SELinux**: On Fedora/RHEL, verify SELinux contexts are set correctly; app runs in `enforcing` mode.
+- **AppArmor**: On Ubuntu, verify AppArmor profile loads and does not block required operations.
+- **XDG**: Config stored in `$XDG_CONFIG_HOME/cratebay/`, data in `$XDG_DATA_HOME/cratebay/`.
+- **Wayland / X11**: GUI renders correctly under both display servers.
+- **D-Bus**: Desktop notifications via `org.freedesktop.Notifications` interface.
+
+### 8.3 Windows Testing Guide
+
+**Owner**: `platform-tester-windows`
+
+#### Runtime Testing — WSL2
+
+- **WSL2 detection**: Detect WSL2 availability via `wsl --status`; provide clear error if not installed.
+- **Distribution management**: Install, start, and stop a CrateBay-managed WSL2 distribution.
+- **Inter-process communication**: Named pipe or `localhost` socket communication between Windows host and WSL2 guest.
+- **File system bridge**: Access Windows files from WSL2 (`/mnt/c/`) and WSL2 files from Windows (`\\wsl$\`).
+- **Docker in WSL2**: Docker daemon running inside WSL2 is accessible from the Tauri backend.
+
+#### Tauri API — Windows-Specific
+
+- **Taskbar**: Jump list entries for recent containers and quick actions.
+- **System tray**: Tray icon with context menu (show/hide window, quit).
+- **Notifications**: Windows Toast notifications for container status changes and agent completions.
+- **Drag and drop**: File drop onto the chat window triggers file-related agent actions.
+- **High DPI**: UI renders correctly at 100%, 125%, 150%, and 200% scaling.
+- **Dark mode**: Responds to Windows system theme changes in real-time.
+
+#### Package Testing — MSIX
+
+- **MSIX install**: Double-click `.msix` package triggers Windows App Installer.
+- **Authenticode signing**: `signtool verify /pa CrateBay.msix` passes.
+- **SmartScreen**: First run does not show "Windows protected your PC" when properly signed.
+- **Auto-update**: MSIX sideload update replaces previous version without data loss.
+- **Uninstall**: Settings → Apps → CrateBay → Uninstall removes all components cleanly.
+
+#### Permission Model
+
+- **UAC elevation**: App does not require elevation for normal operation; prompts only for WSL2 setup.
+- **Windows Defender**: Executable is not flagged as suspicious; exclusion not required.
+- **Firewall**: Windows Firewall dialog appears when Docker socket listener starts; app works after "Allow".
+- **Controlled Folder Access**: App can write to its data directory when CFA is enabled.
+
+### 8.4 Cross-Platform Coordination
+
+#### E2E Consistency Testing
+
+The following critical user flows MUST produce identical functional behavior on all three platforms:
+
+| Flow | Verification |
+|------|--------------|
+| Chat → Send message → Receive streamed response | Token-by-token rendering, final content identical |
+| Container → Create from template → Start → Exec → Stop → Delete | Full lifecycle succeeds, status transitions correct |
+| Settings → Add LLM provider → Save API key → Test connection | Key encrypted in SQLite, test returns success |
+| MCP → Add server → Start → List tools → Call tool | Tool list populated, tool execution returns result |
+| Agent → Tool call → Confirmation dialog → Execute | Dialog shown for destructive ops, execution succeeds |
+
+**Implementation**: Playwright E2E tests are parameterized to run against all three platform builds in CI matrix.
+
+#### Security Testing — Cross-Platform
+
+All 24 security test cases from §7.4 (Security Test Checklist) are executed on every platform:
+
+| Platform | Additional Security Concerns |
+|----------|-----------------------------|
+| macOS | Gatekeeper bypass, entitlement escalation, Keychain access |
+| Linux | Privilege escalation via SUID, cgroup escape, namespace breakout |
+| Windows | Token impersonation, named pipe hijacking, DLL search order abuse |
+
+Platform-specific security tests are added to the shared security suite. Each platform tester owns their platform-specific security cases.
+
+#### Performance Benchmark — Cross-Platform
+
+Benchmark results are collected on all three platforms and compared:
+
+| Metric | macOS Baseline | Linux Baseline | Windows Baseline |
+|--------|---------------|----------------|------------------|
+| Binary size (release) | <20MB | <20MB | <20MB |
+| App startup time | <3s | <3s | <5s* |
+| Idle RAM usage | <200MB | <200MB | <250MB* |
+| Container list API | <200ms | <200ms | <300ms* |
+| SQLite query (1000 msgs) | <50ms | <50ms | <50ms |
+
+*Windows budgets are relaxed due to WSL2 overhead and Windows Defender real-time scanning.
+
+Regression detection: If any metric degrades by >15% between releases, a P1 issue is filed.
+
+---
+
+## 9. Platform-Specific Test Checklist
+
+This section provides detailed, executable test cases organized by module and platform.
+
+### 9.1 CrateBay-CLI Base Command Tests (All Platforms)
+
+These 5 test cases verify CLI binary functionality and are identical across platforms.
+
+| ID | Command | Test Scenario | Verification |
+|------|---------|---------------|--------------|
+| CLI-001 | `cratebay list` | No containers running | Returns empty array or "No containers" message |
+| CLI-002 | `cratebay list` | With active containers | List format correct, all fields (id, name, status, image, created) present |
+| CLI-003 | `cratebay list` | Output format flags | `--format json` returns valid JSON; `--format table` returns aligned table; `--format plain` returns one-per-line |
+| CLI-004 | `cratebay info` | System information | OS, Arch, Memory, Disk fields present and values are reasonable |
+| CLI-005 | `cratebay info` | Container runtime status | Docker/Container Runtime status field shows "running" or "stopped" accurately |
+
+**Run command**: `cargo test -p cratebay-cli --test cli_integration`
+
+### 9.2 CrateBay-GUI Tauri Command Classification Tests
+
+All 41 Tauri commands are tested per group. Each command has at minimum one happy-path and one error-path test case on every platform.
+
+#### Container Commands (10)
+
+| Command | Happy Path | Error Path |
+|---------|-----------|------------|
+| `container_templates` | Returns non-empty template list with required fields | N/A (read-only, always succeeds) |
+| `container_list` | Returns containers matching filter criteria | Invalid filter returns validation error |
+| `container_create` | Creates container from valid template, returns ContainerInfo | Invalid template ID returns `NotFound` error |
+| `container_start` | Starts stopped container, status becomes "running" | Starting already-running container returns `InvalidState` |
+| `container_stop` | Stops running container, status becomes "stopped" | Stopping already-stopped container returns `InvalidState` |
+| `container_delete` | Deletes stopped container, no longer in list | Deleting running container returns `InvalidState` |
+| `container_exec` | Executes command in running container, returns stdout | Exec on stopped container returns `InvalidState` |
+| `container_exec_stream` | Streams output via Tauri Events, receives all chunks | Stream on non-existent container returns error event |
+| `container_logs` | Returns log lines with correct tail/since filters | Logs for non-existent container returns `NotFound` |
+| `container_inspect` | Returns detailed container info with all fields | Inspect non-existent container returns `NotFound` |
+
+#### LLM Commands (10)
+
+| Command | Happy Path | Error Path |
+|---------|-----------|------------|
+| `llm_proxy_stream` | Streams tokens via events, ends with `[DONE]` | Invalid session ID returns error; no API key returns `Unauthorized` |
+| `llm_proxy_cancel` | Cancels active stream, receives cancellation event | Cancel non-existent stream is a no-op (no error) |
+| `llm_provider_list` | Returns all configured providers with `hasApiKey` flag | N/A (read-only) |
+| `llm_provider_create` | Creates provider with valid config, appears in list | Duplicate provider name returns `AlreadyExists` |
+| `llm_provider_update` | Updates provider fields, changes reflected in get | Update non-existent provider returns `NotFound` |
+| `llm_provider_delete` | Deletes provider, removed from list | Delete non-existent provider returns `NotFound` |
+| `llm_provider_test` | Tests connection with valid API key, returns success | Invalid API key returns structured error with provider details |
+| `llm_models_fetch` | Fetches models from provider API, returns model list | Network error returns `ConnectionError` |
+| `llm_models_list` | Returns cached model list for provider | Non-existent provider returns `NotFound` |
+| `llm_models_toggle` | Enables/disables model, state persisted | Toggle non-existent model returns `NotFound` |
+
+#### Storage Commands (10)
+
+| Command | Happy Path | Error Path |
+|---------|-----------|------------|
+| `settings_get` | Returns current settings object with all fields | N/A (always returns defaults if empty) |
+| `settings_update` | Updates settings, changes persisted across restart | Invalid setting key returns validation error |
+| `api_key_save` | Saves encrypted API key, `hasApiKey` becomes true | Empty key string returns validation error |
+| `api_key_delete` | Deletes key, `hasApiKey` becomes false | Delete non-existent key is a no-op |
+| `conversation_list` | Returns conversations sorted by last activity | N/A (read-only, returns empty list if none) |
+| `conversation_get_messages` | Returns messages for valid conversation ID | Non-existent conversation returns `NotFound` |
+| `conversation_create` | Creates new conversation, returns with generated ID | N/A (always succeeds) |
+| `conversation_delete` | Deletes conversation and all its messages | Delete non-existent conversation returns `NotFound` |
+| `conversation_save_message` | Saves message to conversation, appears in get_messages | Save to non-existent conversation returns `NotFound` |
+| `conversation_update_title` | Updates title, change reflected in conversation_list | Update non-existent conversation returns `NotFound` |
+
+#### MCP Commands (8)
+
+| Command | Happy Path | Error Path |
+|---------|-----------|------------|
+| `mcp_server_list` | Returns configured MCP servers with connection status | N/A (read-only) |
+| `mcp_server_add` | Adds MCP server config, appears in list | Duplicate server name returns `AlreadyExists` |
+| `mcp_server_remove` | Removes server config, no longer in list | Remove non-existent server returns `NotFound` |
+| `mcp_server_start` | Starts server process, status becomes "connected" | Start with invalid command returns `ConnectionError` |
+| `mcp_server_stop` | Stops server process, status becomes "disconnected" | Stop already-stopped server is a no-op |
+| `mcp_client_call_tool` | Calls tool on connected server, returns result | Call tool on disconnected server returns `ConnectionError` |
+| `mcp_client_list_tools` | Returns tool list from connected server | List on disconnected server returns `ConnectionError` |
+| `mcp_export_client_config` | Exports config as JSON matching `.mcp.json` schema | N/A (read-only) |
+
+#### System Commands (3)
+
+| Command | Happy Path | Error Path |
+|---------|-----------|------------|
+| `system_info` | Returns OS, arch, memory, disk, app version | N/A (always succeeds) |
+| `docker_status` | Returns Docker connection status and version | Docker not running returns `{ available: false }` (not an error) |
+| `runtime_status` | Returns container runtime status per platform | Runtime not available returns `{ available: false }` (not an error) |
+
+### 9.3 Platform-Specific Test Cases
+
+#### macOS-Specific Tests (15)
+
+| ID | Category | Test Case | Verification |
+|------|----------|-----------|-------------|
+| MAC-001 | VZ Runtime | VM creation with VZ.framework | `VZVirtualMachine` instantiated, state is "stopped" |
+| MAC-002 | VZ Runtime | VM start and status monitoring | State transitions: stopped → starting → running |
+| MAC-003 | VZ Runtime | VM pause and resume | State transitions: running → paused → running |
+| MAC-004 | VZ Runtime | VM stop and cleanup | State becomes "stopped", resources released |
+| MAC-005 | VZ Runtime | Shared directory mount | Host directory accessible inside VM at mount point |
+| MAC-006 | Permissions | Full Disk Access not required | App launches and functions without FDA entitlement |
+| MAC-007 | Permissions | Network permission dialog | Firewall prompt appears on first network listen |
+| MAC-008 | Permissions | Sandbox entitlements | All required entitlements present in signed app |
+| MAC-009 | Packaging | DMG mount and install | Drag-to-Applications flow completes successfully |
+| MAC-010 | Packaging | Code signature verification | `codesign --verify --deep --strict` passes |
+| MAC-011 | Packaging | Notarization verification | `spctl --assess --type execute` returns accepted |
+| MAC-012 | UI | Menu bar integration | Application menu shows correct items; shortcuts work |
+| MAC-013 | UI | Traffic light buttons | Close/minimize/maximize buttons positioned correctly |
+| MAC-014 | UI | Dark/Light mode switch | UI responds to system appearance change in real-time |
+| MAC-015 | UI | VoiceOver accessibility | All primary UI elements are navigable via VoiceOver |
+
+#### Linux-Specific Tests (12)
+
+| ID | Category | Test Case | Verification |
+|------|----------|-----------|-------------|
+| LNX-001 | KVM Runtime | KVM availability detection | `/dev/kvm` detected when available; graceful fallback when not |
+| LNX-002 | KVM Runtime | QEMU VM creation and start | VM boots and reaches ready state within timeout |
+| LNX-003 | KVM Runtime | virtio device attachment | `virtio-net` and `virtio-blk` devices visible inside VM |
+| LNX-004 | KVM Runtime | virtiofs host directory sharing | Shared directory read/write works bidirectionally |
+| LNX-005 | Docker | Socket connection (default) | Connect via `/var/run/docker.sock` succeeds |
+| LNX-006 | Docker | Rootless Docker support | Connect via `$XDG_RUNTIME_DIR/docker.sock` succeeds |
+| LNX-007 | Packaging | AppImage execution | `chmod +x` + execute launches app; FUSE error is descriptive |
+| LNX-008 | Packaging | DEB install and uninstall | `dpkg -i` installs; `dpkg -r` removes cleanly |
+| LNX-009 | System | SELinux enforcing mode | App runs without AVC denials on Fedora/RHEL |
+| LNX-010 | System | AppArmor profile | Profile loads on Ubuntu; no blocked operations |
+| LNX-011 | System | XDG directory compliance | Config in `$XDG_CONFIG_HOME`, data in `$XDG_DATA_HOME` |
+| LNX-012 | UI | Wayland and X11 rendering | Window renders correctly under both display servers |
+
+#### Windows-Specific Tests (10)
+
+| ID | Category | Test Case | Verification |
+|------|----------|-----------|-------------|
+| WIN-001 | WSL2 Runtime | WSL2 detection | `wsl --status` parsed correctly; clear error if unavailable |
+| WIN-002 | WSL2 Runtime | Distribution management | Install, start, stop CrateBay WSL2 distro succeeds |
+| WIN-003 | WSL2 Runtime | Host-guest communication | Named pipe / localhost socket IPC works bidirectionally |
+| WIN-004 | WSL2 Runtime | Docker in WSL2 | Docker daemon in WSL2 accessible from Windows-side Tauri backend |
+| WIN-005 | Packaging | MSIX installation | Windows App Installer flow completes without errors |
+| WIN-006 | Packaging | Authenticode signature | `signtool verify /pa` passes on the signed package |
+| WIN-007 | Permissions | No UAC for normal operation | App launches and runs without elevation prompt |
+| WIN-008 | Permissions | UAC for WSL2 setup | Elevation prompt shown only during initial WSL2 configuration |
+| WIN-009 | UI | High DPI scaling | UI renders correctly at 100%, 150%, and 200% scaling |
+| WIN-010 | UI | System tray integration | Tray icon visible; context menu shows correct actions |

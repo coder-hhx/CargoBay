@@ -19,6 +19,9 @@ export type {
   AppSettings,
 };
 
+/** Stable empty references to avoid re-renders from Zustand selectors */
+const EMPTY_MODELS: never[] = [];
+
 interface SettingsState {
   // LLM Providers
   providers: LlmProviderInfo[];
@@ -75,7 +78,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   fetchProviders: async () => {
     set({ providersLoading: true });
     try {
-      const providers = await invoke<LlmProviderInfo[]>("llm_providers_list");
+      const providers = await invoke<LlmProviderInfo[]>("llm_provider_list");
       set({ providers, providersLoading: false });
     } catch {
       // In non-Tauri env, keep current state
@@ -203,14 +206,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   toggleModel: async (providerId, modelId, enabled) => {
     try {
-      await invoke("llm_model_toggle", { providerId, modelId, enabled });
+      await invoke("llm_models_toggle", { providerId, modelId, enabled });
     } catch {
       // Mock for non-Tauri development
     }
     set((state) => ({
       models: {
         ...state.models,
-        [providerId]: (state.models[providerId] ?? []).map((m) =>
+        [providerId]: (state.models[providerId] ?? EMPTY_MODELS).map((m) =>
           m.id === modelId ? { ...m, isEnabled: enabled } : m,
         ),
       },
@@ -235,8 +238,27 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   fetchSettings: async () => {
     try {
-      const settings = await invoke<AppSettings>("settings_get");
-      set({ settings });
+      // settings_get takes a single key, so we fetch each known key individually
+      const keys: (keyof AppSettings)[] = [
+        "language", "theme", "sendOnEnter", "showAgentThinking",
+        "maxConversationHistory", "containerDefaultTtlHours",
+        "confirmDestructiveOps", "reasoningEffort",
+      ];
+      const fetched: Partial<AppSettings> = {};
+      for (const key of keys) {
+        const value = await invoke<string | null>("settings_get", { key });
+        if (value !== null && value !== undefined) {
+          // Parse booleans and numbers back from string storage
+          if (value === "true" || value === "false") {
+            (fetched as Record<string, unknown>)[key] = value === "true";
+          } else if (!isNaN(Number(value)) && key !== "language" && key !== "theme" && key !== "reasoningEffort") {
+            (fetched as Record<string, unknown>)[key] = Number(value);
+          } else {
+            (fetched as Record<string, unknown>)[key] = value;
+          }
+        }
+      }
+      set({ settings: { ...defaultSettings, ...fetched } });
     } catch {
       // Keep defaults in non-Tauri env
     }
@@ -246,7 +268,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings = { ...get().settings, ...patch };
     set({ settings: newSettings });
     try {
-      await invoke("settings_update", { settings: newSettings });
+      // settings_update takes (key, value) pairs, so we update each changed key
+      for (const [key, value] of Object.entries(patch)) {
+        await invoke("settings_update", { key, value: String(value) });
+      }
     } catch {
       // Mock for non-Tauri development
     }
@@ -260,7 +285,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   saveApiKey: async (providerId, key) => {
     try {
-      await invoke("llm_api_key_save", { providerId, key });
+      await invoke("api_key_save", { providerId, apiKey: key });
       set((state) => ({
         providers: state.providers.map((p) =>
           p.id === providerId ? { ...p, hasApiKey: true } : p,
@@ -278,7 +303,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   deleteApiKey: async (providerId) => {
     try {
-      await invoke("llm_api_key_delete", { providerId });
+      await invoke("api_key_delete", { providerId });
     } catch {
       // Mock for non-Tauri development
     }

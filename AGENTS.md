@@ -194,7 +194,7 @@ pnpm tauri build                           # Build desktop app
 | [runtime-spec.md](docs/specs/runtime-spec.md) | EN | Built-in container runtime (VZ/KVM/WSL2) |
 | [api-spec.md](docs/specs/api-spec.md) | EN | Tauri Commands API catalog |
 | [mcp-spec.md](docs/specs/mcp-spec.md) | EN | MCP Server + Client design |
-| [testing-spec.md](docs/specs/testing-spec.md) | EN | Testing pyramid, CI/CD pipeline |
+| [testing-spec.md](docs/specs/testing-spec.md) | EN | Testing pyramid, CI/CD pipeline, **platform-specific test matrix** |
 | [dev-workflow.md](docs/workflow/dev-workflow.md) | CN | Spec-Driven development workflow |
 | [agent-team-workflow.md](docs/workflow/agent-team-workflow.md) | CN | Agent Team collaboration rules |
 | [knowledge-base.md](docs/workflow/knowledge-base.md) | CN | Knowledge base auto-update rules |
@@ -324,6 +324,7 @@ This file is automatically loaded by 20+ AI coding tools:
 | **Runtime development** | `docs/specs/runtime-spec.md`, `docs/specs/backend-spec.md` | |
 | **MCP development** | `docs/specs/mcp-spec.md`, `docs/specs/backend-spec.md` | |
 | **Testing** | `docs/specs/testing-spec.md` + spec for the module being tested | |
+| **Platform Testing** | `docs/specs/testing-spec.md` §5-6, `docs/prompts/platform-test-pre-commit.md` | `docs/workflow/agent-team-workflow.md` §4.3 |
 | **Database changes** | `docs/specs/database-spec.md` | `docs/specs/backend-spec.md` |
 | **Architecture decisions** | `docs/specs/architecture.md`, `docs/references/tech-decisions.md` | |
 | **New to project** | This file → `docs/progress.md` → `docs/workflow/agent-team-workflow.md` | |
@@ -352,8 +353,8 @@ Check `docs/progress.md` "当前状态" → "阶段" field to determine the curr
 | Phase | Condition | Action |
 |-------|-----------|--------|
 | 文档阶段 (Phase 1) | 16 docs not all completed | Create 3-agent doc team (architect, product-manager, frontend-architect) |
-| 开发阶段 (Phase 2) | Docs done, code in progress | Create dev team per `agent-team-workflow.md` §1.1 |
-| 测试阶段 (Phase 3) | Core features done | Create test team per `agent-team-workflow.md` §1.1 |
+| 开发阶段 (Phase 2) | Docs done, code in progress | Create dev team per `agent-team-workflow.md` §1.1 (9 members incl. 3 platform testers) |
+| 测试阶段 (Phase 3) | Core features done | Create test team per `agent-team-workflow.md` §1.1 (3 platform testers mandatory) |
 
 ### Phase Execution Rules (CRITICAL — DO NOT SKIP)
 
@@ -387,14 +388,24 @@ Check `docs/progress.md` "当前状态" → "阶段" field to determine the curr
   6. Verify no spec-defined items are missing from the implementation
 - If the architect finds that spec itself has an error (e.g., references a non-existent API), the architect MUST report it to team-lead, who will ask the human for approval before modifying the spec. **Code must match spec; spec is NEVER modified to match code without human approval.**
 
-**Rule 6: Strict Spec Compliance — ZERO tolerance for deviation.**
+**Rule 6: Platform Testing Gate — MANDATORY before every commit.**
+- Every code change to `crates/cratebay-cli/` or `crates/cratebay-gui/` MUST pass three-platform testing.
+- Three platform testers (`platform-tester-macos`, `platform-tester-linux`, `platform-tester-windows`) run in parallel.
+- Testing scope: ALL CLI commands + ALL 30 Tauri GUI commands + platform-specific tests.
+- Test spec: `docs/specs/testing-spec.md` §5-6 defines the full test matrix.
+- Agent prompt: `docs/prompts/platform-test-pre-commit.md` defines execution procedure.
+- Hook spec: `.codebuddy/hooks/.pre-commit.spec` defines the automated gate.
+- Pre-commit hook (`.githooks/pre-commit` Layer 6) enforces this — commit is BLOCKED if any platform fails.
+- This rule is NON-NEGOTIABLE. Do not skip, defer, or partially execute platform tests.
+
+**Rule 7: Strict Spec Compliance — ZERO tolerance for deviation.**
 - Spec documents (`docs/specs/*.md`) are the **source of truth**. All code must match spec exactly.
 - NO agent may "simplify", "defer", "skip", or "partially implement" any spec-defined item without explicit human approval.
 - If a spec defines 14 tools, ALL 14 must be implemented. If a spec defines 4 hooks, ALL 4 must exist.
 - If a dependency is listed in the spec (e.g., Streamdown), it MUST be installed and used.
 - If a component is defined in the spec (e.g., TerminalView.tsx), it MUST be created.
 - When the spec's interface definition conflicts with a third-party library's actual API, this is a spec issue — report to team-lead for human decision. Do NOT silently adapt.
-- Protected files (pre-existing, NOT to be modified by dev agents): `.github/`, `.githooks/`, `assets/`, `scripts/`, `website/`, `proto/`, `LICENSE`, `.gitignore`, `.nvmrc`, symlinks (`.cursorrules`, `CLAUDE.md`, `GEMINI.md`, `.windsurfrules`, `.github/copilot-instructions.md`)
+- Protected files (pre-existing, NOT to be modified by dev agents): `.github/`, `.githooks/`, `assets/`, `scripts/`, `proto/`, `LICENSE`, `.gitignore`, `.nvmrc`, symlinks (`.cursorrules`, `CLAUDE.md`, `GEMINI.md`, `.windsurfrules`, `.github/copilot-instructions.md`)
 
 **Cross-machine recovery**: After `git pull` on a new machine, read this file + `docs/progress.md`. The progress file contains a "Quick Resume" section with executable step-by-step instructions.
 
@@ -424,7 +435,7 @@ Official website: [cratebay.io](https://cratebay.io) (GitHub Pages, auto-deploye
 
 Hooks are in `.githooks/`. Run `scripts/setup-dev.sh` to activate.
 
-- `pre-commit`: upstream sync + docs/i18n checks + `cargo check`
+- `pre-commit`: upstream sync + docs/i18n checks + `cargo check` + **platform testing gate** (Layer 6)
 - `pre-push`: local CI gate via `scripts/ci-local.sh`
 - `commit-msg`: validates Conventional Commits format
 

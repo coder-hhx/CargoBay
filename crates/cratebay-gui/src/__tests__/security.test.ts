@@ -17,7 +17,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // Mock the Tauri invoke/listen wrappers
-const mockInvoke = vi.fn(() => Promise.reject(new Error("Tauri not available in test")));
+const mockInvoke = vi.fn<(...args: unknown[]) => Promise<unknown>>(
+  () => Promise.reject(new Error("Tauri not available in test")),
+);
 vi.mock("@/lib/tauri", () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -150,9 +152,9 @@ describe("API Key Security", () => {
     await useSettingsStore.getState().saveApiKey("provider-1", "sk-secret-value-99999");
 
     // The invoke should have been called with the key (sent to backend)
-    expect(mockInvoke).toHaveBeenCalledWith("llm_api_key_save", {
+    expect(mockInvoke).toHaveBeenCalledWith("api_key_save", {
       providerId: "provider-1",
-      key: "sk-secret-value-99999",
+      apiKey: "sk-secret-value-99999",
     });
 
     // The key value must NOT be stored in the Zustand state
@@ -182,7 +184,7 @@ describe("API Key Security", () => {
 
     await useSettingsStore.getState().deleteApiKey("provider-1");
 
-    expect(mockInvoke).toHaveBeenCalledWith("llm_api_key_delete", {
+    expect(mockInvoke).toHaveBeenCalledWith("api_key_delete", {
       providerId: "provider-1",
     });
 
@@ -454,7 +456,7 @@ describe("Source Code Security Scan", () => {
     expect(content).toContain("hasApiKey");
 
     // saveApiKey should invoke the backend, not store locally
-    expect(content).toContain('invoke("llm_api_key_save"');
+    expect(content).toContain('invoke("api_key_save"');
   });
 
   it("streamFn does not include API keys in Tauri invoke parameters", () => {

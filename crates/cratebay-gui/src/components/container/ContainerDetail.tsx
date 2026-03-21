@@ -1,4 +1,5 @@
 import { useContainerStore, type ContainerInfo } from "@/stores/containerStore";
+import { useI18n } from "@/lib/i18n";
 import {
   Dialog,
   DialogContent,
@@ -10,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 export function ContainerDetail() {
+  const { t } = useI18n();
   const selectedContainerId = useContainerStore((s) => s.selectedContainerId);
   const containers = useContainerStore((s) => s.containers);
   const selectContainer = useContainerStore((s) => s.selectContainer);
@@ -26,19 +28,19 @@ export function ContainerDetail() {
           <>
             <DialogHeader>
               <DialogTitle>{container.name}</DialogTitle>
-              <DialogDescription>Container ID: {container.id}</DialogDescription>
+              <DialogDescription>{t("containers", "containerId")}: {container.id}</DialogDescription>
             </DialogHeader>
 
             <div className="flex flex-col gap-4 py-4">
-              <DetailRow label="Status">
+              <DetailRow label={t("containers", "status")}>
                 <StatusBadge status={container.status} />
               </DetailRow>
-              <DetailRow label="Image">{container.image}</DetailRow>
-              <DetailRow label="Template">{container.templateId}</DetailRow>
-              <DetailRow label="CPU">{container.cpuCores} cores</DetailRow>
-              <DetailRow label="Memory">{container.memoryMb} MB</DetailRow>
-              <DetailRow label="Created">{new Date(container.createdAt).toLocaleString()}</DetailRow>
-              <DetailRow label="Short ID">{container.shortId}</DetailRow>
+              <DetailRow label={t("containers", "image")}>{container.image}</DetailRow>
+              <DetailRow label={t("containers", "template")}>{container.templateId}</DetailRow>
+              <DetailRow label={t("containers", "cpu")}>{container.cpuCores} cores</DetailRow>
+              <DetailRow label={t("containers", "memory")}>{container.memoryMb} MB</DetailRow>
+              <DetailRow label={t("containers", "created")}>{new Date(container.createdAt).toLocaleString()}</DetailRow>
+              <DetailRow label={t("containers", "shortId")}>{container.shortId}</DetailRow>
             </div>
           </>
         )}
@@ -57,16 +59,17 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
-  const variants: Record<typeof status, { label: string; className: string }> = {
-    running: { label: "Running", className: "border-success/30 bg-success/10 text-success" },
-    stopped: { label: "Stopped", className: "border-muted bg-muted/50 text-muted-foreground" },
-    creating: { label: "Creating", className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500" },
-    error: { label: "Error", className: "border-destructive/30 bg-destructive/10 text-destructive" },
+  const { t } = useI18n();
+  const variants: Record<typeof status, { labelKey: "running" | "stopped" | "creating" | "error"; className: string }> = {
+    running: { labelKey: "running", className: "border-success/30 bg-success/10 text-success" },
+    stopped: { labelKey: "stopped", className: "border-muted bg-muted/50 text-muted-foreground" },
+    creating: { labelKey: "creating", className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500" },
+    error: { labelKey: "error", className: "border-destructive/30 bg-destructive/10 text-destructive" },
   };
   const variant = variants[status];
   return (
     <Badge variant="outline" className={cn("text-[10px]", variant.className)}>
-      {variant.label}
+      {t("containers", variant.labelKey)}
     </Badge>
   );
 }

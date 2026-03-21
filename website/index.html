@@ -4,13 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CrateBay · Coming Soon</title>
-  <meta name="description" content="CrateBay — open-source desktop control plane for local AI workflows." />
-  <meta name="keywords" content="cratebay, local ai, ai sandboxes, mcp, desktop app" />
+  <meta name="description" content="CrateBay — open-source desktop AI development control plane with chat-first interface and built-in container runtime." />
+  <meta name="keywords" content="cratebay, ai development, chat-first, container runtime, mcp tools, desktop app, tauri" />
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=0700" />
   <link rel="shortcut icon" href="favicon-32x32.png?v=0700" />
   <link rel="apple-touch-icon" href="logo.png" />
   <link rel="stylesheet" href="style.css?v=20260317a" />
-  <script src="script.js?v=20260319b" defer></script>
+  <script src="script.js?v=20260321a" defer></script>
 </head>
 <body>
   <main class="shell">
@@ -29,10 +29,10 @@
         <img class="hero-logo" src="logo.png" alt="CrateBay logo" />
         <h1 data-i18n="heroTitle">CrateBay</h1>
         <p class="hero-lead" data-i18n="heroLead">
-          Open-source desktop control plane for local AI workflows.
+          Open-source desktop AI development control plane.
         </p>
         <p class="hero-sub" data-i18n="heroSub">
-          Public focus today: AI sandboxes, local models, MCP servers, and provider / CLI bridges. Containers stay in scope as the runtime underneath.
+          Chat-first interface for managing containers, AI models, and MCP tools. Built-in container runtime — no external Docker installation required.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/coder-hhx/CrateBay" target="_blank" rel="noreferrer" data-i18n="githubCta">GitHub</a>
@@ -41,46 +41,46 @@
 
       <div class="hero-summary">
         <article class="summary-card">
-          <span class="summary-label" data-i18n="summary1Label">AI Sandboxes</span>
-          <strong data-i18n="summary1Title">Managed local sandboxes</strong>
-          <p data-i18n="summary1Body">Create, inspect, execute, and clean up local AI sandboxes from one desktop surface.</p>
+          <span class="summary-label" data-i18n="summary1Label">Chat-First</span>
+          <strong data-i18n="summary1Title">Conversational AI development</strong>
+          <p data-i18n="summary1Body">Interact with an AI agent to manage containers, models, and tools through natural language chat.</p>
         </article>
         <article class="summary-card">
-          <span class="summary-label" data-i18n="summary2Label">Local Models</span>
-          <strong data-i18n="summary2Title">Model runtime visibility</strong>
-          <p data-i18n="summary2Body">Check Ollama status, storage, GPU telemetry, and model lifecycle in one place.</p>
+          <span class="summary-label" data-i18n="summary2Label">Container Runtime</span>
+          <strong data-i18n="summary2Title">Built-in, zero-install Docker</strong>
+          <p data-i18n="summary2Body">Embedded container runtime on every platform — no Docker Desktop required. macOS, Windows, and Linux supported.</p>
         </article>
         <article class="summary-card">
-          <span class="summary-label" data-i18n="summary3Label">MCP + Bridges</span>
-          <strong data-i18n="summary3Title">Tooling handoff</strong>
-          <p data-i18n="summary3Body">Manage MCP servers and provider / CLI bridge presets without leaving the app.</p>
+          <span class="summary-label" data-i18n="summary3Label">MCP Tools</span>
+          <strong data-i18n="summary3Title">Extensible tool ecosystem</strong>
+          <p data-i18n="summary3Body">Connect MCP servers, manage tool lifecycles, and extend agent capabilities without leaving the app.</p>
         </article>
       </div>
     </section>
 
     <section class="section">
       <div class="section-head">
-        <span class="section-kicker" data-i18n="sectionKicker">Public Scope</span>
-        <h2 data-i18n="sectionTitle">What the desktop app is proving now.</h2>
-        <p data-i18n="sectionBody">CrateBay is validating the AI-first workflow first, with containers as the supporting runtime layer.</p>
+        <span class="section-kicker" data-i18n="sectionKicker">Core Features</span>
+        <h2 data-i18n="sectionTitle">Everything you need for AI development, in one app.</h2>
+        <p data-i18n="sectionBody">CrateBay combines a chat-first AI agent, built-in container runtime, and MCP tool management into a single desktop experience.</p>
       </div>
 
       <div class="grid cards-4">
         <article class="card">
-          <h3 data-i18n="card1Title">AI-first GUI</h3>
-          <p data-i18n="card1Body">Dashboard, AI Hub, Containers, Images, Volumes, and Settings are the current default desktop surfaces.</p>
+          <h3 data-i18n="card1Title">Agent Engine</h3>
+          <p data-i18n="card1Body">Powered by pi-agent-core with streaming markdown rendering via Streamdown. Multi-provider LLM support built in.</p>
         </article>
         <article class="card">
-          <h3 data-i18n="card2Title">Runtime-backed flows</h3>
-          <p data-i18n="card2Body">Sandboxes, local models, MCP lifecycle, and container operations are all under active validation.</p>
+          <h3 data-i18n="card2Title">Container Management</h3>
+          <p data-i18n="card2Body">Full container lifecycle — create, start, stop, inspect, and manage images and volumes from the chat or GUI.</p>
         </article>
         <article class="card">
-          <h3 data-i18n="card3Title">Future tracks stay hidden</h3>
-          <p data-i18n="card3Body">VM and Kubernetes backends remain in the repo, but the default GUI hides them until dedicated runtime runners are ready.</p>
+          <h3 data-i18n="card3Title">Cross-Platform</h3>
+          <p data-i18n="card3Body">Built with Tauri v2 for macOS, Windows, and Linux. Native performance with a small binary footprint.</p>
         </article>
         <article class="card">
-          <h3 data-i18n="card4Title">Open development</h3>
-          <p data-i18n="card4Body">Follow the repo for public progress while release sequencing stays private.</p>
+          <h3 data-i18n="card4Title">Open Source</h3>
+          <p data-i18n="card4Body">MIT licensed. Follow the repo for progress, contribute features, or extend with your own MCP tools.</p>
         </article>
       </div>
     </section>
@@ -89,8 +89,8 @@
       <div class="panel callout">
         <div>
           <span class="section-kicker" data-i18n="statusKicker">Status</span>
-          <h2 data-i18n="statusTitle">Coming soon, with an AI-first scope</h2>
-          <p data-i18n="statusBody">VM and Kubernetes stay hidden in the default GUI until dedicated runtime validation exists.</p>
+          <h2 data-i18n="statusTitle">v2 rewrite in progress</h2>
+          <p data-i18n="statusBody">CrateBay v2 is being rebuilt from scratch with a chat-first architecture, built-in container runtime, and deep MCP integration.</p>
         </div>
       </div>
     </section>

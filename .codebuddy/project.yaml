@@ -19,10 +19,27 @@ current_stage:
       members: [architect, product-manager, frontend-architect]
       lead: architect
     development:
-      members: [team-lead, frontend-dev, backend-dev, ai-engineer, runtime-dev, tester]
+      members:
+        - team-lead
+        - frontend-dev
+        - backend-dev
+        - ai-engineer
+        - runtime-dev
+        - tester          # team lead for testing/QA
+        - platform-tester-macos
+        - platform-tester-linux
+        - platform-tester-windows
       lead: team-lead
     testing:
-      members: [team-lead, frontend-dev, backend-dev, tester, doc-keeper]
+      members:
+        - team-lead
+        - frontend-dev
+        - backend-dev
+        - tester          # team lead for testing/QA
+        - platform-tester-macos
+        - platform-tester-linux
+        - platform-tester-windows
+        - doc-keeper
       lead: team-lead
 
 architecture:

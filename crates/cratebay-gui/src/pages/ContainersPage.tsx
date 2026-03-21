@@ -1,81 +1,181 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useContainerStore } from "@/stores/containerStore";
+import { useI18n } from "@/lib/i18n";
+import { ContainerCard } from "@/components/container/ContainerCard";
 import { ContainerList } from "@/components/container/ContainerList";
 import { ContainerDetail } from "@/components/container/ContainerDetail";
 import { ContainerCreate } from "@/components/container/ContainerCreate";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { RefreshCw, Search, Box, LayoutGrid, List } from "lucide-react";
+import type { ContainerFilter } from "@/types/container";
+
+type FilterStatus = ContainerFilter["status"];
+type ViewMode = "grid" | "table";
+
+type FilterLabelKey = "all" | "running" | "stopped" | "creating";
+const FILTER_LABEL_KEYS: Record<FilterStatus, FilterLabelKey> = {
+  all: "all",
+  running: "running",
+  stopped: "stopped",
+  creating: "creating",
+};
 
 export function ContainersPage() {
+  const { t } = useI18n();
   const fetchContainers = useContainerStore((s) => s.fetchContainers);
   const fetchTemplates = useContainerStore((s) => s.fetchTemplates);
+  const containers = useContainerStore((s) => s.containers);
   const filter = useContainerStore((s) => s.filter);
   const setFilter = useContainerStore((s) => s.setFilter);
   const loading = useContainerStore((s) => s.loading);
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
   useEffect(() => {
     void fetchContainers();
     void fetchTemplates();
   }, [fetchContainers, fetchTemplates]);
 
+  // Counts for filter chips
+  const counts = useMemo(
+    () => ({
+      all: containers.length,
+      running: containers.filter((c) => c.status === "running").length,
+      stopped: containers.filter((c) => c.status === "stopped").length,
+      creating: containers.filter((c) => c.status === "creating").length,
+    }),
+    [containers],
+  );
+
+  // Filtered containers (supporting "creating" status in chips)
+  const filteredContainers = useMemo(() => {
+    const statusFilter = filter.status as FilterStatus;
+    return containers.filter((c) => {
+      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      if (filter.templateId !== null && c.templateId !== filter.templateId) return false;
+      if (
+        filter.search.length > 0 &&
+        !c.name.toLowerCase().includes(filter.search.toLowerCase()) &&
+        !c.image.toLowerCase().includes(filter.search.toLowerCase())
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [containers, filter]);
+
+  // Allow "creating" as extended filter via chip click
+  const currentChipFilter: FilterStatus =
+    (filter.status as FilterStatus) in FILTER_LABEL_KEYS
+      ? (filter.status as FilterStatus)
+      : "all";
+
+  const handleChipClick = (f: FilterStatus) => {
+    setFilter({ status: f });
+  };
+
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-6 py-4">
-        <div>
-          <h1 className="text-lg font-semibold text-foreground">Containers</h1>
-          <p className="text-xs text-muted-foreground">
-            Manage development sandboxes and containers.
-          </p>
-        </div>
+      {/* Header — stats + actions (no h1, TopBar already shows page title) */}
+      <div className="flex items-center justify-between px-6 py-3">
+        <p className="text-xs text-muted-foreground">
+          {containers.length} {t("containers", "containerCount")} &middot; {counts.running} {t("containers", "running")}
+        </p>
         <div className="flex items-center gap-2">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={() => void fetchContainers()}
             disabled={loading}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            {t("common", "refresh")}
           </Button>
           <ContainerCreate />
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
-        <Input
-          value={filter.search}
-          onChange={(e) => setFilter({ search: e.target.value })}
-          placeholder="Search containers..."
-          className="max-w-xs"
-        />
-        <Select
-          value={filter.status}
-          onValueChange={(v) => setFilter({ status: v as "all" | "running" | "stopped" })}
-        >
-          <SelectTrigger className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="running">Running</SelectItem>
-            <SelectItem value="stopped">Stopped</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex items-center gap-3 border-b border-border px-6 py-2.5">
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={filter.search}
+            onChange={(e) => setFilter({ search: e.target.value })}
+            placeholder={t("containers", "searchPlaceholder")}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <div className="h-4 w-px bg-border" />
+        <div className="flex items-center gap-1">
+          {(["all", "running", "stopped", "creating"] as FilterStatus[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => handleChipClick(f)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
+                currentChipFilter === f
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {t("containers", FILTER_LABEL_KEYS[f])} ({counts[f]})
+            </button>
+          ))}
+        </div>
+        {/* View mode toggle */}
+        <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border p-0.5">
+          <button
+            onClick={() => setViewMode("grid")}
+            className={cn(
+              "rounded p-1.5 transition-colors focus:outline-none",
+              viewMode === "grid"
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-label={t("containers", "gridView")}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => setViewMode("table")}
+            className={cn(
+              "rounded p-1.5 transition-colors focus:outline-none",
+              viewMode === "table"
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-label={t("containers", "tableView")}
+          >
+            <List className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Container table */}
-      <div className="flex-1 overflow-auto">
-        <ContainerList />
+      {/* Container content area */}
+      <div className="flex-1 overflow-auto px-6 py-4">
+        {viewMode === "table" ? (
+          <ContainerList />
+        ) : loading ? (
+          <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+            {t("containers", "loadingContainers")}
+          </div>
+        ) : filteredContainers.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+            <Box className="mb-3 h-12 w-12 opacity-20" />
+            <h3 className="text-sm font-medium">{t("containers", "noContainers")}</h3>
+            <p className="mt-1 text-xs">
+              {t("containers", "noContainersHint")}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-4">
+            {filteredContainers.map((c) => (
+              <ContainerCard key={c.id} container={c} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Detail dialog */}

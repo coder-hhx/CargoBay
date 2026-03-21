@@ -14,7 +14,8 @@ use cratebay_core::runtime::RuntimeManager;
 /// Shared application state accessible from all Tauri commands.
 pub struct AppState {
     /// Docker client (optional — Docker may not be available).
-    pub docker: Option<Arc<Docker>>,
+    /// Wrapped in Mutex so it can be updated after runtime starts.
+    pub docker: Arc<Mutex<Option<Arc<Docker>>>>,
 
     /// SQLite database connection.
     pub db: Arc<Mutex<Connection>>,
@@ -34,13 +35,28 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Get a reference to the Docker client, or error if unavailable.
-    pub fn require_docker(&self) -> Result<&Docker, AppError> {
-        self.docker
-            .as_deref()
+    /// Get a clone of the Docker client Arc, or error if unavailable.
+    pub fn require_docker(&self) -> Result<Arc<Docker>, AppError> {
+        let guard = self.docker.lock().map_err(|e| {
+            AppError::Runtime(format!("Docker state mutex poisoned: {}", e))
+        })?;
+        guard
+            .clone()
             .ok_or_else(|| AppError::Docker(bollard::errors::Error::DockerResponseServerError {
                 status_code: 503,
                 message: "Docker is not available. Please install and start Docker.".to_string(),
             }))
+    }
+
+    /// Update the Docker client (e.g., after runtime starts).
+    pub fn set_docker(&self, docker: Option<Arc<Docker>>) {
+        if let Ok(mut guard) = self.docker.lock() {
+            *guard = docker;
+        }
+    }
+
+    /// Check if Docker is currently available.
+    pub fn has_docker(&self) -> bool {
+        self.docker.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 }

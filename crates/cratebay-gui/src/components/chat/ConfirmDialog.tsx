@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import type { ConfirmationRequest } from "@/stores/workflowStore";
 import {
   Dialog,
@@ -28,6 +29,7 @@ interface ConfirmDialogProps {
  * - critical: Destructive + bold, type exact resource name
  */
 export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogProps) {
+  const { t } = useI18n();
   const [confirmText, setConfirmText] = useState("");
 
   const needsTextConfirmation = request.riskLevel === "high" || request.riskLevel === "critical";
@@ -43,7 +45,7 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
           <div className="flex items-center gap-2">
             <riskConfig.Icon className={cn("h-5 w-5", riskConfig.iconClass)} />
             <DialogTitle className={riskConfig.titleClass}>
-              Confirm {request.toolLabel}
+              {t("common", "confirm")} {request.toolLabel}
             </DialogTitle>
           </div>
           <DialogDescription>{request.description}</DialogDescription>
@@ -52,7 +54,7 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
         <div className="space-y-3 py-2">
           {/* Parameter summary */}
           <div className="rounded-md bg-muted/50 p-3">
-            <p className="mb-1 text-xs font-medium text-muted-foreground">Parameters:</p>
+            <p className="mb-1 text-xs font-medium text-muted-foreground">{t("common", "parameters")}:</p>
             <pre className="overflow-x-auto font-mono text-xs text-muted-foreground">
               {JSON.stringify(request.parameters, null, 2)}
             </pre>
@@ -61,7 +63,7 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
           {/* Consequences list */}
           {request.consequences.length > 0 && (
             <div>
-              <p className="mb-1 text-xs font-medium text-muted-foreground">Consequences:</p>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">{t("common", "consequences")}:</p>
               <ul className="list-inside list-disc space-y-0.5 text-xs text-muted-foreground">
                 {request.consequences.map((c, i) => (
                   <li key={i}>{c}</li>
@@ -74,8 +76,7 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
           {needsTextConfirmation && (
             <div>
               <p className="mb-1 text-xs text-muted-foreground">
-                Type <code className="rounded bg-muted px-1 font-mono">{expectedText}</code> to
-                confirm:
+                {t("common", "typeToConfirm").replace("{text}", "")}<code className="rounded bg-muted px-1 font-mono">{expectedText}</code>
               </p>
               <Input
                 value={confirmText}
@@ -90,14 +91,14 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
 
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
-            Cancel
+            {t("common", "cancel")}
           </Button>
           <Button
             variant={riskConfig.buttonVariant}
             onClick={onConfirm}
             disabled={!canConfirm}
           >
-            Confirm
+            {t("common", "confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

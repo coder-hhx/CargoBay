@@ -256,3 +256,121 @@ if [[ "$should_build" -eq 1 ]]; then
   echo "Running build check: cargo check --workspace --locked"
   cargo check --workspace --locked
 fi
+
+# ─────────────────────────────────────────────────────────────────
+# Layer 6 — Platform Testing Gate (BLOCKING)
+# Trigger: any staged file under crates/cratebay-cli/ or crates/cratebay-gui/ or crates/cratebay-core/
+# Spec: .codebuddy/hooks/.pre-commit.spec
+# Ref: AGENTS.md Rule 6
+# ─────────────────────────────────────────────────────────────────
+
+CORE_CHANGED=$(git diff --cached --name-only | grep -cE '^crates/(cratebay-cli|cratebay-gui|cratebay-core)/' || true)
+
+if [ "$CORE_CHANGED" -gt 0 ]; then
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║          Layer 6 — Platform Testing Gate                     ║"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "Core crate changes detected ($CORE_CHANGED files)."
+  echo "Running quick local validation..."
+  echo ""
+
+  # Step 1: Quick local compile + unit tests
+  echo "→ cargo check --workspace --locked"
+  if ! cargo check --workspace --locked 2>&1; then
+    echo ""
+    echo "❌ FAILED: cargo check did not pass."
+    echo "Fix compilation errors before committing."
+    exit 1
+  fi
+
+  echo ""
+  echo "→ cargo test -p cratebay-cli --lib"
+  if ! cargo test -p cratebay-cli --lib 2>&1; then
+    echo ""
+    echo "❌ FAILED: cratebay-cli unit tests did not pass."
+    exit 1
+  fi
+
+  echo ""
+  echo "→ cargo test -p cratebay-core --lib"
+  if ! cargo test -p cratebay-core --lib 2>&1; then
+    echo ""
+    echo "❌ FAILED: cratebay-core unit tests did not pass."
+    exit 1
+  fi
+
+  echo ""
+  echo "✅ Quick local validation passed."
+  echo ""
+
+  # Step 2: Platform testing reminder + enforcement
+  # Check if .codebuddy/hooks/.pre-commit.spec exists
+  SPEC_FILE=".codebuddy/hooks/.pre-commit.spec"
+  if [ -f "$SPEC_FILE" ]; then
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  ⚠  THREE-PLATFORM TESTING REQUIRED (AGENTS.md Rule 6)     ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║                                                            ║"
+    echo "║  Before this commit can be accepted, the following         ║"
+    echo "║  platform testers MUST verify all CLI + GUI functionality: ║"
+    echo "║                                                            ║"
+    echo "║    • platform-tester-macos                                 ║"
+    echo "║    • platform-tester-linux                                 ║"
+    echo "║    • platform-tester-windows                               ║"
+    echo "║                                                            ║"
+    echo "║  Test spec: .codebuddy/hooks/.pre-commit.spec              ║"
+    echo "║  Agent prompt: docs/prompts/platform-test-pre-commit.md    ║"
+    echo "║                                                            ║"
+    echo "║  If running in an AI Agent session:                        ║"
+    echo "║  → Spawn 3 platform testers using the spec above           ║"
+    echo "║  → Wait for ALL THREE to report PASS                       ║"
+    echo "║                                                            ║"
+    echo "║  If running manually:                                      ║"
+    echo "║  → Ensure CI will run three-platform tests on push         ║"
+    echo "║  → Use --no-verify ONLY in emergencies (logged & flagged)  ║"
+    echo "║                                                            ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Check for platform test results marker file
+    RESULTS_DIR=".codebuddy/test-results"
+    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "staged")
+    MACOS_RESULT="$RESULTS_DIR/platform-test-macos-${COMMIT_HASH}.pass"
+    LINUX_RESULT="$RESULTS_DIR/platform-test-linux-${COMMIT_HASH}.pass"
+    WINDOWS_RESULT="$RESULTS_DIR/platform-test-windows-${COMMIT_HASH}.pass"
+
+    MISSING_PLATFORMS=""
+    [ ! -f "$MACOS_RESULT" ] && MISSING_PLATFORMS="${MISSING_PLATFORMS} macOS"
+    [ ! -f "$LINUX_RESULT" ] && MISSING_PLATFORMS="${MISSING_PLATFORMS} Linux"
+    [ ! -f "$WINDOWS_RESULT" ] && MISSING_PLATFORMS="${MISSING_PLATFORMS} Windows"
+
+    if [ -n "$MISSING_PLATFORMS" ]; then
+      echo "⚠  Missing platform test results for:${MISSING_PLATFORMS}"
+      echo ""
+      echo "   Platform testers must run and generate .pass marker files"
+      echo "   at: ${RESULTS_DIR}/platform-test-{platform}-{hash}.pass"
+      echo ""
+      echo "   For AI Agent sessions: spawn platform testers now."
+      echo "   For manual commits: ensure CI will validate on push."
+      echo ""
+      # In AI Agent context, this blocks the commit.
+      # For human developers, the CI on push will catch failures.
+      if [ -n "$CODEBUDDY_AGENT" ] || [ -n "$CLAUDE_AGENT" ] || [ -n "$CURSOR_AGENT" ]; then
+        echo "❌ BLOCKED: Agent-driven commit requires all 3 platform test results."
+        echo "   Spawn platform testers and wait for PASS before committing."
+        exit 1
+      else
+        echo "⚠  WARNING: Platform tests not verified locally."
+        echo "   CI will enforce three-platform testing on push."
+        echo "   Proceeding with commit..."
+      fi
+    else
+      echo "✅ All three platform tests verified: macOS ✓  Linux ✓  Windows ✓"
+    fi
+  fi
+
+  echo ""
+  echo "✅ Layer 6 — Platform Testing Gate passed."
+fi

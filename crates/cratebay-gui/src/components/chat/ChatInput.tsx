@@ -3,15 +3,17 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useContainerStore } from "@/stores/containerStore";
 import { useMcpStore } from "@/stores/mcpStore";
+import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import { Send, Square } from "lucide-react";
+import { Send, Square, Paperclip, AtSign, Zap, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const MAX_INPUT_HEIGHT = 200;
-const MIN_INPUT_HEIGHT = 44;
+const MIN_INPUT_HEIGHT = 48;
 
 interface ChatInputProps {
   onSend?: (message: string) => void;
+  onStop?: () => void;
   disabled?: boolean;
   placeholder?: string;
 }
@@ -31,8 +33,11 @@ interface MentionItem {
  * - Multi-line input: Shift+Enter for new line, Enter to send (configurable)
  * - Ctrl+Enter always sends, Escape clears
  * - Auto-resize textarea
+ * - Model selector in toolbar
+ * - Attachment button (UI only)
  */
-export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
+export function ChatInput({ onSend, onStop, disabled, placeholder }: ChatInputProps) {
+  const { t } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionListRef = useRef<HTMLDivElement>(null);
   const inputDraft = useChatStore((s) => s.inputDraft);
@@ -42,6 +47,12 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   const mentionQuery = useChatStore((s) => s.mentionQuery);
   const setMentionQuery = useChatStore((s) => s.setMentionQuery);
   const sendOnEnter = useSettingsStore((s) => s.settings.sendOnEnter);
+  const activeModelId = useSettingsStore((s) => s.activeModelId);
+  const setActiveModel = useSettingsStore((s) => s.setActiveModel);
+  const enabledModels = useSettingsStore((s) => s.enabledModels);
+
+  // Model selector state
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
 
   // Mention autocomplete state
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -51,6 +62,13 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   const containers = useContainerStore((s) => s.containers);
   const mcpServers = useMcpStore((s) => s.servers);
   const mcpTools = useMcpStore((s) => s.availableTools);
+
+  const allEnabledModels = useMemo(() => enabledModels(), [enabledModels]);
+  const activeModelName = useMemo(() => {
+    if (activeModelId === null) return t("chat", "selectModel");
+    const model = allEnabledModels.find((m) => m.id === activeModelId);
+    return model?.name ?? t("chat", "selectModel");
+  }, [activeModelId, allEnabledModels]);
 
   const mentionItems: MentionItem[] = useMemo(() => {
     const items: MentionItem[] = [];
@@ -109,6 +127,14 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   useEffect(() => {
     resizeTextarea();
   }, [inputDraft, resizeTextarea]);
+
+  // Close model dropdown when clicking outside
+  useEffect(() => {
+    if (!modelDropdownOpen) return;
+    const handleClickOutside = () => setModelDropdownOpen(false);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [modelDropdownOpen]);
 
   const handleSend = useCallback(() => {
     const text = inputDraft.trim();
@@ -233,12 +259,12 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   );
 
   return (
-    <div className="relative border-t border-border bg-background p-4">
+    <div className="relative bg-gradient-to-t from-background via-background to-transparent px-4 pb-6 pt-4">
       {/* Mention autocomplete popup */}
       {mentionQuery !== null && filteredMentions.length > 0 && (
         <div
           ref={mentionListRef}
-          className="absolute bottom-full left-4 right-4 mb-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg"
+          className="absolute bottom-full left-1/2 mb-1 max-h-48 w-full max-w-[400px] -translate-x-1/2 overflow-y-auto rounded-lg border border-border bg-card shadow-lg"
         >
           {filteredMentions.map((item, idx) => (
             <button
@@ -246,7 +272,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
               type="button"
               onClick={() => insertMention(item)}
               className={cn(
-                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm",
+                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs focus:outline-none",
                 idx === mentionIndex
                   ? "bg-primary/10 text-primary"
                   : "text-foreground hover:bg-muted",
@@ -259,38 +285,115 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         </div>
       )}
 
-      <div className="relative flex items-end gap-2 rounded-lg border border-border bg-card px-3 py-2">
-        <textarea
-          ref={textareaRef}
-          value={inputDraft}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder ?? "Type a message... (@ to mention, Shift+Enter for new line)"}
-          className={cn(
-            "flex-1 resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground",
-            "outline-none",
-          )}
-          style={{
-            minHeight: `${MIN_INPUT_HEIGHT}px`,
-            maxHeight: `${MAX_INPUT_HEIGHT}px`,
-          }}
-          rows={1}
-          disabled={isStreaming || disabled === true}
-        />
-        <Button
-          size="icon-sm"
-          variant={canSend ? "default" : "ghost"}
-          onClick={isStreaming ? () => setStreaming(false) : handleSend}
-          disabled={!canSend && !isStreaming}
-          aria-label={isStreaming ? "Stop generating" : "Send message"}
-          className="flex-shrink-0"
-        >
-          {isStreaming ? (
-            <Square className="h-4 w-4" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
-        </Button>
+      <div className="mx-auto max-w-[800px]">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-all duration-150 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/30">
+          {/* Textarea */}
+          <textarea
+            ref={textareaRef}
+            value={inputDraft}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder ?? t("chat", "placeholder")}
+            className={cn(
+              "w-full resize-none bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground",
+              "outline-none",
+            )}
+            style={{
+              minHeight: `${MIN_INPUT_HEIGHT}px`,
+              maxHeight: `${MAX_INPUT_HEIGHT}px`,
+            }}
+            rows={1}
+            disabled={isStreaming || disabled === true}
+          />
+
+          {/* Toolbar */}
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-1">
+              {/* Attachment button (UI only) */}
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title={t("chat", "addAttachment")}
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+
+              {/* @ mention button */}
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title={t("chat", "mentionHint")}
+                onClick={() => {
+                  setInputDraft(inputDraft + "@");
+                  textareaRef.current?.focus();
+                }}
+              >
+                <AtSign className="h-4 w-4" />
+              </button>
+
+              {/* Model selector */}
+              <div className="relative">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setModelDropdownOpen(!modelDropdownOpen);
+                  }}
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  <span className="max-w-[120px] truncate">{activeModelName}</span>
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+
+                {/* Model dropdown */}
+                {modelDropdownOpen && allEnabledModels.length > 0 && (
+                  <div className="absolute bottom-full left-0 mb-1 max-h-48 min-w-[200px] overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
+                    {allEnabledModels.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors",
+                          model.id === activeModelId
+                            ? "bg-primary/10 text-primary"
+                            : "text-foreground hover:bg-muted",
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveModel(model.id);
+                          setModelDropdownOpen(false);
+                        }}
+                      >
+                        <Zap className="h-3 w-3 flex-shrink-0" />
+                        <span className="truncate">{model.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Send button */}
+            <Button
+              size="icon-sm"
+              variant={canSend ? "default" : "ghost"}
+              onClick={isStreaming ? (onStop ?? (() => setStreaming(false))) : handleSend}
+              disabled={!canSend && !isStreaming}
+              aria-label={isStreaming ? t("chat", "stopButton") : t("chat", "sendButton")}
+              className={cn(
+                "h-9 w-9 flex-shrink-0 rounded-lg",
+                canSend && "bg-primary text-white hover:bg-primary/90 shadow-sm",
+              )}
+            >
+              {isStreaming ? (
+                <Square className="h-4 w-4" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );

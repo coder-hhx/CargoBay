@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { useMcpStore } from "@/stores/mcpStore";
 import type { McpToolInfo } from "@/types/mcp";
 import { Wrench } from "lucide-react";
@@ -11,14 +12,15 @@ interface McpToolListProps {
  * Shows tool name, description, and input schema.
  */
 export function McpToolList({ serverId }: McpToolListProps) {
+  const { t } = useI18n();
   const availableTools = useMcpStore((s) => s.availableTools);
-  const tools = availableTools.filter((t) => t.serverId === serverId);
+  const tools = availableTools.filter((tool) => tool.serverId === serverId);
 
   if (tools.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-6 text-center text-sm text-muted-foreground">
         <Wrench className="mb-2 h-6 w-6 opacity-30" />
-        <p>No tools available from this server.</p>
+        <p>{t("mcp", "noTools")}</p>
       </div>
     );
   }

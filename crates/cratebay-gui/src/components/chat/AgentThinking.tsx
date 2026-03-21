@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import { ChevronDown, ChevronRight, Brain } from "lucide-react";
 
 interface AgentThinkingProps {
@@ -13,6 +14,7 @@ interface AgentThinkingProps {
  * Monospace font for reasoning text.
  */
 export function AgentThinking({ content, isActive }: AgentThinkingProps) {
+  const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
 
   // When active, default to expanded
@@ -38,7 +40,7 @@ export function AgentThinking({ content, isActive }: AgentThinkingProps) {
         )}
         <Brain className="h-3 w-3" />
         <span className="font-medium">
-          {isActive ? "Thinking" : "Reasoning"}
+          {isActive ? t("chat", "thinking") : t("chat", "reasoning")}
         </span>
         {isActive && <ThinkingDots />}
       </button>

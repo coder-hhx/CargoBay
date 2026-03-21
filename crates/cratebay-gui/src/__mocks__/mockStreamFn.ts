@@ -79,7 +79,7 @@ export function createMockStreamFn(responses: MockResponse[]): StreamFn {
 
   const mockStreamFn: StreamFn = (
     model: Model<string>,
-    context: Context,
+    _context: Context,
     _options?: SimpleStreamOptions,
   ) => {
     const stream = createAssistantMessageEventStream();

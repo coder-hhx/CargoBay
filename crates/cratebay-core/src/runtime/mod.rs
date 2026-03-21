@@ -298,6 +298,9 @@ fn parse_docker_host(host: &str) -> Option<PathBuf> {
 /// Uses a callback pattern because `cratebay-core` does not depend on Tauri.
 /// The GUI layer wraps this callback to emit Tauri events.
 ///
+/// Spawns a dedicated background thread with its own tokio runtime so it can
+/// be called from any context (no pre-existing tokio reactor required).
+///
 /// # Arguments
 ///
 /// * `runtime` — Shared runtime manager instance.
@@ -306,27 +309,45 @@ pub fn start_health_monitor(
     runtime: Arc<dyn RuntimeManager>,
     on_health: impl Fn(HealthStatus) + Send + 'static,
 ) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            match runtime.health_check().await {
-                Ok(status) => {
-                    on_health(status);
-                }
+    let spawn_result = std::thread::Builder::new()
+        .name("health-monitor".to_string())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
                 Err(e) => {
-                    tracing::warn!("Health check failed: {}", e);
-                    on_health(HealthStatus {
-                        runtime_state: RuntimeState::Error(e.to_string()),
-                        docker_responsive: false,
-                        docker_version: None,
-                        uptime_seconds: None,
-                        last_check: chrono::Utc::now().to_rfc3339(),
-                    });
+                    tracing::error!("Failed to create health monitor runtime: {}", e);
+                    return;
                 }
-            }
-        }
-    });
+            };
+            rt.block_on(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    match runtime.health_check().await {
+                        Ok(status) => {
+                            on_health(status);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Health check failed: {}", e);
+                            on_health(HealthStatus {
+                                runtime_state: RuntimeState::Error(e.to_string()),
+                                docker_responsive: false,
+                                docker_version: None,
+                                uptime_seconds: None,
+                                last_check: chrono::Utc::now().to_rfc3339(),
+                            });
+                        }
+                    }
+                }
+            });
+        });
+
+    if let Err(e) = spawn_result {
+        tracing::error!("Failed to spawn health monitor thread: {}", e);
+    }
 }
 
 #[cfg(test)]

@@ -19,8 +19,8 @@ export function AppLayout({ children }: AppLayoutProps) {
         {/* Sidebar */}
         <aside
           className={cn(
-            "flex-shrink-0 border-r border-border transition-[width] duration-200 ease-in-out",
-            sidebarOpen ? "overflow-hidden" : "w-0 border-r-0",
+            "flex-shrink-0 border-r border-border transition-[width] duration-200 ease-in-out overflow-y-auto overflow-x-hidden",
+            !sidebarOpen && "w-0 border-r-0",
           )}
           style={sidebarOpen ? { width: `${sidebarWidth}px` } : undefined}
         >

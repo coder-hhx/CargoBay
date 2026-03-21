@@ -204,7 +204,7 @@ pub async fn llm_proxy_stream(
 
     // Clean up cancellation token
     {
-        if let Ok(mut tokens) = cancel_tokens_ref.lock() {
+        if let Ok(mut tokens) = cancel_tokens_ref.lock_or_recover() {
             tokens.remove(&channel_id_cleanup);
         }
     }

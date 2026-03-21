@@ -52,7 +52,7 @@ export interface ContainerTemplate {
  * Filter criteria for container list.
  */
 export interface ContainerFilter {
-  status: "all" | "running" | "stopped";
+  status: "all" | "running" | "stopped" | "creating";
   search: string;
   templateId: string | null;
 }

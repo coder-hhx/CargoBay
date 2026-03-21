@@ -1,10 +1,12 @@
 import { useContainerStore, type ContainerInfo } from "@/stores/containerStore";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Play, Square, Trash2, Eye } from "lucide-react";
 
 export function ContainerList() {
+  const { t } = useI18n();
   const filteredContainers = useContainerStore((s) => s.filteredContainers);
   const loading = useContainerStore((s) => s.loading);
   const containers = filteredContainers();
@@ -12,7 +14,7 @@ export function ContainerList() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-        Loading containers...
+        {t("containers", "loadingContainers")}
       </div>
     );
   }
@@ -20,7 +22,7 @@ export function ContainerList() {
   if (containers.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-        No containers found. Create one to get started.
+        {t("containers", "noContainersHint")}
       </div>
     );
   }
@@ -30,12 +32,12 @@ export function ContainerList() {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-4 py-2 font-medium">Name</th>
-            <th className="px-4 py-2 font-medium">Image</th>
-            <th className="px-4 py-2 font-medium">Status</th>
-            <th className="px-4 py-2 font-medium">CPU</th>
-            <th className="px-4 py-2 font-medium">Memory</th>
-            <th className="px-4 py-2 text-right font-medium">Actions</th>
+            <th className="px-4 py-2 font-medium">{t("containers", "name")}</th>
+            <th className="px-4 py-2 font-medium">{t("containers", "image")}</th>
+            <th className="px-4 py-2 font-medium">{t("containers", "status")}</th>
+            <th className="px-4 py-2 font-medium">{t("containers", "cpu")}</th>
+            <th className="px-4 py-2 font-medium">{t("containers", "memory")}</th>
+            <th className="px-4 py-2 text-right font-medium">{t("containers", "actions")}</th>
           </tr>
         </thead>
         <tbody>
@@ -49,6 +51,7 @@ export function ContainerList() {
 }
 
 function ContainerRow({ container }: { container: ContainerInfo }) {
+  const { t } = useI18n();
   const startContainer = useContainerStore((s) => s.startContainer);
   const stopContainer = useContainerStore((s) => s.stopContainer);
   const deleteContainer = useContainerStore((s) => s.deleteContainer);
@@ -75,7 +78,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
             variant="ghost"
             size="icon-xs"
             onClick={() => selectContainer(container.id)}
-            aria-label="View details"
+            aria-label={t("containers", "viewDetails")}
           >
             <Eye className="h-3.5 w-3.5" />
           </Button>
@@ -84,7 +87,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
               variant="ghost"
               size="icon-xs"
               onClick={() => void stopContainer(container.id)}
-              aria-label="Stop container"
+              aria-label={t("containers", "stop")}
             >
               <Square className="h-3.5 w-3.5" />
             </Button>
@@ -93,7 +96,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
               variant="ghost"
               size="icon-xs"
               onClick={() => void startContainer(container.id)}
-              aria-label="Start container"
+              aria-label={t("containers", "start")}
             >
               <Play className="h-3.5 w-3.5" />
             </Button>
@@ -102,7 +105,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
             variant="ghost"
             size="icon-xs"
             onClick={() => void deleteContainer(container.id)}
-            aria-label="Delete container"
+            aria-label={t("containers", "delete")}
           >
             <Trash2 className="h-3.5 w-3.5 text-destructive" />
           </Button>
@@ -113,21 +116,22 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
 }
 
 function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
-  const variants: Record<typeof status, { label: string; className: string }> = {
+  const { t } = useI18n();
+  const variants: Record<typeof status, { labelKey: "running" | "stopped" | "creating" | "error"; className: string }> = {
     running: {
-      label: "Running",
+      labelKey: "running",
       className: "border-success/30 bg-success/10 text-success",
     },
     stopped: {
-      label: "Stopped",
+      labelKey: "stopped",
       className: "border-muted bg-muted/50 text-muted-foreground",
     },
     creating: {
-      label: "Creating",
+      labelKey: "creating",
       className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500",
     },
     error: {
-      label: "Error",
+      labelKey: "error",
       className: "border-destructive/30 bg-destructive/10 text-destructive",
     },
   };
@@ -136,7 +140,7 @@ function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
 
   return (
     <Badge variant="outline" className={cn("text-[10px]", variant.className)}>
-      {variant.label}
+      {t("containers", variant.labelKey)}
     </Badge>
   );
 }

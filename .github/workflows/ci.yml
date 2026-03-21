@@ -43,22 +43,20 @@ jobs:
           - name: macOS
             os: macos-latest
             install-protoc: brew install protobuf
-            # On macOS we can lint/test the whole workspace (including cratebay-vz)
+            # On macOS we can lint/test the whole workspace (excluding GUI which needs WebKitGTK)
             clippy-args: --workspace --exclude cratebay-gui -- -D warnings
             test-args: --workspace --exclude cratebay-gui
           - name: Linux
             os: ubuntu-latest
             install-protoc: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-            # cratebay-vz requires Virtualization.framework (macOS only)
-            clippy-args: --workspace --exclude cratebay-gui --exclude cratebay-vz -- -D warnings
-            test-args: --workspace --exclude cratebay-gui --exclude cratebay-vz
+            clippy-args: --workspace --exclude cratebay-gui -- -D warnings
+            test-args: --workspace --exclude cratebay-gui
           - name: Windows
             os: windows-latest
             install-protoc: choco install protoc -y
-            # cratebay-vz requires Virtualization.framework (macOS only);
-            # cratebay-gui requires WebKitGTK / WebView2 build tooling
-            clippy-args: --workspace --exclude cratebay-gui --exclude cratebay-vz -- -D warnings
-            test-args: --workspace --exclude cratebay-gui --exclude cratebay-vz
+            # cratebay-gui requires WebView2 build tooling
+            clippy-args: --workspace --exclude cratebay-gui -- -D warnings
+            test-args: --workspace --exclude cratebay-gui
 
     steps:
       - uses: actions/checkout@v5
@@ -93,15 +91,6 @@ jobs:
         run: cargo test ${{ matrix.test-args }} -- --test-threads=1
         env:
           RUST_BACKTRACE: 1
-
-      # cratebay-vz: only build & test on macOS (Virtualization.framework)
-      - name: Build cratebay-vz
-        if: runner.os == 'macOS'
-        run: cargo build -p cratebay-vz
-
-      - name: Test cratebay-vz
-        if: runner.os == 'macOS'
-        run: cargo test -p cratebay-vz
 
   # -----------------------------------------------------------
   # GUI backend Rust tests (src-tauri)
@@ -331,30 +320,35 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: crates/cratebay-gui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/cratebay-gui/pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Type-check & build
-        run: npm run build
+        run: pnpm run build
 
       - name: Check i18n keys
-        run: npm run check:i18n
+        run: pnpm run check:i18n
 
       - name: Unit tests
-        run: npm run test:unit
+        run: pnpm run test:unit
 
       - name: Unit tests with coverage
-        run: npm run test:coverage
+        run: pnpm run test:coverage
 
       - name: Upload coverage report
         if: always()
@@ -379,15 +373,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: crates/cratebay-gui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/cratebay-gui/pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run canary tests
         run: npx vitest run src/__tests__/canary.test.ts
@@ -407,15 +406,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: crates/cratebay-gui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/cratebay-gui/pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
@@ -446,12 +450,17 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: crates/cratebay-gui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/cratebay-gui/pnpm-lock.yaml
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -520,8 +529,8 @@ jobs:
         with:
           shared-key: size-check
 
-      - name: Build release (CLI + daemon)
-        run: cargo build --release -p cratebay-cli -p cratebay-daemon
+      - name: Build release (CLI)
+        run: cargo build --release -p cratebay-cli
 
       - name: Report binary sizes
         run: |
@@ -529,7 +538,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Binary | Size |" >> "$GITHUB_STEP_SUMMARY"
           echo "|--------|------|" >> "$GITHUB_STEP_SUMMARY"
-          for bin in cratebay cratebay-daemon; do
+          for bin in cratebay; do
             path="target/release/$bin"
             if [ -f "$path" ]; then
               size_bytes=$(stat -f%z "$path")
@@ -542,7 +551,7 @@ jobs:
       - name: Check binary size limit (20 MB each)
         run: |
           MAX_BYTES=$((20 * 1048576))
-          for bin in cratebay cratebay-daemon; do
+          for bin in cratebay; do
             path="target/release/$bin"
             if [ -f "$path" ]; then
               size=$(stat -f%z "$path")
@@ -598,7 +607,7 @@ jobs:
           shared-key: perf-bench
 
       - name: Build release binaries
-        run: cargo build --release -p cratebay-cli -p cratebay-daemon
+        run: cargo build --release -p cratebay-cli
 
       - name: Run performance benchmarks
         run: ./scripts/bench-perf.sh

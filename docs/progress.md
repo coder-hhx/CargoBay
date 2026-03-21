@@ -107,15 +107,71 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 ---
 
+## 用户永久规则（MUST FOLLOW — 跨会话/跨机器生效）
+
+> **所有 AI Agent 必须遵守以下规则，无需用户每次重复要求。**
+
+### 规则 1: 固定开发团队
+每次新会话启动时，**必须**按照 `docs/workflow/agent-team-workflow.md` §1.1 创建固定开发团队：
+- 当前阶段：开发阶段（Phase 2）
+- 团队组成（6 人）：team-lead、frontend-dev、backend-dev、ai-engineer、runtime-dev、tester
+- 团队名称：`cratebay-dev`
+- 团队是项目全生命周期的，**不要在一轮任务完成后关闭**
+- 只有用户明确要求或项目阶段切换时才调整团队
+
+### 规则 2: 按 spec 执行
+所有开发工作严格遵循 `docs/specs/` 下的 spec 文档，spec 是唯一的真理来源。
+
+---
+
 ## 下次继续（Quick Resume）
 
 > **给 AI 的可执行指令** — 换电脑后读取此段，按步骤执行，不要重新规划。
 
-### 所有 7 个步骤已完成。v2.0.0-alpha.1 准备就绪。
+### GUI 改进 + Spec 偏差修复（2026-03-21 完成）
 
-Step 0 到 Step 7 全部完成。CrateBay v2 桌面应用开发阶段结束。
+Step 0-7 基础骨架全部完成。GUI 改进和架构师偏差修复已全部完成。
 
-### Step 7 完成总结
+### 架构师评估偏差修复结果（2026-03-21）
+
+**Critical（4/4 已修复）**:
+- ✅ C1: workflowStore 集成到 ChatPage（Agent 系统集成）
+- ✅ C2: Agent 集成层（pi-agent-core）接入 UI（useAgent hook + ChatPage）
+- ✅ C3: LLM 流式响应集成（streamFn → llm_proxy_stream → Tauri Events）
+- ✅ C4: 14 个 AgentTool 注册到 agent 运行时
+
+**Major（7/8 已修复，1 项保持设计决策）**:
+- ✅ M1: 6 处前端 Tauri 命令名修复（settingsStore + mcpStore + 测试文件）
+- ✅ M2: ChatPage TopBar 会话管理（可编辑标题 + 新建对话 + Settings 跳转）
+- ✅ M3: ContainersPage table/grid 视图切换
+- ⏭️ M4: 剩余未调用命令随功能逐步接入（Agent 集成后已大幅改善）
+- ✅ M5: Settings 6 Tab 保持（参考项目设计决策，不回退）
+- ✅ M6: i18n 国际化集成（13 个组件文件 + en/zh-CN locale 完整）
+- ✅ M7: 对话持久化（6 个 conversation_* 命令集成，乐观更新 + 异步持久化）
+- ✅ M8: ConfirmDialog 集成到工具确认流（workflowStore.pendingConfirmation）
+
+### 其他已修复问题
+- ✅ Zustand 选择器 `?? []` 全部修复（5 文件）
+- ✅ Radix ScrollArea/Tooltip/Select 替换为原生实现
+- ✅ TypeScript 编译零错误
+- ✅ ContainersPage filter 类型修复（"creating" 加入 union type）
+- ✅ Rust 后端 41 个命令与 api-spec 完全一致
+- ✅ GUI 视觉改进（Chat 欢迎屏/消息气泡/模型选择器、Containers 卡片+Sparkline、MCP 手风琴、Settings 6 Tab、Sidebar 品牌+对话历史）
+- ✅ settings_get/settings_update 参数签名修复（key/value 模式）
+- ✅ mcp_update_server/mcp_server_logs 无效调用移除
+- ✅ GUI 视觉改进第一轮（Chat 欢迎屏/消息气泡/模型选择器、Containers 卡片网格、MCP 手风琴卡片、Settings 6 Tab、Sidebar 品牌+对话历史）
+
+### 可执行步骤
+
+```
+1. 读取 AGENTS.md + 本文件（progress.md）
+2. 按"用户永久规则"创建 cratebay-dev 固定团队
+3. 检查 TaskList 中未完成的任务
+4. 继续修复架构师发现的偏差（按 Critical → Major 优先级）
+5. 每完成一项，更新本文件标记完成
+```
+
+### Step 7 完成总结（基础骨架）
 
 **测试成果**:
 - cargo test: 269 passed, 0 failed, 5 ignored (Docker-dependent)
@@ -128,12 +184,6 @@ Step 0 到 Step 7 全部完成。CrateBay v2 桌面应用开发阶段结束。
 - ci.yml: 4 阶段 (check/fmt/clippy/lint → test → size-check/perf-bench → canary), 三平台 matrix, coverage
 - release.yml: v* tag 触发, code signing, SHA256 checksums
 - pages.yml: website/ 自动部署到 GitHub Pages
-
-**Spec 更新**:
-- testing-spec.md: v1.0.0 → v1.1.0
-- api-spec.md: v1.1.0 → v1.2.0 (9 个缺失命令补充)
-- backend-spec.md: v1.1.0 → v1.2.0 (MCP Client 5 文件目录结构)
-- architecture.md: v1.0.0 → v1.1.0 (MCP Client 模块描述)
 
 ### 下一步建议
 

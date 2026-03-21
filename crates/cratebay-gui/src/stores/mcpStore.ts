@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import type { McpServerInfo, McpServerConfig, McpToolInfo } from "@/types/mcp";
 
+/** Stable empty references to avoid re-renders from Zustand selectors */
+const EMPTY_LOG_LINES: string[] = [];
+
 interface McpState {
   // Servers
   servers: McpServerInfo[];
@@ -118,9 +121,28 @@ export const useMcpStore = create<McpState>()((set, get) => ({
 
   updateServer: async (id, config) => {
     try {
-      await invoke("mcp_update_server", { id, config });
+      // api-spec does not define mcp_update_server.
+      // Implement as remove + add (the only mutations supported).
+      const existing = get().servers.find((s) => s.id === id);
+      if (!existing) return;
+
+      // Build the new config by merging existing values with the patch
+      const mergedConfig: McpServerConfig = {
+        name: config.name ?? existing.name,
+        command: config.command ?? existing.command,
+        args: config.args ?? existing.args,
+        env: config.env ?? existing.env,
+        enabled: config.enabled ?? existing.enabled,
+        transport: config.transport ?? existing.transport,
+      };
+
+      await invoke("mcp_server_remove", { id });
+      await invoke("mcp_server_add", { config: mergedConfig });
+
+      // Refresh server list to get the new server (it may have a new ID)
       const servers = await invoke<McpServerInfo[]>("mcp_server_list");
       set({ servers });
+      void get().fetchTools();
     } catch {
       // Mock for non-Tauri development
       set((state) => ({
@@ -175,22 +197,17 @@ export const useMcpStore = create<McpState>()((set, get) => ({
 
   serverLogs: {},
 
-  fetchServerLogs: async (id) => {
-    try {
-      const logs = await invoke<string[]>("mcp_server_logs", { id });
-      set((state) => ({
-        serverLogs: { ...state.serverLogs, [id]: logs },
-      }));
-    } catch {
-      // Mock for non-Tauri development
-    }
+  fetchServerLogs: async (_id) => {
+    // NOTE: mcp_server_logs is not defined in the api-spec.
+    // Server logs are not currently supported by the backend.
+    // This is a no-op stub to preserve the interface contract.
   },
 
   appendServerLog: (serverId, line) =>
     set((state) => ({
       serverLogs: {
         ...state.serverLogs,
-        [serverId]: [...(state.serverLogs[serverId] ?? []), line],
+        [serverId]: [...(state.serverLogs[serverId] ?? EMPTY_LOG_LINES), line],
       },
     })),
 }));

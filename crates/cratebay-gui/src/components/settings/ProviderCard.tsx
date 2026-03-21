@@ -36,6 +36,10 @@ import {
   XCircle,
 } from "lucide-react";
 
+/** Stable empty references to avoid re-renders from Zustand selectors */
+const EMPTY_MODELS: never[] = [];
+const MODELS_NOT_LOADING = false;
+
 const API_FORMAT_LABELS: Record<ApiFormat, string> = {
   anthropic: "Anthropic",
   openai_responses: "OpenAI Responses",
@@ -51,8 +55,8 @@ export function ProviderCard({ provider }: ProviderCardProps) {
   const deleteProvider = useSettingsStore((s) => s.deleteProvider);
   const testProvider = useSettingsStore((s) => s.testProvider);
   const fetchModels = useSettingsStore((s) => s.fetchModels);
-  const models = useSettingsStore((s) => s.models[provider.id] ?? []);
-  const modelsLoading = useSettingsStore((s) => s.modelsLoading[provider.id] ?? false);
+  const models = useSettingsStore((s) => s.models[provider.id] ?? EMPTY_MODELS);
+  const modelsLoading = useSettingsStore((s) => s.modelsLoading[provider.id] ?? MODELS_NOT_LOADING);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);

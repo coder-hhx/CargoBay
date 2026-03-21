@@ -25,12 +25,17 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: crates/cratebay-gui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/cratebay-gui/pnpm-lock.yaml
 
       - name: Install Linux system dependencies
         run: |
@@ -69,25 +74,21 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             cli-artifact: cratebay-macos-aarch64
-            daemon-artifact: cratebay-daemon-macos-aarch64
             ext: ""
           - name: macOS-x86_64
             os: macos-13
             target: x86_64-apple-darwin
             cli-artifact: cratebay-macos-x86_64
-            daemon-artifact: cratebay-daemon-macos-x86_64
             ext: ""
           - name: Linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             cli-artifact: cratebay-linux-x86_64
-            daemon-artifact: cratebay-daemon-linux-x86_64
             ext: ""
           - name: Windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             cli-artifact: cratebay-windows-x86_64
-            daemon-artifact: cratebay-daemon-windows-x86_64
             ext: ".exe"
 
     steps:
@@ -124,29 +125,12 @@ jobs:
       - name: Build CLI (release)
         run: cargo build --release --target ${{ matrix.target }} -p cratebay-cli
 
-      # -- Build daemon --
-      - name: Build daemon (release)
-        run: cargo build --release --target ${{ matrix.target }} -p cratebay-daemon
-
-      # -- Build cratebay-vz on macOS --
-      - name: Build cratebay-vz (release, macOS only)
-        if: runner.os == 'macOS'
-        run: cargo build --release --target ${{ matrix.target }} -p cratebay-vz
-
       # -- Upload CLI binary --
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.cli-artifact }}
           path: target/${{ matrix.target }}/release/cratebay${{ matrix.ext }}
-          if-no-files-found: error
-
-      # -- Upload daemon binary --
-      - name: Upload daemon artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.daemon-artifact }}
-          path: target/${{ matrix.target }}/release/cratebay-daemon${{ matrix.ext }}
           if-no-files-found: error
 
   # -----------------------------------------------------------
@@ -217,12 +201,17 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: crates/cratebay-gui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/cratebay-gui/pnpm-lock.yaml
 
       # Linux: system libraries required by Tauri / WebKitGTK
       - name: Install Linux system dependencies
@@ -268,7 +257,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: crates/cratebay-gui
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -331,7 +320,7 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           cd artifacts
-          find . -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "cratebay" -o -name "cratebay-daemon" \) -exec sha256sum {} + | sort > ../SHA256SUMS.txt
+          find . -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "cratebay" \) -exec sha256sum {} + | sort > ../SHA256SUMS.txt
           cd ..
           echo "## SHA256 Checksums" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

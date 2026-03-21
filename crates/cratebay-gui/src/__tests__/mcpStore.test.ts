@@ -280,13 +280,13 @@ describe("mcpStore", () => {
   // serverLogs
   // -------------------------------------------------------------------------
   describe("serverLogs", () => {
-    it("fetchServerLogs populates logs from invoke", async () => {
-      const logs = ["[info] started", "[info] ready"];
-      mockInvoke.mockResolvedValueOnce(logs);
-
+    it("fetchServerLogs is a no-op (backend does not support mcp_server_logs)", async () => {
       await useMcpStore.getState().fetchServerLogs("mcp-1");
 
-      expect(useMcpStore.getState().serverLogs["mcp-1"]).toEqual(logs);
+      // Should not call invoke since the command is not in api-spec
+      expect(mockInvoke).not.toHaveBeenCalled();
+      // Logs state should remain empty
+      expect(useMcpStore.getState().serverLogs["mcp-1"]).toBeUndefined();
     });
 
     it("appendServerLog adds a log line", () => {
@@ -308,11 +308,11 @@ describe("mcpStore", () => {
   // updateServer
   // -------------------------------------------------------------------------
   describe("updateServer", () => {
-    it("uses mock fallback to update server in place", async () => {
+    it("uses mock fallback to update server in place (remove + add fails in non-Tauri)", async () => {
       useMcpStore.setState({
         servers: [makeServer({ id: "mcp-1", name: "Old Name" })],
       });
-      // First invoke (mcp_update_server) fails, so mock fallback runs
+      // First invoke (mcp_server_remove) fails, so mock fallback runs
       mockInvoke.mockRejectedValueOnce(new Error("no Tauri"));
 
       await useMcpStore.getState().updateServer("mcp-1", { name: "New Name" });
