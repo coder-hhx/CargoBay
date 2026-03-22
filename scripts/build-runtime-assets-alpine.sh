@@ -824,15 +824,38 @@ if [ -x /usr/local/bin/cratebay-guest-agent ]; then
     agent_pid=""
     log "skipping cratebay-guest-agent (vsock): no vsock device"
   fi
+
+  # TCP connect mode: guest connects OUT to host's TCP forward listener.
+  # This is the primary transport for VZ.framework on Intel Mac where vsock
+  # is not available. The host's cratebay-vz --tcp-forward binds 0.0.0.0:PORT
+  # and waits for the guest to connect back. We use the default gateway as
+  # the host IP since VZ NAT routes through it.
+  agent_connect_target="$(cmdline_value cratebay_agent_connect || true)"
+  if [ -z "$agent_connect_target" ] && [ ! -e /proc/net/vsock ] && [ -n "$default_gw" ]; then
+    agent_connect_target="${default_gw}:${docker_proxy_port}"
+  fi
+  if [ -n "$agent_connect_target" ]; then
+    log "starting cratebay-guest-agent (tcp connect ${agent_connect_target} -> 127.0.0.1:${docker_api_port})"
+    /usr/local/bin/cratebay-guest-agent --connect "${agent_connect_target}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
+    agent_connect_pid="$!"
+  else
+    agent_connect_pid=""
+  fi
+
+  # Also start TCP listen agent as fallback (e.g. for QEMU hostfwd or direct access).
   log "starting cratebay-guest-agent (tcp listen ${docker_proxy_port} -> 127.0.0.1:${docker_api_port})"
   /usr/local/bin/cratebay-guest-agent --tcp --port "${docker_proxy_port}" --docker-host-tcp "127.0.0.1:${docker_api_port}" &
   agent_tcp_pid="$!"
+
   sleep 0.2
   if [ -n "$agent_pid" ] && ! kill -0 "$agent_pid" >/dev/null 2>&1; then
     log "WARN: cratebay-guest-agent (vsock) exited early"
   fi
+  if [ -n "$agent_connect_pid" ] && ! kill -0 "$agent_connect_pid" >/dev/null 2>&1; then
+    log "WARN: cratebay-guest-agent (tcp connect) exited early"
+  fi
   if ! kill -0 "$agent_tcp_pid" >/dev/null 2>&1; then
-    log "WARN: cratebay-guest-agent (tcp) exited early"
+    log "WARN: cratebay-guest-agent (tcp listen) exited early"
   fi
 fi
 
