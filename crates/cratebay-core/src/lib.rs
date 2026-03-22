@@ -7,6 +7,8 @@ pub mod audit;
 pub mod container;
 pub mod docker;
 pub mod error;
+pub mod fsutil;
+pub mod images;
 pub mod llm_proxy;
 pub mod mcp;
 pub mod models;

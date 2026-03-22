@@ -864,6 +864,151 @@ pub fn list_audit_logs(
     Ok(results)
 }
 
+// ─── Path Utility Functions ──────────────────────────────────────────
+//
+// Platform-aware directory helpers used by the runtime, image management,
+// and logging subsystems.  These mirror the helpers from the v1 `store`
+// module and are the canonical way to locate CrateBay data on disk.
+
+/// CrateBay configuration directory.
+///
+/// Override with `CRATEBAY_CONFIG_DIR`.  Platform defaults:
+/// - macOS:   `~/Library/Application Support/com.cratebay.app`
+/// - Linux:   `$XDG_CONFIG_HOME/cratebay` or `~/.config/cratebay`
+/// - Windows: `%APPDATA%\cratebay`
+pub fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("CRATEBAY_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("com.cratebay.app");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("cratebay");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config").join("cratebay");
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return PathBuf::from(appdata).join("cratebay");
+        }
+    }
+
+    std::env::temp_dir().join("cratebay")
+}
+
+/// CrateBay persistent data directory.
+///
+/// Override with `CRATEBAY_DATA_DIR`.  Platform defaults:
+/// - Linux: `$XDG_DATA_HOME/cratebay` or `~/.local/share/cratebay`
+/// - macOS / Windows: same as [`config_dir()`]
+pub fn data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("CRATEBAY_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+            return PathBuf::from(xdg).join("cratebay");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("cratebay");
+        }
+    }
+
+    // macOS / Windows default: same as config_dir.
+    config_dir()
+}
+
+/// CrateBay log directory.
+///
+/// Override with `CRATEBAY_LOG_DIR`.
+pub fn log_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("CRATEBAY_LOG_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return data_dir();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        config_dir()
+    }
+}
+
+/// Console log path for a runtime VM.
+pub fn vm_console_log_path(vm_id: &str) -> PathBuf {
+    data_dir().join("vms").join(vm_id).join("console.log")
+}
+
+/// Write `bytes` atomically: writes to a temporary file then renames.
+///
+/// Creates parent directories if necessary.  Safe for concurrent use
+/// from multiple processes.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(dir)?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("tmp");
+    let unique = format!(
+        "{}.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        file_name
+    );
+    let tmp_path = dir.join(format!(".{}.tmp", unique));
+
+    {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+
+    match std::fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Windows may fail rename if destination exists.
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+                std::fs::rename(&tmp_path, path).map_err(|_| e)?;
+                return Ok(());
+            }
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(e)
+        }
+    }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────
 
 fn home_dir() -> Result<PathBuf, AppError> {
@@ -1254,5 +1399,63 @@ mod tests {
         // Very short keys get masked
         assert_eq!(compute_key_hint("ab"), "****");
         assert_eq!(compute_key_hint(""), "****");
+    }
+
+    // ── Path utility function tests ──
+
+    #[test]
+    fn test_config_dir_returns_nonempty() {
+        let dir = config_dir();
+        assert!(
+            !dir.as_os_str().is_empty(),
+            "config_dir should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_data_dir_returns_nonempty() {
+        let dir = data_dir();
+        assert!(
+            !dir.as_os_str().is_empty(),
+            "data_dir should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_log_dir_returns_nonempty() {
+        let dir = log_dir();
+        assert!(
+            !dir.as_os_str().is_empty(),
+            "log_dir should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_vm_console_log_path_contains_vm_id() {
+        let path = vm_console_log_path("test-vm-42");
+        let s = path.to_string_lossy();
+        assert!(s.contains("test-vm-42"), "path should contain VM id");
+        assert!(s.ends_with("console.log"), "path should end with console.log");
+    }
+
+    #[test]
+    fn test_write_atomic_creates_file_and_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sub").join("test.txt");
+
+        write_atomic(&path, b"hello").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("hello"));
+    }
+
+    #[test]
+    fn test_write_atomic_overwrites() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("over.txt");
+
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("second"));
     }
 }

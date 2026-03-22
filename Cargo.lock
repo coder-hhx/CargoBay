@@ -631,6 +631,7 @@ dependencies = [
  "criterion",
  "dirs",
  "futures-util",
+ "libc",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -640,6 +641,14 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "cratebay-guest-agent"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "libc",
+ "tokio",
 ]
 
 [[package]]
@@ -682,6 +691,19 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "cratebay-vz"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "cratebay-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
