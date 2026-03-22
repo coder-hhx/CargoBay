@@ -338,7 +338,10 @@ pub fn runtime_assets_root_candidates() -> Vec<PathBuf> {
                 tracing::debug!("bundled_runtime_assets_root: {:?}", root);
                 push_unique(&mut roots, root);
             } else {
-                tracing::debug!("bundled_runtime_assets_root_from_exe_dir returned None for {:?}", exe_dir);
+                tracing::debug!(
+                    "bundled_runtime_assets_root_from_exe_dir returned None for {:?}",
+                    exe_dir
+                );
             }
         }
     }
@@ -928,7 +931,9 @@ mod tests {
     #[test]
     fn runtime_image_ready_for_nonexistent_image() {
         // An image with a made-up id should never be ready
-        assert!(!crate::images::is_image_ready("nonexistent-runtime-test-xyz"));
+        assert!(!crate::images::is_image_ready(
+            "nonexistent-runtime-test-xyz"
+        ));
     }
 
     #[test]
@@ -989,9 +994,7 @@ mod tests {
 
     #[test]
     fn file_matches_nonexistent() {
-        assert!(
-            !file_matches(Path::new("/nonexistent/a"), Path::new("/nonexistent/b")).unwrap()
-        );
+        assert!(!file_matches(Path::new("/nonexistent/a"), Path::new("/nonexistent/b")).unwrap());
     }
 
     #[test]

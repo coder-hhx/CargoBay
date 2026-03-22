@@ -103,7 +103,11 @@ fn sanitize_parameters(params: &serde_json::Value) -> serde_json::Value {
                     if s.len() > 100 {
                         sanitized.insert(
                             key.clone(),
-                            serde_json::Value::String(format!("{}...[truncated, {} bytes]", &s[..100], s.len())),
+                            serde_json::Value::String(format!(
+                                "{}...[truncated, {} bytes]",
+                                &s[..100],
+                                s.len()
+                            )),
                         );
                         continue;
                     }
@@ -272,6 +276,10 @@ mod tests {
         );
         // Verify the timestamp can be parsed back as RFC 3339
         let parsed = chrono::DateTime::parse_from_rfc3339(&entry.timestamp);
-        assert!(parsed.is_ok(), "Timestamp should be valid RFC 3339: {}", entry.timestamp);
+        assert!(
+            parsed.is_ok(),
+            "Timestamp should be valid RFC 3339: {}",
+            entry.timestamp
+        );
     }
 }

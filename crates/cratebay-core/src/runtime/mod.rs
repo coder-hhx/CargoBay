@@ -7,10 +7,10 @@
 
 pub mod common;
 
-#[cfg(target_os = "macos")]
-pub mod macos;
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
+pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
@@ -571,7 +571,11 @@ mod tests {
         match result {
             Some(path) => {
                 // If a path is returned, it should exist on disk
-                assert!(path.exists(), "Detected Docker path should exist: {:?}", path);
+                assert!(
+                    path.exists(),
+                    "Detected Docker path should exist: {:?}",
+                    path
+                );
             }
             None => {
                 // No external Docker found — perfectly valid
@@ -600,9 +604,6 @@ mod tests {
     #[test]
     fn parse_docker_host_unix_custom_path() {
         let path = parse_docker_host("unix:///home/user/.docker/docker.sock");
-        assert_eq!(
-            path,
-            Some(PathBuf::from("/home/user/.docker/docker.sock"))
-        );
+        assert_eq!(path, Some(PathBuf::from("/home/user/.docker/docker.sock")));
     }
 }

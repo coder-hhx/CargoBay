@@ -297,17 +297,18 @@ fn build_kernel_cmdline() -> String {
 
 /// Check that the Docker TCP port is not already in use by another service.
 fn ensure_host_port_available(host: &str) -> Result<(), AppError> {
-    let (tcp_host, port) = common::docker_host_tcp_endpoint(host).ok_or_else(|| {
-        AppError::Runtime(format!("Invalid Docker host '{}'", host))
-    })?;
+    let (tcp_host, port) = common::docker_host_tcp_endpoint(host)
+        .ok_or_else(|| AppError::Runtime(format!("Invalid Docker host '{}'", host)))?;
 
-    std::net::TcpListener::bind((tcp_host.as_str(), port)).map(drop).map_err(|error| {
-        AppError::Runtime(format!(
-            "Linux runtime Docker host {} is already in use; stop the conflicting service \
+    std::net::TcpListener::bind((tcp_host.as_str(), port))
+        .map(drop)
+        .map_err(|error| {
+            AppError::Runtime(format!(
+                "Linux runtime Docker host {} is already in use; stop the conflicting service \
              or set CRATEBAY_LINUX_DOCKER_PORT to a different port ({})",
-            host, error
-        ))
-    })
+                host, error
+            ))
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -461,10 +462,7 @@ impl LinuxRuntime {
             .arg("-append")
             .arg(&cmdline)
             .arg("-drive")
-            .arg(format!(
-                "if=virtio,format=raw,file={}",
-                disk_path.display()
-            ))
+            .arg(format!("if=virtio,format=raw,file={}", disk_path.display()))
             .arg("-netdev")
             .arg(format!(
                 "user,id=net0,hostfwd=tcp:127.0.0.1:{host_port}-:{guest_port}"
@@ -534,9 +532,7 @@ impl LinuxRuntime {
 
         // Verify PID file was written.
         let pid = read_pid_file(&pid_file).ok_or_else(|| {
-            AppError::Runtime(
-                "QEMU daemonized but PID file was not written".to_string(),
-            )
+            AppError::Runtime("QEMU daemonized but PID file was not written".to_string())
         })?;
         tracing::info!("QEMU daemonized with PID {}", pid);
 
@@ -602,11 +598,10 @@ impl RuntimeManager for LinuxRuntime {
 
         // If QEMU is running, check Docker readiness.
         if Self::is_running() {
-            let docker_ok = tokio::task::spawn_blocking(move || {
-                common::docker_http_ping_host(&host).is_ok()
-            })
-            .await
-            .unwrap_or(false);
+            let docker_ok =
+                tokio::task::spawn_blocking(move || common::docker_http_ping_host(&host).is_ok())
+                    .await
+                    .unwrap_or(false);
 
             if docker_ok {
                 let mut state = self.state.lock().await;
@@ -625,10 +620,7 @@ impl RuntimeManager for LinuxRuntime {
         let image_ready = crate::images::is_image_ready(image_id);
         let image_paths = crate::images::image_paths(image_id);
 
-        if image_ready
-            && image_paths.kernel_path.exists()
-            && image_paths.initrd_path.exists()
-        {
+        if image_ready && image_paths.kernel_path.exists() && image_paths.initrd_path.exists() {
             // Images present — check prerequisites for starting.
             if !Path::new("/dev/kvm").exists() {
                 let msg = "KVM not available (/dev/kvm not found). \
@@ -804,11 +796,10 @@ impl RuntimeManager for LinuxRuntime {
 
         // If Docker is already responsive on our port, check if it's our process.
         let host_check = host.clone();
-        let docker_already_up = tokio::task::spawn_blocking(move || {
-            common::docker_http_ping_host(&host_check).is_ok()
-        })
-        .await
-        .unwrap_or(false);
+        let docker_already_up =
+            tokio::task::spawn_blocking(move || common::docker_http_ping_host(&host_check).is_ok())
+                .await
+                .unwrap_or(false);
 
         if docker_already_up {
             if Self::is_running() {
@@ -886,11 +877,9 @@ impl RuntimeManager for LinuxRuntime {
         let qp = qemu_path.clone();
         let ip = image_paths.clone();
         let dp = disk_path.clone();
-        tokio::task::spawn_blocking(move || {
-            Self::spawn_qemu(&qp, &ip, &dp, host_port, guest_port)
-        })
-        .await
-        .map_err(|e| AppError::Runtime(format!("QEMU spawn task panicked: {}", e)))??;
+        tokio::task::spawn_blocking(move || Self::spawn_qemu(&qp, &ip, &dp, host_port, guest_port))
+            .await
+            .map_err(|e| AppError::Runtime(format!("QEMU spawn task panicked: {}", e)))??;
 
         // Record start time.
         {
@@ -910,10 +899,7 @@ impl RuntimeManager for LinuxRuntime {
             Ok(()) => {
                 let mut state = self.state.lock().await;
                 *state = RuntimeState::Ready;
-                tracing::info!(
-                    "Docker is responsive on {} — Linux runtime is Ready",
-                    host
-                );
+                tracing::info!("Docker is responsive on {} — Linux runtime is Ready", host);
                 Ok(())
             }
             Err(error) => {

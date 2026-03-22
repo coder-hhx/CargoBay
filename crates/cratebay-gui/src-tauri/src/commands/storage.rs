@@ -7,8 +7,8 @@ use cratebay_core::error::AppError;
 use cratebay_core::models::{
     AuditAction, ConversationDetail, ConversationSummary, SaveMessageRequest,
 };
-use cratebay_core::{audit, storage};
 use cratebay_core::MutexExt;
+use cratebay_core::{audit, storage};
 
 /// Get a setting value by key.
 #[tauri::command]
@@ -29,7 +29,13 @@ pub async fn settings_update(
 ) -> Result<(), AppError> {
     let db = state.db.lock_or_recover()?;
     storage::set_setting(&db, &key, &value)?;
-    audit::log_action(&db, &AuditAction::SettingsUpdate, &key, Some(&value), "user")?;
+    audit::log_action(
+        &db,
+        &AuditAction::SettingsUpdate,
+        &key,
+        Some(&value),
+        "user",
+    )?;
     Ok(())
 }
 
@@ -92,17 +98,20 @@ pub async fn conversation_create(
 
     let db = state.db.lock_or_recover()?;
     storage::create_conversation(&db, &id, &title)?;
-    audit::log_action(&db, &AuditAction::ConversationCreate, &id, Some(&title), "user")?;
+    audit::log_action(
+        &db,
+        &AuditAction::ConversationCreate,
+        &id,
+        Some(&title),
+        "user",
+    )?;
 
     storage::get_conversation(&db, &id)
 }
 
 /// Delete a conversation and all its messages.
 #[tauri::command]
-pub async fn conversation_delete(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn conversation_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let db = state.db.lock_or_recover()?;
     storage::delete_conversation(&db, &id)?;
     audit::log_action(&db, &AuditAction::ConversationDelete, &id, None, "user")?;

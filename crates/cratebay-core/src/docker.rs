@@ -31,7 +31,10 @@ pub async fn connect() -> Result<Docker, AppError> {
                         tracing::info!("Connected via external Docker: {}", socket_path.display());
                         return Ok(docker);
                     }
-                    tracing::warn!("External Docker socket exists but not responsive: {}", socket_path.display());
+                    tracing::warn!(
+                        "External Docker socket exists but not responsive: {}",
+                        socket_path.display()
+                    );
                 }
                 Err(e) => {
                     tracing::debug!("Failed to connect to external Docker socket: {}", e);
@@ -47,7 +50,10 @@ pub async fn connect() -> Result<Docker, AppError> {
                         tracing::info!("Connected via external Docker: {}", socket_path.display());
                         return Ok(docker);
                     }
-                    tracing::warn!("External Docker pipe exists but not responsive: {}", socket_path.display());
+                    tracing::warn!(
+                        "External Docker pipe exists but not responsive: {}",
+                        socket_path.display()
+                    );
                 }
                 Err(e) => {
                     tracing::debug!("Failed to connect to external Docker pipe: {}", e);
@@ -60,7 +66,10 @@ pub async fn connect() -> Result<Docker, AppError> {
     let runtime_mgr = runtime::create_runtime_manager();
     let runtime_socket = runtime_mgr.docker_socket_path();
     if runtime_socket.exists() {
-        tracing::debug!("Trying built-in runtime socket: {}", runtime_socket.display());
+        tracing::debug!(
+            "Trying built-in runtime socket: {}",
+            runtime_socket.display()
+        );
         #[cfg(unix)]
         {
             match Docker::connect_with_unix(
@@ -70,7 +79,10 @@ pub async fn connect() -> Result<Docker, AppError> {
             ) {
                 Ok(docker) => {
                     if docker.ping().await.is_ok() {
-                        tracing::info!("Connected via built-in runtime: {}", runtime_socket.display());
+                        tracing::info!(
+                            "Connected via built-in runtime: {}",
+                            runtime_socket.display()
+                        );
                         return Ok(docker);
                     }
                 }

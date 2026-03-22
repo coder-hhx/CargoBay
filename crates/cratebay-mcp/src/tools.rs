@@ -312,10 +312,7 @@ async fn handle_templates() -> Result<String, McpError> {
     serde_json::to_string_pretty(&templates).map_err(McpError::Serialization)
 }
 
-async fn handle_list(
-    docker: &Docker,
-    arguments: &serde_json::Value,
-) -> Result<String, McpError> {
+async fn handle_list(docker: &Docker, arguments: &serde_json::Value) -> Result<String, McpError> {
     let status = arguments
         .get("status")
         .and_then(|v| v.as_str())
@@ -338,10 +335,7 @@ async fn handle_inspect(
     serde_json::to_string_pretty(&info).map_err(McpError::Serialization)
 }
 
-async fn handle_create(
-    docker: &Docker,
-    arguments: &serde_json::Value,
-) -> Result<String, McpError> {
+async fn handle_create(docker: &Docker, arguments: &serde_json::Value) -> Result<String, McpError> {
     let template_id = arguments
         .get("template_id")
         .and_then(|v| v.as_str())
@@ -349,9 +343,18 @@ async fn handle_create(
 
     let params = sandbox::CreateSandboxParams {
         template_id: template_id.to_string(),
-        name: arguments.get("name").and_then(|v| v.as_str()).map(String::from),
-        image: arguments.get("image").and_then(|v| v.as_str()).map(String::from),
-        command: arguments.get("command").and_then(|v| v.as_str()).map(String::from),
+        name: arguments
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        image: arguments
+            .get("image")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        command: arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         env: arguments.get("env").and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
@@ -359,20 +362,26 @@ async fn handle_create(
                     .collect()
             })
         }),
-        cpu_cores: arguments.get("cpu_cores").and_then(|v| v.as_u64()).map(|v| v as u32),
+        cpu_cores: arguments
+            .get("cpu_cores")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
         memory_mb: arguments.get("memory_mb").and_then(|v| v.as_u64()),
-        ttl_hours: arguments.get("ttl_hours").and_then(|v| v.as_u64()).map(|v| v as u32),
-        owner: arguments.get("owner").and_then(|v| v.as_str()).map(String::from),
+        ttl_hours: arguments
+            .get("ttl_hours")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        owner: arguments
+            .get("owner")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     };
 
     let info = sandbox::create_sandbox(docker, params).await?;
     serde_json::to_string_pretty(&info).map_err(McpError::Serialization)
 }
 
-async fn handle_start(
-    docker: &Docker,
-    arguments: &serde_json::Value,
-) -> Result<String, McpError> {
+async fn handle_start(docker: &Docker, arguments: &serde_json::Value) -> Result<String, McpError> {
     let sandbox_id = arguments
         .get("sandbox_id")
         .and_then(|v| v.as_str())
@@ -382,10 +391,7 @@ async fn handle_start(
     Ok(format!("Sandbox {} started successfully", sandbox_id))
 }
 
-async fn handle_stop(
-    docker: &Docker,
-    arguments: &serde_json::Value,
-) -> Result<String, McpError> {
+async fn handle_stop(docker: &Docker, arguments: &serde_json::Value) -> Result<String, McpError> {
     let sandbox_id = arguments
         .get("sandbox_id")
         .and_then(|v| v.as_str())
@@ -395,10 +401,7 @@ async fn handle_stop(
     Ok(format!("Sandbox {} stopped successfully", sandbox_id))
 }
 
-async fn handle_delete(
-    docker: &Docker,
-    arguments: &serde_json::Value,
-) -> Result<String, McpError> {
+async fn handle_delete(docker: &Docker, arguments: &serde_json::Value) -> Result<String, McpError> {
     let sandbox_id = arguments
         .get("sandbox_id")
         .and_then(|v| v.as_str())
@@ -408,10 +411,7 @@ async fn handle_delete(
     Ok(format!("Sandbox {} deleted successfully", sandbox_id))
 }
 
-async fn handle_exec(
-    docker: &Docker,
-    arguments: &serde_json::Value,
-) -> Result<String, McpError> {
+async fn handle_exec(docker: &Docker, arguments: &serde_json::Value) -> Result<String, McpError> {
     let sandbox_id = arguments
         .get("sandbox_id")
         .and_then(|v| v.as_str())
@@ -535,11 +535,7 @@ mod tests {
             "cratebay_sandbox_get_path",
         ];
         for expected in &expected_names {
-            assert!(
-                names.contains(expected),
-                "Missing tool: {}",
-                expected
-            );
+            assert!(names.contains(expected), "Missing tool: {}", expected);
         }
     }
 
@@ -575,7 +571,11 @@ mod tests {
     #[test]
     fn test_destructive_tools_require_confirmation() {
         let catalog = tool_catalog();
-        let destructive_tools = ["cratebay_sandbox_stop", "cratebay_sandbox_delete", "cratebay_sandbox_cleanup_expired"];
+        let destructive_tools = [
+            "cratebay_sandbox_stop",
+            "cratebay_sandbox_delete",
+            "cratebay_sandbox_cleanup_expired",
+        ];
         for tool in &catalog {
             if destructive_tools.contains(&tool.name.as_str()) {
                 assert_eq!(
@@ -615,7 +615,10 @@ mod tests {
     #[test]
     fn test_create_tool_requires_template_id() {
         let catalog = tool_catalog();
-        let create_tool = catalog.iter().find(|t| t.name == "cratebay_sandbox_create").unwrap();
+        let create_tool = catalog
+            .iter()
+            .find(|t| t.name == "cratebay_sandbox_create")
+            .unwrap();
         let required = create_tool.input_schema["required"]
             .as_array()
             .expect("required should be array");
@@ -628,7 +631,10 @@ mod tests {
     #[test]
     fn test_exec_tool_requires_sandbox_id_and_command() {
         let catalog = tool_catalog();
-        let exec_tool = catalog.iter().find(|t| t.name == "cratebay_sandbox_exec").unwrap();
+        let exec_tool = catalog
+            .iter()
+            .find(|t| t.name == "cratebay_sandbox_exec")
+            .unwrap();
         let required = exec_tool.input_schema["required"]
             .as_array()
             .expect("required should be array");

@@ -18,8 +18,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use protocol::{
     InitializeResult, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, ServerCapabilities,
-    ServerInfo, ToolsCapability, ToolsListResult, INTERNAL_ERROR, INVALID_PARAMS,
-    METHOD_NOT_FOUND, PARSE_ERROR,
+    ServerInfo, ToolsCapability, ToolsListResult, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
+    PARSE_ERROR,
 };
 
 /// MCP protocol version we support.
@@ -92,11 +92,8 @@ async fn main() -> anyhow::Result<()> {
         let request: JsonRpcRequest = match serde_json::from_str(trimmed) {
             Ok(req) => req,
             Err(e) => {
-                let err_response = JsonRpcErrorResponse::new(
-                    None,
-                    PARSE_ERROR,
-                    format!("Parse error: {}", e),
-                );
+                let err_response =
+                    JsonRpcErrorResponse::new(None, PARSE_ERROR, format!("Parse error: {}", e));
                 write_response(&mut writer, &serde_json::to_string(&err_response)?).await?;
                 continue;
             }
@@ -229,12 +226,9 @@ async fn handle_tools_call(
     state: &Arc<tokio::sync::Mutex<McpState>>,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value, JsonRpcErrorResponse> {
-    let tool_name = params
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            JsonRpcErrorResponse::new(None, INVALID_PARAMS, "Missing 'name' parameter".to_string())
-        })?;
+    let tool_name = params.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+        JsonRpcErrorResponse::new(None, INVALID_PARAMS, "Missing 'name' parameter".to_string())
+    })?;
 
     let arguments = params
         .get("arguments")

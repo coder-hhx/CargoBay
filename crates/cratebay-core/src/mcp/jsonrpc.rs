@@ -121,10 +121,8 @@ mod tests {
 
     #[test]
     fn test_notification_new() {
-        let notif = JsonRpcNotification::new(
-            "notifications/initialized",
-            Some(serde_json::json!({})),
-        );
+        let notif =
+            JsonRpcNotification::new("notifications/initialized", Some(serde_json::json!({})));
         assert_eq!(notif.jsonrpc, "2.0");
         assert_eq!(notif.method, "notifications/initialized");
     }

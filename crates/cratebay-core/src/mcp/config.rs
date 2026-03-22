@@ -140,13 +140,8 @@ pub fn load_mcp_json(project_root: &Path) -> Result<Option<McpJsonConfig>, AppEr
         ))
     })?;
 
-    let config: McpJsonConfig = serde_json::from_str(&content).map_err(|e| {
-        AppError::Mcp(format!(
-            "Failed to parse {}: {}",
-            config_path.display(),
-            e
-        ))
-    })?;
+    let config: McpJsonConfig = serde_json::from_str(&content)
+        .map_err(|e| AppError::Mcp(format!("Failed to parse {}: {}", config_path.display(), e)))?;
 
     Ok(Some(config))
 }
@@ -362,10 +357,7 @@ mod tests {
     #[test]
     fn expand_env_vars_adjacent_to_text() {
         std::env::set_var("CRATEBAY_ADJACENT", "world");
-        assert_eq!(
-            expand_env_vars("hello${CRATEBAY_ADJACENT}!"),
-            "helloworld!"
-        );
+        assert_eq!(expand_env_vars("hello${CRATEBAY_ADJACENT}!"), "helloworld!");
         std::env::remove_var("CRATEBAY_ADJACENT");
     }
 
@@ -696,7 +688,10 @@ mod tests {
             mcp_servers: {
                 let mut map = HashMap::new();
                 let mut env = HashMap::new();
-                env.insert("API_KEY".to_string(), "${CRATEBAY_MERGE_TEST_KEY}".to_string());
+                env.insert(
+                    "API_KEY".to_string(),
+                    "${CRATEBAY_MERGE_TEST_KEY}".to_string(),
+                );
                 map.insert(
                     "test".to_string(),
                     McpServerConfigEntry {
@@ -747,7 +742,10 @@ mod tests {
             mcp_servers: {
                 let mut map = HashMap::new();
                 let mut headers = HashMap::new();
-                headers.insert("Authorization".to_string(), "Bearer ${CRATEBAY_HDR_TOKEN}".to_string());
+                headers.insert(
+                    "Authorization".to_string(),
+                    "Bearer ${CRATEBAY_HDR_TOKEN}".to_string(),
+                );
                 map.insert(
                     "sse-server".to_string(),
                     McpServerConfigEntry {

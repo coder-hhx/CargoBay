@@ -4,8 +4,8 @@
 //! - Message insert throughput
 //! - Query 1000 messages (<50ms budget)
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use cratebay_core::storage;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 /// Create an in-memory database with schema applied.
 fn setup_db() -> rusqlite::Connection {

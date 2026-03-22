@@ -13,7 +13,7 @@ mod manager;
 mod transport;
 
 pub use config::{
-    expand_env_vars, load_mcp_json, merge_server_configs, McpJsonConfig,
-    McpServerConfigEntry, McpServerDbRow, McpTransportType, ResolvedMcpServer,
+    expand_env_vars, load_mcp_json, merge_server_configs, McpJsonConfig, McpServerConfigEntry,
+    McpServerDbRow, McpTransportType, ResolvedMcpServer,
 };
 pub use manager::{McpManager, McpServerConnection};

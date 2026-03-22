@@ -34,9 +34,7 @@ fn main() {
         Ok(directive) => env_filter.add_directive(directive),
         Err(_) => env_filter,
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     // Initialize database
     let db_path = match cratebay_core::storage::default_db_path() {
@@ -84,7 +82,9 @@ fn main() {
                 Some(Arc::new(d))
             }
             None => {
-                tracing::info!("Docker not available yet — runtime auto-start will attempt connection");
+                tracing::info!(
+                    "Docker not available yet — runtime auto-start will attempt connection"
+                );
                 None
             }
         }
@@ -124,10 +124,8 @@ fn main() {
             stmt.query_map([], |row| {
                 let args_json: String = row.get(3)?;
                 let env_json: String = row.get(4)?;
-                let args: Vec<String> =
-                    serde_json::from_str(&args_json).unwrap_or_default();
-                let env: Vec<String> =
-                    serde_json::from_str(&env_json).unwrap_or_default();
+                let args: Vec<String> = serde_json::from_str(&args_json).unwrap_or_default();
+                let env: Vec<String> = serde_json::from_str(&env_json).unwrap_or_default();
 
                 Ok(McpServerDbRow {
                     id: row.get(0)?,
@@ -322,7 +320,7 @@ fn main() {
                 let window_clone = window.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
-                    
+
                     // Read WebView URL
                     match window_clone.url() {
                         Ok(url) => tracing::info!("WebView URL: {}", url),
@@ -336,7 +334,7 @@ fn main() {
                         Ok(size) => tracing::info!("WebView inner size: {:?}", size),
                         Err(e) => tracing::warn!("Failed to get size: {}", e),
                     }
-                    
+
                     // Inject JS that calls our debug command via __TAURI_INTERNALS__
                     let _ = window_clone.eval(r#"
                         (function() {

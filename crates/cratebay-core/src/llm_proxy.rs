@@ -16,8 +16,8 @@ use tracing::{info, warn};
 
 use crate::error::AppError;
 use crate::models::{
-    ApiFormat, ChatMessage, LlmOptions, LlmProvider, LlmStreamEvent, ModelInfo,
-    ToolDefinition, UsageStats,
+    ApiFormat, ChatMessage, LlmOptions, LlmProvider, LlmStreamEvent, ModelInfo, ToolDefinition,
+    UsageStats,
 };
 
 // ---------------------------------------------------------------------------
@@ -47,9 +47,7 @@ pub async fn stream_chat(
 
     // 2. Build format-specific request
     let (url, body) = match provider.api_format {
-        ApiFormat::Anthropic => {
-            build_anthropic_request(provider, model_id, &messages, &options)?
-        }
+        ApiFormat::Anthropic => build_anthropic_request(provider, model_id, &messages, &options)?,
         ApiFormat::OpenAiResponses => {
             build_openai_responses_request(provider, model_id, &messages, &options)?
         }
@@ -105,10 +103,7 @@ pub async fn fetch_models(
     provider: &LlmProvider,
     api_key: &str,
 ) -> Result<Vec<ModelInfo>, AppError> {
-    let url = format!(
-        "{}/v1/models",
-        provider.api_base.trim_end_matches('/')
-    );
+    let url = format!("{}/v1/models", provider.api_base.trim_end_matches('/'));
     let headers = build_auth_headers(api_key, &provider.api_format);
 
     let response = client
@@ -116,9 +111,7 @@ pub async fn fetch_models(
         .headers(headers)
         .send()
         .await
-        .map_err(|e| {
-            AppError::LlmProxy(format!("Failed to fetch models: {}", e))
-        })?;
+        .map_err(|e| AppError::LlmProxy(format!("Failed to fetch models: {}", e)))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -132,17 +125,14 @@ pub async fn fetch_models(
         )));
     }
 
-    let body: serde_json::Value = response.json().await.map_err(|e| {
-        AppError::LlmProxy(format!("Invalid models response: {}", e))
-    })?;
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| AppError::LlmProxy(format!("Invalid models response: {}", e)))?;
 
     let models = body["data"]
         .as_array()
-        .ok_or_else(|| {
-            AppError::LlmProxy(
-                "Invalid models response: missing 'data' array".into(),
-            )
-        })?
+        .ok_or_else(|| AppError::LlmProxy("Invalid models response: missing 'data' array".into()))?
         .iter()
         .filter_map(|m| {
             let id = m["id"].as_str()?.to_string();
@@ -178,17 +168,11 @@ fn build_auth_headers(api_key: &str, api_format: &ApiFormat) -> HeaderMap {
         headers.insert("x-api-key", val);
     }
 
-    headers.insert(
-        "Content-Type",
-        HeaderValue::from_static("application/json"),
-    );
+    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
     // Anthropic requires a version header
     if *api_format == ApiFormat::Anthropic {
-        headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static("2023-06-01"),
-        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
     }
 
     headers
@@ -209,10 +193,7 @@ fn build_anthropic_request(
     messages: &[ChatMessage],
     options: &Option<LlmOptions>,
 ) -> Result<(String, serde_json::Value), AppError> {
-    let url = format!(
-        "{}/v1/messages",
-        provider.api_base.trim_end_matches('/')
-    );
+    let url = format!("{}/v1/messages", provider.api_base.trim_end_matches('/'));
 
     // Extract system message to top-level parameter
     let system_content = messages
@@ -228,10 +209,7 @@ fn build_anthropic_request(
         .map(|m| anthropic_message(m))
         .collect();
 
-    let max_tokens = options
-        .as_ref()
-        .and_then(|o| o.max_tokens)
-        .unwrap_or(4096);
+    let max_tokens = options.as_ref().and_then(|o| o.max_tokens).unwrap_or(4096);
 
     let mut body = serde_json::json!({
         "model": model_id,
@@ -254,10 +232,8 @@ fn build_anthropic_request(
     // Convert tools to Anthropic format (input_schema instead of parameters)
     if let Some(ref opts) = options {
         if let Some(ref tools) = opts.tools {
-            let anthropic_tools: Vec<serde_json::Value> = tools
-                .iter()
-                .map(|t| anthropic_tool(t))
-                .collect();
+            let anthropic_tools: Vec<serde_json::Value> =
+                tools.iter().map(|t| anthropic_tool(t)).collect();
             body["tools"] = serde_json::json!(anthropic_tools);
         }
     }
@@ -275,15 +251,9 @@ fn build_openai_responses_request(
     messages: &[ChatMessage],
     options: &Option<LlmOptions>,
 ) -> Result<(String, serde_json::Value), AppError> {
-    let url = format!(
-        "{}/v1/responses",
-        provider.api_base.trim_end_matches('/')
-    );
+    let url = format!("{}/v1/responses", provider.api_base.trim_end_matches('/'));
 
-    let input: Vec<serde_json::Value> = messages
-        .iter()
-        .map(|m| openai_message(m))
-        .collect();
+    let input: Vec<serde_json::Value> = messages.iter().map(|m| openai_message(m)).collect();
 
     let mut body = serde_json::json!({
         "model": model_id,
@@ -309,10 +279,8 @@ fn build_openai_responses_request(
 
         // Tools
         if let Some(ref tools) = opts.tools {
-            let openai_tools: Vec<serde_json::Value> = tools
-                .iter()
-                .map(|t| openai_responses_tool(t))
-                .collect();
+            let openai_tools: Vec<serde_json::Value> =
+                tools.iter().map(|t| openai_responses_tool(t)).collect();
             body["tools"] = serde_json::json!(openai_tools);
         }
     }
@@ -334,10 +302,8 @@ fn build_openai_completions_request(
         provider.api_base.trim_end_matches('/')
     );
 
-    let openai_messages: Vec<serde_json::Value> = messages
-        .iter()
-        .map(|m| openai_message(m))
-        .collect();
+    let openai_messages: Vec<serde_json::Value> =
+        messages.iter().map(|m| openai_message(m)).collect();
 
     let mut body = serde_json::json!({
         "model": model_id,
@@ -358,10 +324,8 @@ fn build_openai_completions_request(
 
         // Tools in OpenAI Completions format
         if let Some(ref tools) = opts.tools {
-            let completions_tools: Vec<serde_json::Value> = tools
-                .iter()
-                .map(|t| openai_completions_tool(t))
-                .collect();
+            let completions_tools: Vec<serde_json::Value> =
+                tools.iter().map(|t| openai_completions_tool(t)).collect();
             body["tools"] = serde_json::json!(completions_tools);
         }
     }
@@ -501,9 +465,8 @@ async fn parse_sse_stream(
     let mut buffer = String::new();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| {
-            AppError::LlmProxy(format!("Stream read error: {}", e))
-        })?;
+        let chunk =
+            chunk_result.map_err(|e| AppError::LlmProxy(format!("Stream read error: {}", e)))?;
 
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -584,14 +547,8 @@ async fn parse_anthropic_event(
             let content_block = &json["content_block"];
             if content_block["type"].as_str() == Some("tool_use") {
                 let event = LlmStreamEvent::ToolCall {
-                    id: content_block["id"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                    name: content_block["name"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
+                    id: content_block["id"].as_str().unwrap_or("").to_string(),
+                    name: content_block["name"].as_str().unwrap_or("").to_string(),
                     arguments: String::new(),
                 };
                 tx.send(event).await.ok();
@@ -693,12 +650,12 @@ async fn parse_openai_completions_event(
 ) {
     // Usage may appear in the final chunk
     if let Some(u) = json["usage"].as_object() {
-        usage.prompt_tokens =
-            u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        usage.completion_tokens =
-            u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        usage.total_tokens =
-            u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        usage.prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        usage.completion_tokens = u
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        usage.total_tokens = u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     }
 
     let choices = match json["choices"].as_array() {
@@ -745,9 +702,7 @@ async fn parse_openai_completions_event(
                         tx.send(event).await.ok();
                     } else if !arguments.is_empty() {
                         // Streaming tool call arguments
-                        let event = LlmStreamEvent::Token {
-                            content: arguments,
-                        };
+                        let event = LlmStreamEvent::Token { content: arguments };
                         tx.send(event).await.ok();
                     }
                 }
@@ -816,8 +771,7 @@ mod tests {
         ];
 
         let (url, body) =
-            build_anthropic_request(&provider, "claude-3-5-sonnet", &messages, &None)
-                .unwrap();
+            build_anthropic_request(&provider, "claude-3-5-sonnet", &messages, &None).unwrap();
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
         assert_eq!(body["system"], "You are helpful.");
@@ -856,13 +810,8 @@ mod tests {
             ..Default::default()
         });
 
-        let (url, body) = build_openai_responses_request(
-            &provider,
-            "o3",
-            &messages,
-            &options,
-        )
-        .unwrap();
+        let (url, body) =
+            build_openai_responses_request(&provider, "o3", &messages, &options).unwrap();
 
         assert_eq!(url, "https://api.openai.com/v1/responses");
         assert_eq!(body["reasoning"]["effort"], "high");
@@ -901,13 +850,8 @@ mod tests {
             },
         ];
 
-        let (url, body) = build_openai_completions_request(
-            &provider,
-            "gpt-4o",
-            &messages,
-            &None,
-        )
-        .unwrap();
+        let (url, body) =
+            build_openai_completions_request(&provider, "gpt-4o", &messages, &None).unwrap();
 
         assert_eq!(url, "https://api.openai.com/v1/chat/completions");
         assert_eq!(body["model"], "gpt-4o");

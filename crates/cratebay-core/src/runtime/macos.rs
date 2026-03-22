@@ -478,9 +478,7 @@ impl MacOSRuntime {
         let output = Command::new("sw_vers")
             .arg("-productVersion")
             .output()
-            .map_err(|e| {
-                AppError::Runtime(format!("Failed to check macOS version: {}", e))
-            })?;
+            .map_err(|e| AppError::Runtime(format!("Failed to check macOS version: {}", e)))?;
 
         let version_str = String::from_utf8_lossy(&output.stdout);
         let major: u32 = version_str
@@ -604,10 +602,7 @@ impl MacOSRuntime {
                         let value = value.trim();
                         if let Ok(addr) = value.parse::<std::net::Ipv4Addr>() {
                             // Skip loopback, link-local, and unspecified
-                            if addr.is_unspecified()
-                                || addr.is_loopback()
-                                || addr.is_link_local()
-                            {
+                            if addr.is_unspecified() || addr.is_loopback() || addr.is_link_local() {
                                 continue;
                             }
                             let s = addr.to_string();
@@ -795,10 +790,7 @@ impl MacOSRuntime {
                 ) {
                     Ok(docker) => {
                         if docker.ping().await.is_ok() {
-                            tracing::info!(
-                                "Docker is responsive at {}",
-                                socket_path.display()
-                            );
+                            tracing::info!("Docker is responsive at {}", socket_path.display());
                             return Ok(());
                         }
                     }
@@ -992,17 +984,11 @@ impl RuntimeManager for MacOSRuntime {
             let image_id_owned = image_id.to_string();
             let disk_path_owned = disk_path.clone();
             tokio::task::spawn_blocking(move || {
-                crate::images::create_disk_from_image(
-                    &image_id_owned,
-                    &disk_path_owned,
-                    disk_bytes,
-                )
+                crate::images::create_disk_from_image(&image_id_owned, &disk_path_owned, disk_bytes)
             })
             .await
             .map_err(|e| AppError::Runtime(format!("Task join error: {}", e)))?
-            .map_err(|e| {
-                AppError::Runtime(format!("Failed to create VM disk image: {}", e))
-            })?;
+            .map_err(|e| AppError::Runtime(format!("Failed to create VM disk image: {}", e)))?;
         }
 
         on_progress(ProvisionProgress {
@@ -1346,7 +1332,7 @@ impl RuntimeManager for MacOSRuntime {
         }
 
         Ok(ResourceUsage {
-            cpu_percent: 0.0, // Requires VZ.framework instrumentation
+            cpu_percent: 0.0,  // Requires VZ.framework instrumentation
             memory_used_mb: 0, // Requires VZ.framework instrumentation
             memory_total_mb: self.config.memory_mb,
             disk_used_gb: 0.0, // Could query via Docker system info

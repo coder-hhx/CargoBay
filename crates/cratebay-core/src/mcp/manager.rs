@@ -104,10 +104,7 @@ impl McpServerConnection {
                         let mut state = self.state.write().await;
                         *state = ConnectionState::Connected;
                     }
-                    tracing::info!(
-                        "MCP server '{}' connected successfully",
-                        self.config.name
-                    );
+                    tracing::info!("MCP server '{}' connected successfully", self.config.name);
                     return Ok(());
                 }
                 Err(e) => {
@@ -190,20 +187,18 @@ impl McpServerConnection {
         let init_response = transport.send_request(&init_request).await?;
 
         if let Some(error) = init_response.error {
-            return Err(AppError::Mcp(format!(
-                "MCP initialize failed: {}",
-                error
-            )));
+            return Err(AppError::Mcp(format!("MCP initialize failed: {}", error)));
         }
 
         // Step 2: Send `notifications/initialized`
         let initialized_notification =
             JsonRpcNotification::new("notifications/initialized", Some(serde_json::json!({})));
-        transport.send_notification(&initialized_notification).await?;
+        transport
+            .send_notification(&initialized_notification)
+            .await?;
 
         // Step 3: Discover tools via `tools/list`
-        let tools_request =
-            JsonRpcRequest::new("tools/list", Some(serde_json::json!({})));
+        let tools_request = JsonRpcRequest::new("tools/list", Some(serde_json::json!({})));
         let tools_response = transport.send_request(&tools_request).await?;
 
         let discovered_tools = if let Some(result) = tools_response.result {
@@ -521,10 +516,7 @@ impl McpManager {
     }
 
     /// Get status for a specific server.
-    pub async fn get_server_status(
-        &self,
-        id: &str,
-    ) -> Result<McpServerStatus, AppError> {
+    pub async fn get_server_status(&self, id: &str) -> Result<McpServerStatus, AppError> {
         let servers = self.servers.read().await;
         let server = servers.get(id).ok_or_else(|| AppError::NotFound {
             entity: "MCP server".to_string(),
@@ -568,11 +560,7 @@ impl McpManager {
         let servers = self.servers.read().await;
         for server in servers.values() {
             if let Err(e) = server.disconnect().await {
-                tracing::error!(
-                    "Error shutting down MCP server '{}': {}",
-                    server.name(),
-                    e
-                );
+                tracing::error!("Error shutting down MCP server '{}': {}", server.name(), e);
             }
         }
     }
@@ -637,7 +625,9 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let manager = McpManager::new();
-            manager.register_server(make_test_config("s1", "Server 1")).await;
+            manager
+                .register_server(make_test_config("s1", "Server 1"))
+                .await;
             let servers = manager.list_servers().await;
             assert_eq!(servers.len(), 1);
             assert_eq!(servers[0].id, "s1");
@@ -649,8 +639,12 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let manager = McpManager::new();
-            manager.register_server(make_test_config("s1", "Original")).await;
-            manager.register_server(make_test_config("s1", "Replaced")).await;
+            manager
+                .register_server(make_test_config("s1", "Original"))
+                .await;
+            manager
+                .register_server(make_test_config("s1", "Replaced"))
+                .await;
             let servers = manager.list_servers().await;
             assert_eq!(servers.len(), 1);
             assert_eq!(servers[0].name, "Replaced");
@@ -662,7 +656,9 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let manager = McpManager::new();
-            manager.register_server(make_test_config("s1", "Server 1")).await;
+            manager
+                .register_server(make_test_config("s1", "Server 1"))
+                .await;
             assert!(manager.remove_server("s1").await);
             let servers = manager.list_servers().await;
             assert!(servers.is_empty());
@@ -723,7 +719,9 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let manager = McpManager::new();
-            manager.register_server(make_test_config("s1", "Test Server")).await;
+            manager
+                .register_server(make_test_config("s1", "Test Server"))
+                .await;
             let status = manager.get_server_status("s1").await.unwrap();
             assert_eq!(status.id, "s1");
             assert_eq!(status.name, "Test Server");
@@ -736,15 +734,22 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let manager = McpManager::new();
-            manager.register_server(make_test_config("s1", "Test")).await;
-            let result = manager.call_tool("s1", "some_tool", serde_json::json!({})).await;
+            manager
+                .register_server(make_test_config("s1", "Test"))
+                .await;
+            let result = manager
+                .call_tool("s1", "some_tool", serde_json::json!({}))
+                .await;
             assert!(result.is_err());
         });
     }
 
     #[test]
     fn test_connection_state_display() {
-        assert_eq!(format!("{}", ConnectionState::ConfigLoaded), "config_loaded");
+        assert_eq!(
+            format!("{}", ConnectionState::ConfigLoaded),
+            "config_loaded"
+        );
         assert_eq!(format!("{}", ConnectionState::Connecting), "connecting");
         assert_eq!(format!("{}", ConnectionState::Connected), "connected");
         assert_eq!(format!("{}", ConnectionState::Disconnected), "disconnected");

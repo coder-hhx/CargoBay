@@ -89,10 +89,7 @@ pub async fn list_sandboxes(
 }
 
 /// Inspect a single sandbox by ID.
-pub async fn inspect_sandbox(
-    docker: &Docker,
-    sandbox_id: &str,
-) -> Result<SandboxInfo, McpError> {
+pub async fn inspect_sandbox(docker: &Docker, sandbox_id: &str) -> Result<SandboxInfo, McpError> {
     let data = docker
         .inspect_container(sandbox_id, Some(InspectContainerOptions { size: false }))
         .await
@@ -104,10 +101,7 @@ pub async fn inspect_sandbox(
         })?;
 
     let container_id = data.id.unwrap_or_default();
-    let labels = data
-        .config
-        .as_ref()
-        .and_then(|c| c.labels.as_ref());
+    let labels = data.config.as_ref().and_then(|c| c.labels.as_ref());
 
     let Some(labels) = labels else {
         return Err(McpError::SandboxNotFound(sandbox_id.to_string()));
@@ -185,26 +179,14 @@ pub async fn create_sandbox(
         params.template_id.clone(),
     );
     labels.insert(format!("{}.owner", LABEL_PREFIX), owner.to_string());
-    labels.insert(
-        format!("{}.created_at", LABEL_PREFIX),
-        now.to_rfc3339(),
-    );
+    labels.insert(format!("{}.created_at", LABEL_PREFIX), now.to_rfc3339());
     labels.insert(
         format!("{}.expires_at", LABEL_PREFIX),
         expires_at.to_rfc3339(),
     );
-    labels.insert(
-        format!("{}.ttl_hours", LABEL_PREFIX),
-        ttl_hours.to_string(),
-    );
-    labels.insert(
-        format!("{}.cpu_cores", LABEL_PREFIX),
-        cpu_cores.to_string(),
-    );
-    labels.insert(
-        format!("{}.memory_mb", LABEL_PREFIX),
-        memory_mb.to_string(),
-    );
+    labels.insert(format!("{}.ttl_hours", LABEL_PREFIX), ttl_hours.to_string());
+    labels.insert(format!("{}.cpu_cores", LABEL_PREFIX), cpu_cores.to_string());
+    labels.insert(format!("{}.memory_mb", LABEL_PREFIX), memory_mb.to_string());
 
     let host_config = bollard::models::HostConfig {
         memory: Some((memory_mb * 1024 * 1024) as i64),
@@ -233,9 +215,7 @@ pub async fn create_sandbox(
     let response = docker.create_container(Some(options), config).await?;
 
     // Auto-start the sandbox
-    docker
-        .start_container::<String>(&response.id, None)
-        .await?;
+    docker.start_container::<String>(&response.id, None).await?;
 
     // Return the created sandbox info
     inspect_sandbox(docker, &response.id).await
@@ -246,9 +226,7 @@ pub async fn start_sandbox(docker: &Docker, sandbox_id: &str) -> Result<(), McpE
     // Verify it's a managed sandbox
     let _info = inspect_sandbox(docker, sandbox_id).await?;
 
-    docker
-        .start_container::<String>(sandbox_id, None)
-        .await?;
+    docker.start_container::<String>(sandbox_id, None).await?;
 
     Ok(())
 }
@@ -291,11 +269,7 @@ pub async fn exec_in_sandbox(
         return Err(McpError::SandboxNotRunning(sandbox_id.to_string()));
     }
 
-    let cmd = vec![
-        "/bin/sh".to_string(),
-        "-c".to_string(),
-        command.to_string(),
-    ];
+    let cmd = vec!["/bin/sh".to_string(), "-c".to_string(), command.to_string()];
 
     // If timeout is specified, wrap with timeout command
     let final_cmd = if let Some(t) = timeout {
@@ -356,9 +330,7 @@ pub async fn put_path(
     let filename = path
         .file_name()
         .ok_or_else(|| McpError::InvalidParams("Invalid container path".to_string()))?;
-    let parent = path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/"));
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("/"));
 
     let mut archive = Vec::new();
     {

@@ -5,8 +5,8 @@
 //! message conversion edge cases, and request builder edge cases.
 
 use cratebay_core::models::{
-    ApiFormat, ChatMessage, LlmOptions, LlmProvider, LlmStreamEvent,
-    ToolCallInfo, ToolDefinition, UsageStats,
+    ApiFormat, ChatMessage, LlmOptions, LlmProvider, LlmStreamEvent, ToolCallInfo, ToolDefinition,
+    UsageStats,
 };
 
 // ─── ApiFormat Serde & Conversion ───────────────────────────────────
@@ -49,7 +49,11 @@ fn api_format_serde_json_roundtrip() {
     for format in &formats {
         let json = serde_json::to_string(format).unwrap();
         let recovered: ApiFormat = serde_json::from_str(&json).unwrap();
-        assert_eq!(&recovered, format, "JSON serde roundtrip failed for {:?}", format);
+        assert_eq!(
+            &recovered, format,
+            "JSON serde roundtrip failed for {:?}",
+            format
+        );
     }
 }
 

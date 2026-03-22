@@ -99,7 +99,11 @@ mod tests {
     fn test_template_images_are_set() {
         let templates = builtin_templates();
         for template in &templates {
-            assert!(!template.image.is_empty(), "Template '{}' has empty image", template.id);
+            assert!(
+                !template.image.is_empty(),
+                "Template '{}' has empty image",
+                template.id
+            );
         }
     }
 
@@ -107,7 +111,11 @@ mod tests {
     fn test_template_default_resources() {
         let templates = builtin_templates();
         for template in &templates {
-            assert!(template.default_cpu_cores >= 1, "Template '{}' has 0 cpu_cores", template.id);
+            assert!(
+                template.default_cpu_cores >= 1,
+                "Template '{}' has 0 cpu_cores",
+                template.id
+            );
             assert!(
                 template.default_memory_mb >= 256,
                 "Template '{}' has memory_mb < 256",

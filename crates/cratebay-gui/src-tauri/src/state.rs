@@ -37,15 +37,16 @@ pub struct AppState {
 impl AppState {
     /// Get a clone of the Docker client Arc, or error if unavailable.
     pub fn require_docker(&self) -> Result<Arc<Docker>, AppError> {
-        let guard = self.docker.lock().map_err(|e| {
-            AppError::Runtime(format!("Docker state mutex poisoned: {}", e))
-        })?;
-        guard
-            .clone()
-            .ok_or_else(|| AppError::Docker(bollard::errors::Error::DockerResponseServerError {
+        let guard = self
+            .docker
+            .lock()
+            .map_err(|e| AppError::Runtime(format!("Docker state mutex poisoned: {}", e)))?;
+        guard.clone().ok_or_else(|| {
+            AppError::Docker(bollard::errors::Error::DockerResponseServerError {
                 status_code: 503,
                 message: "Docker is not available. Please install and start Docker.".to_string(),
-            }))
+            })
+        })
     }
 
     /// Update the Docker client (e.g., after runtime starts).

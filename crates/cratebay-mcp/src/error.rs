@@ -49,12 +49,10 @@ impl From<cratebay_core::AppError> for McpError {
             cratebay_core::AppError::Docker(de) => McpError::Docker(de.to_string()),
             cratebay_core::AppError::Io(ie) => McpError::Io(ie),
             cratebay_core::AppError::Serialization(se) => McpError::Serialization(se),
-            cratebay_core::AppError::PermissionDenied(msg) => {
-                McpError::PathTraversal {
-                    requested: msg.clone(),
-                    root: String::new(),
-                }
-            }
+            cratebay_core::AppError::PermissionDenied(msg) => McpError::PathTraversal {
+                requested: msg.clone(),
+                root: String::new(),
+            },
             other => McpError::Internal(other.to_string()),
         }
     }

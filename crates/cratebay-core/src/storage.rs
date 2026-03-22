@@ -207,10 +207,7 @@ pub fn update_provider(
 
     sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')");
 
-    let sql = format!(
-        "UPDATE ai_providers SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE ai_providers SET {} WHERE id = ?", sets.join(", "));
     values.push(Box::new(id.to_string()));
 
     let params: Vec<&dyn rusqlite::types::ToSql> = values.iter().map(|v| v.as_ref()).collect();
@@ -399,7 +396,9 @@ pub fn save_models(
     }
 
     // Remove models that are no longer in the list
-    let placeholders: Vec<String> = (0..model_ids.len()).map(|i| format!("?{}", i + 2)).collect();
+    let placeholders: Vec<String> = (0..model_ids.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect();
     let sql = format!(
         "DELETE FROM ai_models WHERE provider_id = ?1 AND id NOT IN ({})",
         placeholders.join(", ")
@@ -467,11 +466,7 @@ pub fn toggle_model(
 // ─── Conversation CRUD ──────────────────────────────────────────────
 
 /// Create a new conversation.
-pub fn create_conversation(
-    conn: &Connection,
-    id: &str,
-    title: &str,
-) -> Result<(), AppError> {
+pub fn create_conversation(conn: &Connection, id: &str, title: &str) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO conversations (id, title) VALUES (?1, ?2)",
         params![id, title],
@@ -525,10 +520,7 @@ pub fn list_conversations(
 }
 
 /// Get a conversation with all its messages.
-pub fn get_conversation(
-    conn: &Connection,
-    id: &str,
-) -> Result<ConversationDetail, AppError> {
+pub fn get_conversation(conn: &Connection, id: &str) -> Result<ConversationDetail, AppError> {
     let (title, created_at, updated_at) = conn
         .query_row(
             "SELECT title, created_at, updated_at FROM conversations WHERE id = ?1",
@@ -652,14 +644,10 @@ pub fn add_mcp_server(
     id: &str,
     config: &McpServerConfig,
 ) -> Result<McpServerStatus, AppError> {
-    let args_json = serde_json::to_string(
-        &config.args.clone().unwrap_or_default(),
-    )
-    .unwrap_or_else(|_| "[]".to_string());
-    let env_json = serde_json::to_string(
-        &config.env.clone().unwrap_or_default(),
-    )
-    .unwrap_or_else(|_| "[]".to_string());
+    let args_json = serde_json::to_string(&config.args.clone().unwrap_or_default())
+        .unwrap_or_else(|_| "[]".to_string());
+    let env_json = serde_json::to_string(&config.env.clone().unwrap_or_default())
+        .unwrap_or_else(|_| "[]".to_string());
 
     conn.execute(
         "INSERT INTO mcp_servers (id, name, command, args, env, working_dir, enabled, notes, auto_start)
@@ -701,10 +689,8 @@ pub fn get_mcp_server(conn: &Connection, id: &str) -> Result<McpServerStatus, Ap
             |row| {
                 let args_json: String = row.get(3)?;
                 let env_json: String = row.get(4)?;
-                let args: Vec<String> =
-                    serde_json::from_str(&args_json).unwrap_or_default();
-                let env: Vec<String> =
-                    serde_json::from_str(&env_json).unwrap_or_default();
+                let args: Vec<String> = serde_json::from_str(&args_json).unwrap_or_default();
+                let env: Vec<String> = serde_json::from_str(&env_json).unwrap_or_default();
 
                 Ok(McpServerStatus {
                     id: row.get(0)?,
@@ -731,9 +717,8 @@ pub fn get_mcp_server(conn: &Connection, id: &str) -> Result<McpServerStatus, Ap
 
 /// List all MCP servers from config.
 pub fn list_mcp_servers(conn: &Connection) -> Result<Vec<McpServerStatus>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, command, args, env, enabled FROM mcp_servers ORDER BY name",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, command, args, env, enabled FROM mcp_servers ORDER BY name")?;
 
     let rows = stmt.query_map([], |row| {
         let args_json: String = row.get(3)?;
@@ -808,40 +793,39 @@ pub fn list_audit_logs(
     target: Option<&str>,
     limit: u32,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
-        match (action, target) {
-            (Some(a), Some(t)) => (
-                "SELECT id, timestamp, action, target, details, user
+    let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match (action, target) {
+        (Some(a), Some(t)) => (
+            "SELECT id, timestamp, action, target, details, user
                  FROM audit_log WHERE action = ?1 AND target = ?2
                  ORDER BY timestamp DESC LIMIT ?3"
-                    .to_string(),
-                vec![
-                    Box::new(a.to_string()),
-                    Box::new(t.to_string()),
-                    Box::new(limit),
-                ],
-            ),
-            (Some(a), None) => (
-                "SELECT id, timestamp, action, target, details, user
+                .to_string(),
+            vec![
+                Box::new(a.to_string()),
+                Box::new(t.to_string()),
+                Box::new(limit),
+            ],
+        ),
+        (Some(a), None) => (
+            "SELECT id, timestamp, action, target, details, user
                  FROM audit_log WHERE action = ?1
                  ORDER BY timestamp DESC LIMIT ?2"
-                    .to_string(),
-                vec![Box::new(a.to_string()), Box::new(limit)],
-            ),
-            (None, Some(t)) => (
-                "SELECT id, timestamp, action, target, details, user
+                .to_string(),
+            vec![Box::new(a.to_string()), Box::new(limit)],
+        ),
+        (None, Some(t)) => (
+            "SELECT id, timestamp, action, target, details, user
                  FROM audit_log WHERE target = ?1
                  ORDER BY timestamp DESC LIMIT ?2"
-                    .to_string(),
-                vec![Box::new(t.to_string()), Box::new(limit)],
-            ),
-            (None, None) => (
-                "SELECT id, timestamp, action, target, details, user
+                .to_string(),
+            vec![Box::new(t.to_string()), Box::new(limit)],
+        ),
+        (None, None) => (
+            "SELECT id, timestamp, action, target, details, user
                  FROM audit_log ORDER BY timestamp DESC LIMIT ?1"
-                    .to_string(),
-                vec![Box::new(limit)],
-            ),
-        };
+                .to_string(),
+            vec![Box::new(limit)],
+        ),
+    };
 
     let params_refs: Vec<&dyn rusqlite::types::ToSql> =
         params_vec.iter().map(|v| v.as_ref()).collect();
@@ -972,10 +956,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
 
-    let file_name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("tmp");
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("tmp");
     let unique = format!(
         "{}.{}.{}",
         std::process::id(),
@@ -1049,9 +1030,7 @@ mod tests {
         let conn = setup_db();
         // Verify _migrations table has our migration
         let version: u32 = conn
-            .query_row("SELECT MAX(version) FROM _migrations", [], |row| {
-                row.get(0)
-            })
+            .query_row("SELECT MAX(version) FROM _migrations", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, 1);
     }
@@ -1372,10 +1351,7 @@ mod tests {
 
         // List providers — should have has_api_key = true but NO raw key
         let providers = list_providers(&conn).unwrap();
-        let provider = providers
-            .iter()
-            .find(|p| p.id == "leakage-test")
-            .unwrap();
+        let provider = providers.iter().find(|p| p.id == "leakage-test").unwrap();
         assert!(provider.has_api_key);
 
         // Serialize the provider listing to JSON and verify no key material
@@ -1415,19 +1391,13 @@ mod tests {
     #[test]
     fn test_data_dir_returns_nonempty() {
         let dir = data_dir();
-        assert!(
-            !dir.as_os_str().is_empty(),
-            "data_dir should not be empty"
-        );
+        assert!(!dir.as_os_str().is_empty(), "data_dir should not be empty");
     }
 
     #[test]
     fn test_log_dir_returns_nonempty() {
         let dir = log_dir();
-        assert!(
-            !dir.as_os_str().is_empty(),
-            "log_dir should not be empty"
-        );
+        assert!(!dir.as_os_str().is_empty(), "log_dir should not be empty");
     }
 
     #[test]
@@ -1435,7 +1405,10 @@ mod tests {
         let path = vm_console_log_path("test-vm-42");
         let s = path.to_string_lossy();
         assert!(s.contains("test-vm-42"), "path should contain VM id");
-        assert!(s.ends_with("console.log"), "path should end with console.log");
+        assert!(
+            s.ends_with("console.log"),
+            "path should end with console.log"
+        );
     }
 
     #[test]

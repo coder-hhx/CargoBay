@@ -28,7 +28,11 @@ pub async fn list(
         if let Some(ref statuses) = f.status {
             let status_strings: Vec<String> = statuses
                 .iter()
-                .map(|s| format!("{}", serde_json::to_value(s).unwrap_or_default()).trim_matches('"').to_string())
+                .map(|s| {
+                    format!("{}", serde_json::to_value(s).unwrap_or_default())
+                        .trim_matches('"')
+                        .to_string()
+                })
                 .collect();
             list_filters.insert("status".to_string(), status_strings);
         }
@@ -36,10 +40,8 @@ pub async fn list(
             list_filters.insert("name".to_string(), vec![name.clone()]);
         }
         if let Some(ref label) = f.label {
-            let label_filters: Vec<String> = label
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
+            let label_filters: Vec<String> =
+                label.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
             list_filters.insert("label".to_string(), label_filters);
         }
     }
@@ -82,7 +84,10 @@ pub async fn list(
                     Some(PortMapping {
                         host_port: p.public_port? as u16,
                         container_port: p.private_port as u16,
-                        protocol: p.typ.map(|t| t.to_string()).unwrap_or_else(|| "tcp".to_string()),
+                        protocol: p
+                            .typ
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "tcp".to_string()),
                     })
                 })
                 .collect();
@@ -104,11 +109,14 @@ pub async fn list(
                 image: c.image.unwrap_or_default(),
                 status,
                 state: c.state.unwrap_or_default(),
-                created_at: c.created.map(|t| {
-                    chrono::DateTime::from_timestamp(t, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_default()
-                }).unwrap_or_default(),
+                created_at: c
+                    .created
+                    .map(|t| {
+                        chrono::DateTime::from_timestamp(t, 0)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default(),
                 ports,
                 labels,
                 cpu_cores,
@@ -169,12 +177,12 @@ pub async fn create(
 
     // Auto-start if requested (default: true)
     if request.auto_start.unwrap_or(true) {
-        docker
-            .start_container::<String>(&response.id, None)
-            .await?;
+        docker.start_container::<String>(&response.id, None).await?;
     }
 
-    inspect(docker, &response.id).await.map(|detail| detail.info)
+    inspect(docker, &response.id)
+        .await
+        .map(|detail| detail.info)
 }
 
 /// Start a stopped container.
@@ -220,27 +228,19 @@ pub async fn inspect(docker: &Docker, id: &str) -> Result<ContainerDetail, AppEr
         .map(|n| n.trim_start_matches('/').to_string())
         .unwrap_or_default();
 
-    let image = config
-        .and_then(|c| c.image.clone())
-        .unwrap_or_default();
+    let image = config.and_then(|c| c.image.clone()).unwrap_or_default();
 
-    let labels = config
-        .and_then(|c| c.labels.clone())
-        .unwrap_or_default();
+    let labels = config.and_then(|c| c.labels.clone()).unwrap_or_default();
 
     let cpu_cores = labels
         .get("com.cratebay.cpu_cores")
         .and_then(|v| v.parse().ok())
-        .or_else(|| {
-            host_config.and_then(|h| h.nano_cpus.map(|n| (n / 1_000_000_000) as u32))
-        });
+        .or_else(|| host_config.and_then(|h| h.nano_cpus.map(|n| (n / 1_000_000_000) as u32)));
 
     let memory_mb = labels
         .get("com.cratebay.memory_mb")
         .and_then(|v| v.parse().ok())
-        .or_else(|| {
-            host_config.and_then(|h| h.memory.map(|m| (m / 1024 / 1024) as u64))
-        });
+        .or_else(|| host_config.and_then(|h| h.memory.map(|m| (m / 1024 / 1024) as u64)));
 
     let running = state.and_then(|s| s.running).unwrap_or(false);
     let status_str = state
@@ -281,7 +281,9 @@ pub async fn inspect(docker: &Docker, id: &str) -> Result<ContainerDetail, AppEr
         started_at: state.and_then(|s| s.started_at.clone()),
         finished_at: state.and_then(|s| s.finished_at.clone()),
         exit_code: state.and_then(|s| s.exit_code),
-        error: state.and_then(|s| s.error.clone()).filter(|e| !e.is_empty()),
+        error: state
+            .and_then(|s| s.error.clone())
+            .filter(|e| !e.is_empty()),
         pid: state.and_then(|s| s.pid).map(|p| p as u64),
     };
 

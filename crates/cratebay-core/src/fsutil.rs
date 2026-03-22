@@ -35,9 +35,8 @@ fn try_clonefile(src: &Path, dest: &Path) -> std::io::Result<()> {
 
     let src = CString::new(src.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "src contains NUL"))?;
-    let dest = CString::new(dest.as_os_str().as_bytes()).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "dest contains NUL")
-    })?;
+    let dest = CString::new(dest.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "dest contains NUL"))?;
 
     // SAFETY: clonefile is a well-known macOS syscall that takes two C string
     // paths and a flags argument. Both CString pointers are valid for the

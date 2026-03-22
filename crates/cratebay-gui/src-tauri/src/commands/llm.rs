@@ -10,17 +10,15 @@ use crate::events::llm_stream_event;
 use crate::state::AppState;
 use cratebay_core::error::AppError;
 use cratebay_core::models::{
-    AuditAction, ChatMessage, LlmModelInfo, LlmOptions, LlmProvider,
-    LlmProviderCreateRequest, LlmProviderUpdateRequest, ProviderTestResult,
+    AuditAction, ChatMessage, LlmModelInfo, LlmOptions, LlmProvider, LlmProviderCreateRequest,
+    LlmProviderUpdateRequest, ProviderTestResult,
 };
-use cratebay_core::{audit, llm_proxy, storage, validation};
 use cratebay_core::MutexExt;
+use cratebay_core::{audit, llm_proxy, storage, validation};
 
 /// List configured LLM providers.
 #[tauri::command]
-pub async fn llm_provider_list(
-    state: State<'_, AppState>,
-) -> Result<Vec<LlmProvider>, AppError> {
+pub async fn llm_provider_list(state: State<'_, AppState>) -> Result<Vec<LlmProvider>, AppError> {
     let db = state.db.lock_or_recover()?;
     storage::list_providers(&db)
 }
@@ -38,7 +36,13 @@ pub async fn llm_provider_create(
     let db = state.db.lock_or_recover()?;
 
     // Create provider record
-    storage::create_provider(&db, &id, &request.name, &request.api_base, &request.api_format)?;
+    storage::create_provider(
+        &db,
+        &id,
+        &request.name,
+        &request.api_base,
+        &request.api_format,
+    )?;
 
     // Store encrypted API key
     // For now, store the key as plaintext bytes (real encryption to be added with keyring)
@@ -51,7 +55,13 @@ pub async fn llm_provider_create(
         &hint,
     )?;
 
-    audit::log_action(&db, &AuditAction::ProviderCreate, &id, Some(&request.name), "user")?;
+    audit::log_action(
+        &db,
+        &AuditAction::ProviderCreate,
+        &id,
+        Some(&request.name),
+        "user",
+    )?;
 
     storage::get_provider(&db, &id)
 }
@@ -94,10 +104,7 @@ pub async fn llm_provider_update(
 
 /// Delete an LLM provider and associated data.
 #[tauri::command]
-pub async fn llm_provider_delete(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn llm_provider_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let db = state.db.lock_or_recover()?;
     storage::delete_provider(&db, &id)?;
     audit::log_action(&db, &AuditAction::ProviderDelete, &id, None, "user")?;

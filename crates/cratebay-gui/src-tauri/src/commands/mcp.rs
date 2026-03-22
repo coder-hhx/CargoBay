@@ -21,9 +21,7 @@ use cratebay_core::{audit, storage, MutexExt};
 /// Servers loaded from `.mcp.json` that are not in the database are included
 /// with their live runtime state (running, pid, tools, etc.).
 #[tauri::command]
-pub async fn mcp_server_list(
-    state: State<'_, AppState>,
-) -> Result<Vec<McpServerStatus>, AppError> {
+pub async fn mcp_server_list(state: State<'_, AppState>) -> Result<Vec<McpServerStatus>, AppError> {
     Ok(state.mcp_manager.list_servers().await)
 }
 
@@ -81,23 +79,14 @@ pub async fn mcp_server_add(
 /// Stops the server if it is running, removes it from `McpManager`,
 /// and deletes the persistent configuration from SQLite.
 #[tauri::command]
-pub async fn mcp_server_remove(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn mcp_server_remove(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     // Stop and remove from McpManager (best-effort)
     state.mcp_manager.remove_server(&id).await;
 
     // Remove from SQLite
     let db = state.db.lock_or_recover()?;
     storage::remove_mcp_server(&db, &id)?;
-    audit::log_action(
-        &db,
-        &AuditAction::McpServerStop,
-        &id,
-        None,
-        "user",
-    )?;
+    audit::log_action(&db, &AuditAction::McpServerStop, &id, None, "user")?;
     Ok(())
 }
 
@@ -129,21 +118,12 @@ pub async fn mcp_server_start(
 ///
 /// Disconnects from the server and cleans up the transport.
 #[tauri::command]
-pub async fn mcp_server_stop(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn mcp_server_stop(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     state.mcp_manager.stop_server(&id).await?;
 
     // Audit log
     let db = state.db.lock_or_recover()?;
-    audit::log_action(
-        &db,
-        &AuditAction::McpServerStop,
-        &id,
-        None,
-        "user",
-    )?;
+    audit::log_action(&db, &AuditAction::McpServerStop, &id, None, "user")?;
 
     Ok(())
 }

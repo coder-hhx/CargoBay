@@ -5,9 +5,9 @@
 //! - Storage init with in-memory DB
 //! - Validation function throughput
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use cratebay_core::storage;
 use cratebay_core::validation;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn bench_db_init_in_memory(c: &mut Criterion) {
     c.bench_function("db_init_in_memory", |b| {

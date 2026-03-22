@@ -5,23 +5,19 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::state::AppState;
+use cratebay_core::docker;
 use cratebay_core::error::AppError;
 use cratebay_core::models::{DockerStatus, RuntimeStatusInfo, SystemInfo};
 use cratebay_core::runtime::{RuntimeConfig, RuntimeState};
-use cratebay_core::docker;
 
 /// Get system information.
 #[tauri::command]
-pub async fn system_info(
-    state: State<'_, AppState>,
-) -> Result<SystemInfo, AppError> {
+pub async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, AppError> {
     let data_dir = state.data_dir.to_string_lossy().to_string();
     let db_path = state.data_dir.join("cratebay.db");
     let db_path_str = db_path.to_string_lossy().to_string();
 
-    let db_size_bytes = std::fs::metadata(&db_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let db_size_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
 
     let log_path = state.data_dir.join("cratebay.log");
     let log_path_str = log_path.to_string_lossy().to_string();
@@ -43,13 +39,12 @@ pub async fn system_info(
 /// Checks the current Docker connection in AppState (may have been
 /// updated by the runtime auto-start background thread).
 #[tauri::command]
-pub async fn docker_status(
-    state: State<'_, AppState>,
-) -> Result<DockerStatus, AppError> {
+pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, AppError> {
     let docker_opt = {
-        let guard = state.docker.lock().map_err(|e| {
-            AppError::Runtime(format!("Docker state lock poisoned: {}", e))
-        })?;
+        let guard = state
+            .docker
+            .lock()
+            .map_err(|e| AppError::Runtime(format!("Docker state lock poisoned: {}", e)))?;
         guard.clone()
     };
 
@@ -102,9 +97,7 @@ pub async fn docker_status(
 /// Returns the current state of the built-in container runtime (VM),
 /// including health, configuration, and resource usage.
 #[tauri::command]
-pub async fn runtime_status(
-    state: State<'_, AppState>,
-) -> Result<RuntimeStatusInfo, AppError> {
+pub async fn runtime_status(state: State<'_, AppState>) -> Result<RuntimeStatusInfo, AppError> {
     let platform = match std::env::consts::OS {
         "macos" => "macos-vz",
         "linux" => "linux-kvm",
@@ -136,9 +129,7 @@ pub async fn runtime_status(
 /// This command allows the frontend to trigger runtime start
 /// (e.g., from Settings page or a retry button).
 #[tauri::command]
-pub async fn runtime_start(
-    state: State<'_, AppState>,
-) -> Result<String, AppError> {
+pub async fn runtime_start(state: State<'_, AppState>) -> Result<String, AppError> {
     tracing::info!("Manual runtime start requested");
 
     // Step 1: Detect
@@ -148,16 +139,17 @@ pub async fn runtime_start(
     // Step 2: Provision if needed
     if current == RuntimeState::None {
         tracing::info!("Runtime needs provisioning...");
-        state.runtime.provision(
-            Box::new(|progress| {
+        state
+            .runtime
+            .provision(Box::new(|progress| {
                 tracing::info!(
                     "Provision: {} - {:.1}% - {}",
                     progress.stage,
                     progress.percent,
                     progress.message
                 );
-            }),
-        ).await?;
+            }))
+            .await?;
     }
 
     // Step 3: Start
@@ -192,9 +184,7 @@ pub async fn runtime_start(
 
 /// Manually stop the built-in runtime.
 #[tauri::command]
-pub async fn runtime_stop(
-    state: State<'_, AppState>,
-) -> Result<String, AppError> {
+pub async fn runtime_stop(state: State<'_, AppState>) -> Result<String, AppError> {
     tracing::info!("Manual runtime stop requested");
     state.runtime.stop().await?;
 
@@ -252,7 +242,11 @@ fn os_version() -> String {
                 content
                     .lines()
                     .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                    .map(|l| {
+                        l.trim_start_matches("PRETTY_NAME=")
+                            .trim_matches('"')
+                            .to_string()
+                    })
             })
             .unwrap_or_else(|| "unknown".to_string())
     }

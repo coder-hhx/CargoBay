@@ -15,16 +15,10 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 #[async_trait::async_trait]
 pub trait McpTransport: Send + Sync {
     /// Send a JSON-RPC request and wait for the response.
-    async fn send_request(
-        &self,
-        request: &JsonRpcRequest,
-    ) -> Result<JsonRpcResponse, AppError>;
+    async fn send_request(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, AppError>;
 
     /// Send a JSON-RPC notification (no response expected).
-    async fn send_notification(
-        &self,
-        notification: &JsonRpcNotification,
-    ) -> Result<(), AppError>;
+    async fn send_notification(&self, notification: &JsonRpcNotification) -> Result<(), AppError>;
 
     /// Shut down the transport.
     async fn shutdown(&self) -> Result<(), AppError>;
@@ -82,10 +76,7 @@ impl StdioTransport {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            AppError::Mcp(format!(
-                "Failed to spawn MCP server '{}': {}",
-                command, e
-            ))
+            AppError::Mcp(format!("Failed to spawn MCP server '{}': {}", command, e))
         })?;
 
         let child_pid = child.id();
@@ -199,10 +190,7 @@ impl StdioTransport {
                     if let Some(req) = map.remove(&id) {
                         let _ = req.sender.send(response);
                     } else {
-                        tracing::warn!(
-                            "Received JSON-RPC response for unknown id {}",
-                            id
-                        );
+                        tracing::warn!("Received JSON-RPC response for unknown id {}", id);
                     }
                 }
                 // Notifications from server (no id) are ignored for now
@@ -235,10 +223,7 @@ impl StdioTransport {
 
 #[async_trait::async_trait]
 impl McpTransport for StdioTransport {
-    async fn send_request(
-        &self,
-        request: &JsonRpcRequest,
-    ) -> Result<JsonRpcResponse, AppError> {
+    async fn send_request(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, AppError> {
         let mut data =
             serde_json::to_vec(request).map_err(|e| AppError::Mcp(format!("Serialize: {}", e)))?;
         data.push(b'\n');
@@ -250,9 +235,10 @@ impl McpTransport for StdioTransport {
             map.insert(request.id, PendingRequest { sender: tx });
         }
 
-        self.write_tx.send(data).await.map_err(|_| {
-            AppError::Mcp("MCP transport write channel closed".into())
-        })?;
+        self.write_tx
+            .send(data)
+            .await
+            .map_err(|_| AppError::Mcp("MCP transport write channel closed".into()))?;
 
         // Wait for response with timeout
         let response = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
@@ -263,17 +249,15 @@ impl McpTransport for StdioTransport {
         Ok(response)
     }
 
-    async fn send_notification(
-        &self,
-        notification: &JsonRpcNotification,
-    ) -> Result<(), AppError> {
+    async fn send_notification(&self, notification: &JsonRpcNotification) -> Result<(), AppError> {
         let mut data = serde_json::to_vec(notification)
             .map_err(|e| AppError::Mcp(format!("Serialize notification: {}", e)))?;
         data.push(b'\n');
 
-        self.write_tx.send(data).await.map_err(|_| {
-            AppError::Mcp("MCP transport write channel closed".into())
-        })?;
+        self.write_tx
+            .send(data)
+            .await
+            .map_err(|_| AppError::Mcp("MCP transport write channel closed".into()))?;
 
         Ok(())
     }
@@ -332,9 +316,10 @@ impl SseTransport {
         }
         request = request.header("Accept", "text/event-stream");
 
-        let response = request.send().await.map_err(|e| {
-            AppError::Mcp(format!("SSE connection failed to {}: {}", self.url, e))
-        })?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| AppError::Mcp(format!("SSE connection failed to {}: {}", self.url, e)))?;
 
         if !response.status().is_success() {
             return Err(AppError::Mcp(format!(
@@ -345,9 +330,10 @@ impl SseTransport {
 
         // Read the initial SSE events to discover the POST endpoint.
         // The server should send an `endpoint` event with the URL.
-        let body = response.text().await.map_err(|e| {
-            AppError::Mcp(format!("Failed to read SSE response: {}", e))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| AppError::Mcp(format!("Failed to read SSE response: {}", e)))?;
 
         for line in body.lines() {
             let line = line.trim();
@@ -393,10 +379,7 @@ impl SseTransport {
 
 #[async_trait::async_trait]
 impl McpTransport for SseTransport {
-    async fn send_request(
-        &self,
-        request: &JsonRpcRequest,
-    ) -> Result<JsonRpcResponse, AppError> {
+    async fn send_request(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, AppError> {
         let post_url = self.get_post_url().await?;
 
         let mut http_request = self.client.post(&post_url);
@@ -408,9 +391,11 @@ impl McpTransport for SseTransport {
         let body = serde_json::to_string(request)
             .map_err(|e| AppError::Mcp(format!("Serialize request: {}", e)))?;
 
-        let response = http_request.body(body).send().await.map_err(|e| {
-            AppError::Mcp(format!("SSE POST request failed: {}", e))
-        })?;
+        let response = http_request
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| AppError::Mcp(format!("SSE POST request failed: {}", e)))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -421,21 +406,18 @@ impl McpTransport for SseTransport {
             )));
         }
 
-        let text = response.text().await.map_err(|e| {
-            AppError::Mcp(format!("Failed to read SSE response: {}", e))
-        })?;
+        let text = response
+            .text()
+            .await
+            .map_err(|e| AppError::Mcp(format!("Failed to read SSE response: {}", e)))?;
 
-        let rpc_response: JsonRpcResponse = serde_json::from_str(&text).map_err(|e| {
-            AppError::Mcp(format!("Failed to parse SSE JSON-RPC response: {}", e))
-        })?;
+        let rpc_response: JsonRpcResponse = serde_json::from_str(&text)
+            .map_err(|e| AppError::Mcp(format!("Failed to parse SSE JSON-RPC response: {}", e)))?;
 
         Ok(rpc_response)
     }
 
-    async fn send_notification(
-        &self,
-        notification: &JsonRpcNotification,
-    ) -> Result<(), AppError> {
+    async fn send_notification(&self, notification: &JsonRpcNotification) -> Result<(), AppError> {
         let post_url = self.get_post_url().await?;
 
         let mut http_request = self.client.post(&post_url);
@@ -447,9 +429,11 @@ impl McpTransport for SseTransport {
         let body = serde_json::to_string(notification)
             .map_err(|e| AppError::Mcp(format!("Serialize notification: {}", e)))?;
 
-        let _ = http_request.body(body).send().await.map_err(|e| {
-            AppError::Mcp(format!("SSE POST notification failed: {}", e))
-        })?;
+        let _ = http_request
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| AppError::Mcp(format!("SSE POST notification failed: {}", e)))?;
 
         Ok(())
     }

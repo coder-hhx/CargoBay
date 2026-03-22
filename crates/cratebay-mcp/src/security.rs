@@ -23,10 +23,7 @@ pub fn validate_path(requested_path: &str, workspace_root: &Path) -> Result<Path
 
     let full_path = workspace_root.join(requested_path);
     let canonical = full_path.canonicalize().map_err(|e| {
-        McpError::InvalidParams(format!(
-            "Cannot resolve path '{}': {}",
-            requested_path, e
-        ))
+        McpError::InvalidParams(format!("Cannot resolve path '{}': {}", requested_path, e))
     })?;
 
     let root_canonical = workspace_root.canonicalize().map_err(|e| {

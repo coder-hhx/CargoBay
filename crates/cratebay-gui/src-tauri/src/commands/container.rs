@@ -4,13 +4,13 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::state::AppState;
 use cratebay_core::error::AppError;
+use cratebay_core::models::AuditAction;
 use cratebay_core::models::{
     ContainerCreateRequest, ContainerDetail, ContainerInfo, ContainerListFilters, ExecResult,
     LogEntry, LogOptions,
 };
-use cratebay_core::{audit, container, storage, validation};
-use cratebay_core::models::AuditAction;
 use cratebay_core::MutexExt;
+use cratebay_core::{audit, container, storage, validation};
 
 /// List available container templates.
 #[tauri::command]
@@ -56,10 +56,7 @@ pub async fn container_create(
 
 /// Start a stopped container.
 #[tauri::command]
-pub async fn container_start(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn container_start(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let docker = state.require_docker()?;
     container::start(&docker, &id).await?;
 
@@ -153,15 +150,9 @@ pub async fn container_exec_stream(
     let event_name = format!("exec:stream:{}", channel_id);
     let app_handle = app.clone();
 
-    container::exec_stream(
-        &docker,
-        &id,
-        cmd,
-        working_dir,
-        move |chunk| {
-            let _ = app_handle.emit(&event_name, &chunk);
-        },
-    )
+    container::exec_stream(&docker, &id, cmd, working_dir, move |chunk| {
+        let _ = app_handle.emit(&event_name, &chunk);
+    })
     .await?;
 
     // Audit

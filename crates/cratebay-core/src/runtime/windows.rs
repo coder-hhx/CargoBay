@@ -168,8 +168,7 @@ impl RuntimeManager for WindowsRuntime {
             .unwrap_or(false);
         if !wsl2_ok {
             let mut state = self.state.lock().await;
-            *state =
-                RuntimeState::Error("WSL2 is required. Please run: wsl --install".into());
+            *state = RuntimeState::Error("WSL2 is required. Please run: wsl --install".into());
             return Err(AppError::Runtime(
                 "WSL2 is required but not available. Please run: wsl --install".into(),
             ));
@@ -284,21 +283,19 @@ impl RuntimeManager for WindowsRuntime {
         // 3) Wait for dockerd to become ready inside guest (up to 120s with
         //    automatic compatibility-mode retry at 30s)
         let distro_c = distro.clone();
-        let guest_docker_host =
-            tokio::task::spawn_blocking(move || {
-                wait_for_wsl_dockerd_ready_in_guest(&distro_c, port)
-            })
-            .await
-            .map_err(|e| AppError::Runtime(format!("Join error: {}", e)))?
-            .map_err(|e| AppError::Runtime(format!("Docker readiness wait failed: {}", e)))?;
-
-        // 4) Try direct guest connection, fall back to localhost relay
-        let docker_host = tokio::task::spawn_blocking(move || {
-            resolve_reachable_docker_host(&guest_docker_host)
+        let guest_docker_host = tokio::task::spawn_blocking(move || {
+            wait_for_wsl_dockerd_ready_in_guest(&distro_c, port)
         })
         .await
         .map_err(|e| AppError::Runtime(format!("Join error: {}", e)))?
-        .map_err(|e| AppError::Runtime(format!("Docker host resolution failed: {}", e)))?;
+        .map_err(|e| AppError::Runtime(format!("Docker readiness wait failed: {}", e)))?;
+
+        // 4) Try direct guest connection, fall back to localhost relay
+        let docker_host =
+            tokio::task::spawn_blocking(move || resolve_reachable_docker_host(&guest_docker_host))
+                .await
+                .map_err(|e| AppError::Runtime(format!("Join error: {}", e)))?
+                .map_err(|e| AppError::Runtime(format!("Docker host resolution failed: {}", e)))?;
 
         // Cache the results
         if let Some((host, _port)) = common::docker_host_tcp_endpoint(&docker_host) {
@@ -374,11 +371,10 @@ impl RuntimeManager for WindowsRuntime {
         let docker_host = self.docker_host.lock().await.clone();
         let (docker_responsive, docker_version) = if let Some(ref host) = docker_host {
             let host_c = host.clone();
-            let ping_ok = tokio::task::spawn_blocking(move || {
-                common::docker_http_ping_host(&host_c).is_ok()
-            })
-            .await
-            .unwrap_or(false);
+            let ping_ok =
+                tokio::task::spawn_blocking(move || common::docker_http_ping_host(&host_c).is_ok())
+                    .await
+                    .unwrap_or(false);
 
             let version = if ping_ok {
                 let distro = self.distro_name.clone();
@@ -439,8 +435,7 @@ impl RuntimeManager for WindowsRuntime {
             let memory_info = wsl_get_memory_info(&distro);
             let container_count = wsl_get_container_count(&distro);
 
-            let (memory_used_mb, memory_total_mb) =
-                memory_info.unwrap_or((0, config_mem));
+            let (memory_used_mb, memory_total_mb) = memory_info.unwrap_or((0, config_mem));
 
             Ok(ResourceUsage {
                 cpu_percent: 0.0, // TODO: parse /proc/stat
@@ -562,7 +557,11 @@ fn wsl_exec_with_timeout(
 ) -> Result<String, String> {
     let mut command = std::process::Command::new("wsl.exe");
     command.args(["-d", distro, "--", "sh", "-lc", shell_cmd]);
-    let description = format!("wsl -d {} -- sh -lc '{}'", distro, &shell_cmd[..shell_cmd.len().min(60)]);
+    let description = format!(
+        "wsl -d {} -- sh -lc '{}'",
+        distro,
+        &shell_cmd[..shell_cmd.len().min(60)]
+    );
 
     let output = run_command_with_timeout(&mut command, timeout, &description)?;
 
@@ -679,7 +678,8 @@ fn wsl_wait_for_distro_usable(distro: &str) -> Result<(), String> {
 fn wsl_distro_is_running(distro: &str) -> bool {
     let mut command = std::process::Command::new("wsl.exe");
     command.args(["-l", "--running"]);
-    let Ok(out) = run_command_with_timeout(&mut command, Duration::from_secs(10), "wsl -l --running")
+    let Ok(out) =
+        run_command_with_timeout(&mut command, Duration::from_secs(10), "wsl -l --running")
     else {
         return false;
     };
@@ -726,11 +726,7 @@ fn runtime_wsl_image_id() -> String {
 
 /// Locate the WSL assets directory from a candidate root.
 fn runtime_wsl_assets_dir_from_root(root: &std::path::Path) -> Option<PathBuf> {
-    if root
-        .file_name()
-        .is_some_and(|n| n == WSL_ASSETS_SUBDIR)
-        && root.is_dir()
-    {
+    if root.file_name().is_some_and(|n| n == WSL_ASSETS_SUBDIR) && root.is_dir() {
         return Some(root.to_path_buf());
     }
     let dir = root.join(WSL_ASSETS_SUBDIR);
@@ -1071,7 +1067,9 @@ fn extract_non_loopback_ipv4s(output: &str) -> Vec<String> {
             }
 
             if parse_ipv4_octets(candidate).is_some()
-                && !candidates.iter().any(|existing: &String| existing == candidate)
+                && !candidates
+                    .iter()
+                    .any(|existing: &String| existing == candidate)
             {
                 candidates.push(candidate.to_string());
             }
@@ -1351,12 +1349,8 @@ fn resolve_reachable_docker_host(guest_docker_host: &str) -> Result<String, Stri
     }
 
     // Extract guest IP and port for relay setup
-    let (guest_ip, port) = common::docker_host_tcp_endpoint(guest_docker_host).ok_or_else(|| {
-        format!(
-            "Invalid WSL guest Docker host '{}'",
-            guest_docker_host
-        )
-    })?;
+    let (guest_ip, port) = common::docker_host_tcp_endpoint(guest_docker_host)
+        .ok_or_else(|| format!("Invalid WSL guest Docker host '{}'", guest_docker_host))?;
 
     // Set up localhost TCP relay
     let relay_host = setup_localhost_relay(&guest_ip, port)?;
@@ -1376,14 +1370,8 @@ fn resolve_reachable_docker_host(guest_docker_host: &str) -> Result<String, Stri
 fn setup_localhost_relay(guest_ip: &str, port: u16) -> Result<String, String> {
     let target_addr = format!("{}:{}", guest_ip, port);
 
-    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(
-        |e| {
-            format!(
-                "Failed to bind local Docker relay on 127.0.0.1: {}",
-                e
-            )
-        },
-    )?;
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .map_err(|e| format!("Failed to bind local Docker relay on 127.0.0.1: {}", e))?;
 
     let relay_port = listener
         .local_addr()
@@ -1403,15 +1391,9 @@ fn setup_localhost_relay(guest_ip: &str, port: u16) -> Result<String, String> {
 }
 
 /// Accept connections on the relay listener and proxy them to the target.
-fn run_relay_listener(
-    listener: std::net::TcpListener,
-    target: Arc<std::sync::Mutex<String>>,
-) {
+fn run_relay_listener(listener: std::net::TcpListener, target: Arc<std::sync::Mutex<String>>) {
     while let Ok((inbound, _peer)) = listener.accept() {
-        let target_addr = target
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let target_addr = target.lock().unwrap_or_else(|e| e.into_inner()).clone();
         std::thread::spawn(move || {
             let _ = proxy_tcp_connection(inbound, &target_addr);
         });
@@ -1419,10 +1401,7 @@ fn run_relay_listener(
 }
 
 /// Proxy a single TCP connection: copy bytes bidirectionally.
-fn proxy_tcp_connection(
-    inbound: std::net::TcpStream,
-    target_addr: &str,
-) -> Result<(), String> {
+fn proxy_tcp_connection(inbound: std::net::TcpStream, target_addr: &str) -> Result<(), String> {
     use std::io;
     use std::net::Shutdown;
 
@@ -1477,8 +1456,7 @@ fn wsl_docker_version(distro: &str) -> Option<String> {
 
 /// Get uptime in seconds from the WSL2 distro.
 fn wsl_get_uptime(distro: &str) -> Option<u64> {
-    let output =
-        wsl_exec_with_timeout(distro, "cat /proc/uptime", Duration::from_secs(5)).ok()?;
+    let output = wsl_exec_with_timeout(distro, "cat /proc/uptime", Duration::from_secs(5)).ok()?;
     let uptime_str = output.split_whitespace().next()?;
     let uptime_f64: f64 = uptime_str.parse().ok()?;
     Some(uptime_f64 as u64)
@@ -1486,8 +1464,7 @@ fn wsl_get_uptime(distro: &str) -> Option<u64> {
 
 /// Get memory info (used_mb, total_mb) from the WSL2 distro via /proc/meminfo.
 fn wsl_get_memory_info(distro: &str) -> Option<(u64, u64)> {
-    let output =
-        wsl_exec_with_timeout(distro, "cat /proc/meminfo", Duration::from_secs(5)).ok()?;
+    let output = wsl_exec_with_timeout(distro, "cat /proc/meminfo", Duration::from_secs(5)).ok()?;
 
     let mut mem_total_kb: Option<u64> = None;
     let mut mem_available_kb: Option<u64> = None;
@@ -1547,7 +1524,10 @@ mod tests {
     fn parse_ipv4_octets_valid() {
         assert_eq!(parse_ipv4_octets("192.168.1.1"), Some([192, 168, 1, 1]));
         assert_eq!(parse_ipv4_octets("10.0.0.1"), Some([10, 0, 0, 1]));
-        assert_eq!(parse_ipv4_octets("255.255.255.255"), Some([255, 255, 255, 255]));
+        assert_eq!(
+            parse_ipv4_octets("255.255.255.255"),
+            Some([255, 255, 255, 255])
+        );
     }
 
     #[test]
@@ -1756,7 +1736,8 @@ Local:
 
     #[test]
     fn wsl_output_indicates_missing_distro_ignores_other() {
-        let output = "The process cannot access the file because it is being used by another process.";
+        let output =
+            "The process cannot access the file because it is being used by another process.";
         assert!(!wsl_output_indicates_missing_distro(output));
     }
 

@@ -5,7 +5,11 @@ use clap::{Parser, Subcommand};
 mod commands;
 
 #[derive(Parser)]
-#[command(name = "cratebay", version, about = "CrateBay CLI — manage containers and AI workflows")]
+#[command(
+    name = "cratebay",
+    version,
+    about = "CrateBay CLI — manage containers and AI workflows"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

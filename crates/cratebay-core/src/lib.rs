@@ -56,10 +56,7 @@ mod tests {
     #[test]
     fn app_error_display_permission_denied() {
         let err = AppError::PermissionDenied("host volume mount".to_string());
-        assert_eq!(
-            err.to_string(),
-            "Permission denied: host volume mount"
-        );
+        assert_eq!(err.to_string(), "Permission denied: host volume mount");
     }
 
     #[test]

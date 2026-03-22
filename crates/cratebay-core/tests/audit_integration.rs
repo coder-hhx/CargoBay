@@ -81,14 +81,7 @@ fn audit_log_all_action_types() {
 fn audit_log_with_null_details() {
     let conn = setup_db();
 
-    audit::log_action(
-        &conn,
-        &AuditAction::SettingsUpdate,
-        "theme",
-        None,
-        "user",
-    )
-    .unwrap();
+    audit::log_action(&conn, &AuditAction::SettingsUpdate, "theme", None, "user").unwrap();
 
     let details: Option<String> = conn
         .query_row("SELECT details FROM audit_log LIMIT 1", [], |row| {
@@ -121,8 +114,7 @@ fn list_audit_logs_filter_by_action() {
     audit::log_action(&conn, &AuditAction::ContainerCreate, "c2", None, "user").unwrap();
     audit::log_action(&conn, &AuditAction::ContainerStop, "c1", None, "user").unwrap();
 
-    let logs =
-        storage::list_audit_logs(&conn, Some("container.create"), None, 100).unwrap();
+    let logs = storage::list_audit_logs(&conn, Some("container.create"), None, 100).unwrap();
     assert_eq!(logs.len(), 2);
     for log in &logs {
         assert_eq!(log["action"].as_str().unwrap(), "container.create");
@@ -133,15 +125,32 @@ fn list_audit_logs_filter_by_action() {
 fn list_audit_logs_filter_by_target() {
     let conn = setup_db();
 
-    audit::log_action(&conn, &AuditAction::ContainerCreate, "container-a", None, "user")
-        .unwrap();
-    audit::log_action(&conn, &AuditAction::ContainerStart, "container-a", None, "user")
-        .unwrap();
-    audit::log_action(&conn, &AuditAction::ContainerCreate, "container-b", None, "user")
-        .unwrap();
+    audit::log_action(
+        &conn,
+        &AuditAction::ContainerCreate,
+        "container-a",
+        None,
+        "user",
+    )
+    .unwrap();
+    audit::log_action(
+        &conn,
+        &AuditAction::ContainerStart,
+        "container-a",
+        None,
+        "user",
+    )
+    .unwrap();
+    audit::log_action(
+        &conn,
+        &AuditAction::ContainerCreate,
+        "container-b",
+        None,
+        "user",
+    )
+    .unwrap();
 
-    let logs =
-        storage::list_audit_logs(&conn, None, Some("container-a"), 100).unwrap();
+    let logs = storage::list_audit_logs(&conn, None, Some("container-a"), 100).unwrap();
     assert_eq!(logs.len(), 2);
     for log in &logs {
         assert_eq!(log["target"].as_str().unwrap(), "container-a");
@@ -156,8 +165,7 @@ fn list_audit_logs_filter_by_action_and_target() {
     audit::log_action(&conn, &AuditAction::ContainerStart, "c1", None, "user").unwrap();
     audit::log_action(&conn, &AuditAction::ContainerCreate, "c2", None, "user").unwrap();
 
-    let logs =
-        storage::list_audit_logs(&conn, Some("container.create"), Some("c1"), 100).unwrap();
+    let logs = storage::list_audit_logs(&conn, Some("container.create"), Some("c1"), 100).unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0]["action"].as_str().unwrap(), "container.create");
     assert_eq!(logs[0]["target"].as_str().unwrap(), "c1");
@@ -224,8 +232,14 @@ fn rotate_audit_log_deletes_old_entries() {
     .unwrap();
 
     // Insert a recent entry
-    audit::log_action(&conn, &AuditAction::SettingsUpdate, "new-setting", None, "user")
-        .unwrap();
+    audit::log_action(
+        &conn,
+        &AuditAction::SettingsUpdate,
+        "new-setting",
+        None,
+        "user",
+    )
+    .unwrap();
 
     let before_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM audit_log", [], |row| row.get(0))
@@ -285,9 +299,6 @@ fn audit_log_stores_all_fields() {
     assert!(log["timestamp"].as_str().is_some());
     assert_eq!(log["action"].as_str().unwrap(), "api_key.save");
     assert_eq!(log["target"].as_str().unwrap(), "provider-openai");
-    assert_eq!(
-        log["details"].as_str().unwrap(),
-        r#"{"hint":"...1234"}"#
-    );
+    assert_eq!(log["details"].as_str().unwrap(), r#"{"hint":"...1234"}"#);
     assert_eq!(log["user"].as_str().unwrap(), "admin");
 }

@@ -224,8 +224,7 @@ fn provider_update_partial_fields() {
     assert_eq!(p.api_base, "https://original.com"); // Unchanged
 
     // Update only api_base
-    storage::update_provider(&conn, "upd-test", None, Some("https://new.com"), None, None)
-        .unwrap();
+    storage::update_provider(&conn, "upd-test", None, Some("https://new.com"), None, None).unwrap();
     let p = storage::get_provider(&conn, "upd-test").unwrap();
     assert_eq!(p.name, "Updated"); // Unchanged
     assert_eq!(p.api_base, "https://new.com");
@@ -252,8 +251,7 @@ fn provider_update_partial_fields() {
 #[test]
 fn provider_update_nonexistent_returns_not_found() {
     let conn = setup_db();
-    let result =
-        storage::update_provider(&conn, "nonexistent", Some("Test"), None, None, None);
+    let result = storage::update_provider(&conn, "nonexistent", Some("Test"), None, None, None);
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::NotFound { entity, id } => {
@@ -396,17 +394,11 @@ fn save_models_empty_list_clears_all() {
         ("b".to_string(), "B".to_string(), false),
     ];
     storage::save_models(&conn, "clear-test", &models).unwrap();
-    assert_eq!(
-        storage::list_models(&conn, "clear-test").unwrap().len(),
-        2
-    );
+    assert_eq!(storage::list_models(&conn, "clear-test").unwrap().len(), 2);
 
     // Empty list clears all
     storage::save_models(&conn, "clear-test", &[]).unwrap();
-    assert_eq!(
-        storage::list_models(&conn, "clear-test").unwrap().len(),
-        0
-    );
+    assert_eq!(storage::list_models(&conn, "clear-test").unwrap().len(), 0);
 }
 
 #[test]
@@ -436,7 +428,10 @@ fn save_models_preserves_enabled_state() {
 
     let listed = storage::list_models(&conn, "preserve-test").unwrap();
     assert_eq!(listed.len(), 1);
-    assert!(listed[0].is_enabled, "is_enabled should be preserved across upsert");
+    assert!(
+        listed[0].is_enabled,
+        "is_enabled should be preserved across upsert"
+    );
     assert_eq!(listed[0].name, "Model 1 Updated");
 }
 
@@ -489,20 +484,14 @@ fn cascade_delete_provider_removes_api_key_and_models() {
     storage::save_api_key(&conn, "cascade-all", &[1, 2, 3], &[4, 5, 6], "...key").unwrap();
 
     // Verify all exist
-    assert_eq!(
-        storage::list_models(&conn, "cascade-all").unwrap().len(),
-        2
-    );
+    assert_eq!(storage::list_models(&conn, "cascade-all").unwrap().len(), 2);
     assert!(storage::load_api_key(&conn, "cascade-all").is_ok());
 
     // Delete provider
     storage::delete_provider(&conn, "cascade-all").unwrap();
 
     // Models should be cascade deleted
-    assert_eq!(
-        storage::list_models(&conn, "cascade-all").unwrap().len(),
-        0
-    );
+    assert_eq!(storage::list_models(&conn, "cascade-all").unwrap().len(), 0);
 
     // API key should be cascade deleted
     assert!(storage::load_api_key(&conn, "cascade-all").is_err());
@@ -605,7 +594,10 @@ fn conversation_last_message_preview_truncation() {
     let convs = storage::list_conversations(&conn, 50, 0).unwrap();
     let conv = convs.iter().find(|c| c.id == "preview-test").unwrap();
     let preview = conv.last_message_preview.as_ref().unwrap();
-    assert!(preview.len() <= 103, "Preview should be truncated to ~100 chars + '...'");
+    assert!(
+        preview.len() <= 103,
+        "Preview should be truncated to ~100 chars + '...'"
+    );
     assert!(preview.ends_with("..."));
 }
 
@@ -842,9 +834,11 @@ fn models_isolated_between_providers() {
         ("gpt-4o".to_string(), "GPT-4o".to_string(), false),
         ("gpt-4o-mini".to_string(), "GPT-4o Mini".to_string(), false),
     ];
-    let models_b = vec![
-        ("claude-3-5-sonnet".to_string(), "Claude 3.5 Sonnet".to_string(), true),
-    ];
+    let models_b = vec![(
+        "claude-3-5-sonnet".to_string(),
+        "Claude 3.5 Sonnet".to_string(),
+        true,
+    )];
 
     storage::save_models(&conn, "provider-a", &models_a).unwrap();
     storage::save_models(&conn, "provider-b", &models_b).unwrap();

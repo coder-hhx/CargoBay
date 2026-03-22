@@ -44,7 +44,10 @@ pub fn log_action_with_timestamp(
 }
 
 /// Rotate audit logs older than the specified number of days.
-pub fn rotate_audit_log(conn: &rusqlite::Connection, older_than_days: u32) -> Result<u32, AppError> {
+pub fn rotate_audit_log(
+    conn: &rusqlite::Connection,
+    older_than_days: u32,
+) -> Result<u32, AppError> {
     let deleted = conn.execute(
         "DELETE FROM audit_log WHERE timestamp < datetime('now', ?1)",
         params![format!("-{} days", older_than_days)],

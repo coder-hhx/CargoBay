@@ -304,10 +304,19 @@ mod tests {
             assert!(!entry.name.is_empty(), "name should not be empty");
             assert!(!entry.version.is_empty(), "version should not be empty");
             assert!(!entry.arch.is_empty(), "arch should not be empty");
-            assert!(!entry.kernel_url.is_empty(), "kernel_url should not be empty");
-            assert!(!entry.initrd_url.is_empty(), "initrd_url should not be empty");
+            assert!(
+                !entry.kernel_url.is_empty(),
+                "kernel_url should not be empty"
+            );
+            assert!(
+                !entry.initrd_url.is_empty(),
+                "initrd_url should not be empty"
+            );
             assert!(entry.size_bytes > 0, "size_bytes should be > 0");
-            assert!(!entry.default_cmdline.is_empty(), "default_cmdline should not be empty");
+            assert!(
+                !entry.default_cmdline.is_empty(),
+                "default_cmdline should not be empty"
+            );
             assert_eq!(entry.status, ImageStatus::NotDownloaded);
         }
     }
