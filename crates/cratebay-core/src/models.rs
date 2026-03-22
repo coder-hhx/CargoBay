@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 /// Container information returned from Docker API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerInfo {
     pub id: String,
     pub short_id: String,
@@ -23,6 +24,7 @@ pub struct ContainerInfo {
 
 /// Port mapping between host and container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PortMapping {
     pub host_port: u16,
     pub container_port: u16,
@@ -31,6 +33,7 @@ pub struct PortMapping {
 
 /// Volume mount configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VolumeMount {
     pub host_path: String,
     pub container_path: String,
@@ -39,6 +42,7 @@ pub struct VolumeMount {
 
 /// Container filter criteria for listing.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerListFilters {
     pub status: Option<Vec<ContainerStatus>>,
     pub name: Option<String>,
@@ -48,6 +52,7 @@ pub struct ContainerListFilters {
 
 /// Request to create a new container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerCreateRequest {
     pub name: String,
     pub image: String,
@@ -65,6 +70,7 @@ pub struct ContainerCreateRequest {
 
 /// Result of a container exec command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecResult {
     pub exit_code: i64,
     pub stdout: String,
@@ -83,6 +89,7 @@ pub enum ExecStreamChunk {
 
 /// Container detail (extended info from inspect).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerDetail {
     pub info: ContainerInfo,
     pub network_settings: serde_json::Value,
@@ -92,6 +99,7 @@ pub struct ContainerDetail {
 
 /// Container state detail.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerState {
     pub status: String,
     pub running: bool,
@@ -104,6 +112,7 @@ pub struct ContainerState {
 
 /// Log retrieval options.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct LogOptions {
     pub tail: Option<u32>,
     pub since: Option<String>,
@@ -113,10 +122,21 @@ pub struct LogOptions {
 
 /// Log entry from container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LogEntry {
     pub stream: String,
     pub message: String,
     pub timestamp: Option<String>,
+}
+
+/// Docker image information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerImageInfo {
+    pub id: String,
+    pub repo_tags: Vec<String>,
+    pub size: i64,
+    pub created: i64,
 }
 
 /// Container lifecycle status.
@@ -178,6 +198,7 @@ impl ApiFormat {
 /// The `api_key` is **never** included — it is stored encrypted separately
 /// and only decrypted in-memory during an outgoing request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmProvider {
     pub id: String,
     pub name: String,
@@ -194,6 +215,7 @@ pub struct LlmProvider {
 
 /// A single chat message exchanged between frontend and Rust proxy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -223,6 +245,7 @@ pub struct ToolDefinition {
 
 /// Optional parameters for an LLM request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmOptions {
     pub model: Option<String>,
     pub temperature: Option<f32>,
@@ -254,6 +277,7 @@ pub enum LlmStreamEvent {
 
 /// Token usage statistics returned when the stream is complete.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageStats {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
@@ -283,6 +307,7 @@ pub struct LlmModelInfo {
 
 /// Summary of a conversation for list views.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConversationSummary {
     pub id: String,
     pub title: String,
@@ -294,6 +319,7 @@ pub struct ConversationSummary {
 
 /// Full conversation with all messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConversationDetail {
     pub id: String,
     pub title: String,
@@ -304,6 +330,7 @@ pub struct ConversationDetail {
 
 /// Request to save a message to a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveMessageRequest {
     pub role: String,
     pub content: String,
@@ -368,6 +395,7 @@ impl AuditAction {
 
 /// Request to create a new LLM provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmProviderCreateRequest {
     pub name: String,
     pub api_base: String,
@@ -377,6 +405,7 @@ pub struct LlmProviderCreateRequest {
 
 /// Request to update an LLM provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmProviderUpdateRequest {
     pub name: Option<String>,
     pub api_base: Option<String>,
@@ -387,6 +416,7 @@ pub struct LlmProviderUpdateRequest {
 
 /// Result from testing provider connectivity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderTestResult {
     pub success: bool,
     pub latency_ms: u64,
@@ -396,6 +426,7 @@ pub struct ProviderTestResult {
 
 /// Docker connection status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DockerStatus {
     pub connected: bool,
     pub version: Option<String>,
@@ -483,6 +514,7 @@ pub enum McpConnectionStatus {
 
 /// System-level information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     /// Operating system: "macos", "linux", "windows".
     pub os: String,
@@ -504,6 +536,7 @@ pub struct SystemInfo {
 
 /// Built-in runtime status information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeStatusInfo {
     /// Runtime state: "none", "provisioned", "starting", "ready", "stopped", "error".
     pub state: String,
@@ -520,6 +553,7 @@ pub struct RuntimeStatusInfo {
 
 /// Resource usage stats for the runtime VM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceUsage {
     pub cpu_percent: f32,
     pub memory_used_mb: u64,

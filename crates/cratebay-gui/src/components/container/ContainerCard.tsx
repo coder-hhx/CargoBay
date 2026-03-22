@@ -10,74 +10,57 @@ import {
   Trash2,
   Terminal,
   ScrollText,
-  Eye,
 } from "lucide-react";
+
+// Fixed colors that work in both light and dark mode
+const CPU_COLOR = "#7c3aed"; // purple-600
+const MEM_COLOR = "#0891b2"; // cyan-600
 
 interface ContainerCardProps {
   container: ContainerInfo;
-  onOpenTerminal?: (containerId: string) => void;
-}
-
-/**
- * SVG sparkline for resource usage trends.
- */
-function Sparkline({ data, color }: { data: number[]; color: string }) {
-  if (!data || data.length === 0) return null;
-  const max = Math.max(...data, 1);
-  const w = 60;
-  const h = 24;
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - (v / max) * h}`)
-    .join(" ");
-  return (
-    <svg className="h-6 w-full" viewBox={`0 0 ${w} ${h}`}>
-      <polyline
-        points={points}
-        stroke={color}
-        fill="none"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 /**
  * Single container card for grid view.
- * Shows name, status badge, image, ports, resource stats with progress bars and sparklines, and action buttons.
+ * Entire card is clickable to open detail panel.
+ * Uses glow shadow instead of borders, with hover animation.
  */
-export function ContainerCard({ container, onOpenTerminal }: ContainerCardProps) {
+export function ContainerCard({ container }: ContainerCardProps) {
   const { t } = useI18n();
   const startContainer = useContainerStore((s) => s.startContainer);
   const stopContainer = useContainerStore((s) => s.stopContainer);
   const deleteContainer = useContainerStore((s) => s.deleteContainer);
   const selectContainer = useContainerStore((s) => s.selectContainer);
   const isRunning = container.status === "running";
-  const isStopped = container.status === "stopped";
+  const isStopped = container.status === "stopped" || container.status === "exited";
   const isCreating = container.status === "creating";
 
-  // Mock resource percentages based on available data
-  // In production, these would come from real-time stats
-  const cpuPercent = isRunning ? Math.min(Math.round((container.cpuCores / 8) * 100), 100) : 0;
-  const memPercent = isRunning ? Math.min(Math.round((container.memoryMb / 8192) * 100), 100) : 0;
+  // Resource percentages
+  const cpuPercent = isRunning ? Math.min(Math.round(((container.cpuCores ?? 0) / 8) * 100), 100) : 0;
+  const memPercent = isRunning ? Math.min(Math.round(((container.memoryMb ?? 0) / 8192) * 100), 100) : 0;
 
-  // Mock sparkline data (in production, this would come from historical stats)
-  const cpuHistory = isRunning
-    ? Array.from({ length: 10 }, () => Math.floor(Math.random() * cpuPercent + 5))
-    : [];
-  const memHistory = isRunning
-    ? Array.from({ length: 10 }, () => Math.floor(Math.random() * memPercent + 3))
-    : [];
+  const handleCardClick = () => {
+    selectContainer(container.id);
+  };
+
+  /** Wrap action handlers to prevent card click */
+  const stop = (e: React.MouseEvent) => { e.stopPropagation(); void stopContainer(container.id); };
+  const start = (e: React.MouseEvent) => { e.stopPropagation(); void startContainer(container.id); };
+  const remove = (e: React.MouseEvent) => { e.stopPropagation(); void deleteContainer(container.id); };
+  const openDetail = (e: React.MouseEvent) => { e.stopPropagation(); selectContainer(container.id); };
 
   return (
     <div
+      onClick={isCreating ? undefined : handleCardClick}
       className={cn(
-        "rounded-xl border bg-card p-4 transition-all hover:border-primary",
-        isRunning && "border-success/30",
-        container.status === "error" && "border-destructive/30",
-        isCreating && "border-yellow-500/30",
-        isStopped && "border-border",
+        "group rounded-xl border border-transparent bg-card p-4 transition-all duration-200",
+        // Glow shadow based on status
+        isRunning && "cursor-pointer shadow-[0_0_0_1px_rgba(52,211,153,0.2),0_2px_12px_rgba(52,211,153,0.08)] hover:shadow-[0_0_0_1px_rgba(52,211,153,0.4),0_4px_20px_rgba(52,211,153,0.15)]",
+        isStopped && "cursor-pointer shadow-[0_0_0_1px_rgba(148,163,184,0.15),0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_0_0_1px_rgba(124,58,237,0.3),0_4px_20px_rgba(124,58,237,0.1)]",
+        isCreating && "animate-pulse shadow-[0_0_0_1px_rgba(124,58,237,0.3),0_2px_12px_rgba(124,58,237,0.12)]",
+        container.status === "error" && "cursor-pointer shadow-[0_0_0_1px_rgba(248,113,113,0.2),0_2px_12px_rgba(248,113,113,0.08)] hover:shadow-[0_0_0_1px_rgba(248,113,113,0.4),0_4px_20px_rgba(248,113,113,0.15)]",
+        // Hover lift (not for creating)
+        !isCreating && "hover:-translate-y-0.5",
       )}
     >
       {/* Header: name + status badge */}
@@ -107,76 +90,66 @@ export function ContainerCard({ container, onOpenTerminal }: ContainerCardProps)
         </div>
       )}
 
-      {/* Resource stats: 4-column grid */}
+      {/* Resource stats: simplified — just percentage + progress bar */}
       {isRunning && (
-        <div className="mb-3 grid grid-cols-4 gap-2">
-          {/* CPU % + bar */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground">{t("containers", "cpu")}</span>
-            <span className="text-xs font-medium text-foreground">{cpuPercent}%</span>
+        <div className="mb-3 grid grid-cols-2 gap-4">
+          {/* CPU */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">CPU</span>
+              <span className="text-xs font-semibold tabular-nums text-foreground">{cpuPercent}%</span>
+            </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{ width: `${cpuPercent}%` }}
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${cpuPercent}%`, backgroundColor: CPU_COLOR }}
               />
             </div>
           </div>
 
-          {/* Memory % + bar */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground">{t("containers", "memory")}</span>
-            <span className="text-xs font-medium text-foreground">{memPercent}%</span>
+          {/* Memory */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">MEM</span>
+              <span className="text-xs font-semibold tabular-nums text-foreground">{memPercent}%</span>
+            </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-accent transition-all"
-                style={{ width: `${memPercent}%` }}
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${memPercent}%`, backgroundColor: MEM_COLOR }}
               />
             </div>
-          </div>
-
-          {/* CPU Sparkline */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground">{t("containers", "cpu")}</span>
-            <Sparkline data={cpuHistory} color="hsl(var(--primary))" />
-          </div>
-
-          {/* Memory Sparkline */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground">{t("containers", "memory")}</span>
-            <Sparkline data={memHistory} color="hsl(var(--accent))" />
           </div>
         </div>
       )}
 
       {/* Actions */}
-      <div className="flex items-center gap-1 border-t border-border pt-3">
+      <div className="flex items-center gap-1 border-t border-border/50 pt-3">
         {isRunning ? (
           <>
             <Button
               variant="ghost"
               size="sm"
               className="h-7 gap-1 px-2 text-xs"
-              onClick={() => void stopContainer(container.id)}
+              onClick={stop}
             >
               <Square className="h-3.5 w-3.5" />
               {t("containers", "stop")}
             </Button>
-            {onOpenTerminal !== undefined && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 px-2 text-xs"
-                onClick={() => onOpenTerminal(container.id)}
-              >
-                <Terminal className="h-3.5 w-3.5" />
-                {t("containers", "terminal")}
-              </Button>
-            )}
             <Button
               variant="ghost"
               size="sm"
               className="h-7 gap-1 px-2 text-xs"
-              onClick={() => selectContainer(container.id)}
+              onClick={openDetail}
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              {t("containers", "terminal")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={openDetail}
             >
               <ScrollText className="h-3.5 w-3.5" />
               {t("containers", "logs")}
@@ -187,32 +160,22 @@ export function ContainerCard({ container, onOpenTerminal }: ContainerCardProps)
             variant="ghost"
             size="sm"
             className="h-7 gap-1 px-2 text-xs"
-            onClick={() => void startContainer(container.id)}
+            onClick={start}
           >
             <Play className="h-3.5 w-3.5" />
             {t("containers", "start")}
           </Button>
         ) : isCreating ? (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled>
-            {t("containers", "creating")}...
+            {container.shortId.startsWith("creating") ? `${t("containers", "creating")}...` : container.shortId}
           </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-2 text-xs"
-            onClick={() => selectContainer(container.id)}
-          >
-            <Eye className="h-3.5 w-3.5" />
-            {t("common", "details")}
-          </Button>
-        )}
+        ) : null}
 
         <Button
           variant="ghost"
           size="sm"
           className="ml-auto h-7 px-2 text-xs text-destructive hover:text-destructive"
-          onClick={() => void deleteContainer(container.id)}
+          onClick={remove}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
@@ -223,30 +186,53 @@ export function ContainerCard({ container, onOpenTerminal }: ContainerCardProps)
 
 function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
   const { t } = useI18n();
-  const variants: Record<typeof status, { labelKey: "running" | "stopped" | "creating" | "error"; dotClass: string; textClass: string }> = {
-    running: {
-      labelKey: "running",
-      dotClass: "bg-success",
-      textClass: "text-success",
-    },
-    stopped: {
-      labelKey: "stopped",
-      dotClass: "bg-muted-foreground",
-      textClass: "text-muted-foreground",
-    },
-    creating: {
-      labelKey: "creating",
-      dotClass: "bg-yellow-500 animate-pulse",
-      textClass: "text-yellow-500",
-    },
-    error: {
-      labelKey: "error",
-      dotClass: "bg-destructive",
-      textClass: "text-destructive",
-    },
+
+  // Map all Docker statuses to display variants
+  const getVariant = (s: string) => {
+    switch (s) {
+      case "running":
+        return {
+          label: t("containers", "running"),
+          dotClass: "bg-emerald-400 shadow-[0_0_4px_1px_rgba(52,211,153,0.5)]",
+          textClass: "text-emerald-500",
+        };
+      case "exited":
+      case "stopped":
+      case "dead":
+        return {
+          label: t("containers", "stopped"),
+          dotClass: "bg-zinc-400",
+          textClass: "text-muted-foreground",
+        };
+      case "creating":
+      case "created":
+        return {
+          label: t("containers", "creating"),
+          dotClass: "bg-yellow-400 animate-pulse shadow-[0_0_4px_1px_rgba(250,204,21,0.5)]",
+          textClass: "text-yellow-500",
+        };
+      case "paused":
+        return {
+          label: "Paused",
+          dotClass: "bg-amber-400",
+          textClass: "text-amber-500",
+        };
+      case "restarting":
+        return {
+          label: "Restarting",
+          dotClass: "bg-blue-400 animate-pulse",
+          textClass: "text-blue-500",
+        };
+      default:
+        return {
+          label: s,
+          dotClass: "bg-red-400 shadow-[0_0_4px_1px_rgba(248,113,113,0.5)]",
+          textClass: "text-red-500",
+        };
+    }
   };
 
-  const variant = variants[status];
+  const variant = getVariant(status);
 
   return (
     <Badge
@@ -257,7 +243,7 @@ function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
       )}
     >
       <span className={cn("inline-block h-1.5 w-1.5 rounded-full", variant.dotClass)} />
-      {t("containers", variant.labelKey)}
+      {variant.label}
     </Badge>
   );
 }

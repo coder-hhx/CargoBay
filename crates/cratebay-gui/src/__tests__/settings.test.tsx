@@ -24,6 +24,7 @@ describe("ReasoningEffort", () => {
         containerDefaultTtlHours: 8,
         confirmDestructiveOps: true,
         reasoningEffort: "medium",
+        registryMirrors: [],
       },
     });
   });

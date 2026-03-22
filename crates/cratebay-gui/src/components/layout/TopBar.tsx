@@ -44,9 +44,7 @@ export function TopBar() {
 
   return (
     <header className="flex flex-shrink-0 flex-col">
-      {/* Drag region for macOS overlay titlebar */}
-      <div className="h-8 flex-shrink-0" data-tauri-drag-region />
-      <div className="flex h-12 items-center gap-3 border-b border-border px-4">
+      <div className="flex items-center gap-3 border-b border-border px-4 pb-2 pt-4" data-tauri-drag-region>
       {/* Sidebar toggle */}
       <Button
         variant="ghost"

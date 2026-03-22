@@ -107,10 +107,17 @@ function LocalImagesTab() {
   const fetchImages = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<LocalImageInfo[]>("image_list");
+      const result = await Promise.race([
+        invoke<LocalImageInfo[]>("image_list"),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("镜像列表加载超时")), 8000),
+        ),
+      ]);
       setImages(result);
-    } catch {
-      // Docker not available — show empty list
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[ImagesPage] fetchImages failed:", message);
+      // Docker not available or timeout — show empty list
       setImages([]);
     } finally {
       setLoading(false);

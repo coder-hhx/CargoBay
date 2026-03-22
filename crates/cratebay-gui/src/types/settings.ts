@@ -67,4 +67,14 @@ export interface AppSettings {
   containerDefaultTtlHours: number;
   confirmDestructiveOps: boolean;
   reasoningEffort: "low" | "medium" | "high"; // Global reasoning effort preference
+  registryMirrors: string[]; // Docker registry mirror URLs
 }
+
+/**
+ * Built-in registry mirrors for China mainland users.
+ * Users can add/remove custom mirrors in settings.
+ */
+export const DEFAULT_REGISTRY_MIRRORS: string[] = [
+  "docker.1ms.run",
+  "docker.xuanyuan.me",
+];

@@ -1,72 +1,72 @@
 import { useAppStore } from "@/stores/appStore";
-import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { APP_VERSION } from "@/lib/constants";
-import { Badge } from "@/components/ui/badge";
 
 export function StatusBar() {
-  const { t } = useI18n();
   const dockerConnected = useAppStore((s) => s.dockerConnected);
   const runtimeStatus = useAppStore((s) => s.runtimeStatus);
 
-  return (
-    <footer className="flex h-7 flex-shrink-0 items-center justify-between border-t border-border bg-card px-4 text-xs text-muted-foreground">
-      {/* Left: status indicators */}
-      <div className="flex items-center gap-3">
-        {/* Docker status */}
-        <div className="flex items-center gap-1.5">
-          <span
-            className={cn(
-              "inline-block h-2 w-2 rounded-full",
-              dockerConnected ? "bg-success" : "bg-destructive",
-            )}
-          />
-          <span>{t("statusbar", "docker")} {dockerConnected ? t("common", "connected") : t("common", "disconnected")}</span>
-        </div>
+  // Derive a single unified engine status
+  const { color, label, pulse } = getEngineStatus(dockerConnected, runtimeStatus);
 
-        {/* Runtime status */}
-        <div className="flex items-center gap-1.5">
-          <RuntimeStatusBadge status={runtimeStatus} />
-        </div>
+  return (
+    <footer className="flex h-7 flex-shrink-0 items-center justify-between border-t border-border px-4 text-[11px] text-muted-foreground">
+      {/* Left: unified engine status */}
+      <div className="flex items-center gap-1.5">
+        <GlowDot color={color} pulse={pulse} />
+        <span>{label}</span>
       </div>
 
       {/* Right: version */}
-      <span>v{APP_VERSION}</span>
+      <span className="tabular-nums">v{APP_VERSION}</span>
     </footer>
   );
 }
 
-function RuntimeStatusBadge({
-  status,
-}: {
-  status: "starting" | "running" | "stopped" | "error";
-}) {
-  const { t } = useI18n();
-  const variants: Record<typeof status, { labelKey: "starting" | "running" | "stopped"; className: string }> = {
-    starting: {
-      labelKey: "starting",
-      className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500",
-    },
-    running: {
-      labelKey: "running",
-      className: "border-success/30 bg-success/10 text-success",
-    },
-    stopped: {
-      labelKey: "stopped",
-      className: "border-muted bg-muted/50 text-muted-foreground",
-    },
-    error: {
-      labelKey: "stopped",
-      className: "border-destructive/30 bg-destructive/10 text-destructive",
-    },
+/**
+ * Derive a single status from docker + runtime states.
+ */
+function getEngineStatus(
+  dockerConnected: boolean,
+  runtimeStatus: "starting" | "running" | "stopped" | "error",
+): { color: "green" | "red" | "yellow" | "gray"; label: string; pulse: boolean } {
+  if (dockerConnected && runtimeStatus === "running") {
+    return { color: "green", label: "引擎就绪", pulse: false };
+  }
+  if (runtimeStatus === "starting") {
+    return { color: "yellow", label: "启动中…", pulse: true };
+  }
+  if (runtimeStatus === "error") {
+    return { color: "red", label: "引擎异常", pulse: false };
+  }
+  if (runtimeStatus === "stopped") {
+    return { color: "gray", label: "未启动", pulse: false };
+  }
+  // runtime running but docker not connected yet
+  if (!dockerConnected) {
+    return { color: "yellow", label: "连接中…", pulse: true };
+  }
+  return { color: "gray", label: "未知", pulse: false };
+}
+
+/**
+ * Glowing dot indicator with CSS box-shadow glow effect.
+ */
+function GlowDot({ color, pulse }: { color: "green" | "red" | "yellow" | "gray"; pulse?: boolean }) {
+  const styles: Record<typeof color, string> = {
+    green: "bg-emerald-400 shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]",
+    red: "bg-red-400 shadow-[0_0_6px_2px_rgba(248,113,113,0.5)]",
+    yellow: "bg-yellow-400 shadow-[0_0_6px_2px_rgba(250,204,21,0.5)]",
+    gray: "bg-zinc-400 shadow-none",
   };
 
-  const variant = variants[status];
-  const label = status === "error" ? t("common", "error") : t("statusbar", variant.labelKey);
-
   return (
-    <Badge variant="outline" className={cn("h-4 px-1.5 text-[10px]", variant.className)}>
-      {t("statusbar", "runtimeLabel")}: {label}
-    </Badge>
+    <span
+      className={cn(
+        "inline-block h-2 w-2 rounded-full",
+        styles[color],
+        pulse && "animate-pulse",
+      )}
+    />
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useContainerStore, type ContainerCreateRequest } from "@/stores/containerStore";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -20,24 +20,82 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus } from "lucide-react";
+import { Plus, ChevronDown, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+/**
+ * Format bytes to human-readable size string.
+ */
+function formatSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 export function ContainerCreate() {
   const { t } = useI18n();
   const createContainer = useContainerStore((s) => s.createContainer);
   const templates = useContainerStore((s) => s.templates);
+  const images = useContainerStore((s) => s.images);
+  const imagesLoading = useContainerStore((s) => s.imagesLoading);
+  const fetchImages = useContainerStore((s) => s.fetchImages);
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
+  const [imageDropdownOpen, setImageDropdownOpen] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const [cpuCores, setCpuCores] = useState(2);
   const [memoryMb, setMemoryMb] = useState(2048);
-  const [creating, setCreating] = useState(false);
+
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Fetch images when dialog opens
+  useEffect(() => {
+    if (open) {
+      fetchImages();
+    }
+  }, [open, fetchImages]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        imageInputRef.current &&
+        !imageInputRef.current.contains(event.target as Node)
+      ) {
+        setImageDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Flatten all image tags into a flat list and filter by search
+  const imageOptions = useMemo(() => {
+    const allTags: { tag: string; size: number }[] = [];
+    for (const img of images) {
+      for (const tag of img.repoTags) {
+        if (tag && tag !== "<none>:<none>") {
+          allTags.push({ tag, size: img.size });
+        }
+      }
+    }
+    // Sort: exact prefix match first, then alphabetical
+    const query = image.trim().toLowerCase();
+    if (query.length === 0) return allTags;
+    return allTags.filter(
+      (item) => item.tag.toLowerCase().includes(query),
+    );
+  }, [images, image]);
 
   const resetForm = useCallback(() => {
     setName("");
     setImage("");
+    setImageDropdownOpen(false);
     setTemplateId("");
     setCpuCores(2);
     setMemoryMb(2048);
@@ -60,23 +118,20 @@ export function ContainerCreate() {
 
   const canCreate = image.trim().length > 0;
 
-  const handleCreate = useCallback(async () => {
+  const handleCreate = useCallback(() => {
     if (!canCreate) return;
-    setCreating(true);
-    try {
-      const req: ContainerCreateRequest = {
-        templateId: templateId || "custom",
-        name: name.trim() || undefined,
-        image: image.trim(),
-        cpuCores,
-        memoryMb,
-      };
-      await createContainer(req);
-      resetForm();
-      setOpen(false);
-    } finally {
-      setCreating(false);
-    }
+    const trimmedName = name.trim();
+    const req: ContainerCreateRequest = {
+      name: trimmedName || `cratebay-${Date.now().toString(36)}`,
+      image: image.trim(),
+      templateId: templateId || undefined,
+      cpuCores,
+      memoryMb,
+    };
+    // Fire-and-forget: close dialog immediately, store handles optimistic update
+    void createContainer(req);
+    resetForm();
+    setOpen(false);
   }, [canCreate, templateId, name, image, cpuCores, memoryMb, createContainer, resetForm]);
 
   return (
@@ -126,15 +181,78 @@ export function ContainerCreate() {
             />
           </div>
 
-          {/* Image */}
+          {/* Image — searchable dropdown with local images */}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="container-image">{t("containers", "image")}</Label>
-            <Input
-              id="container-image"
-              value={image}
-              onChange={(e) => setImage(e.target.value)}
-              placeholder={selectedTemplate?.image ?? "ubuntu:latest"}
-            />
+            <div className="relative">
+              <Input
+                ref={imageInputRef}
+                id="container-image"
+                value={image}
+                onChange={(e) => {
+                  setImage(e.target.value);
+                  setImageDropdownOpen(true);
+                }}
+                onFocus={() => setImageDropdownOpen(true)}
+                placeholder={selectedTemplate?.image ?? "ubuntu:latest"}
+                className="pr-8"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setImageDropdownOpen(!imageDropdownOpen);
+                  imageInputRef.current?.focus();
+                }}
+              >
+                {imagesLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+
+              {/* Dropdown list */}
+              {imageDropdownOpen && imageOptions.length > 0 && (
+                <div
+                  ref={dropdownRef}
+                  className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+                >
+                  {imageOptions.map((item) => (
+                    <button
+                      key={item.tag}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground",
+                        image === item.tag && "bg-accent/50",
+                      )}
+                      onClick={() => {
+                        setImage(item.tag);
+                        setImageDropdownOpen(false);
+                      }}
+                    >
+                      <span className="truncate font-mono text-xs">{item.tag}</span>
+                      <span className="ml-2 flex-shrink-0 text-xs text-muted-foreground">
+                        {formatSize(item.size)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Empty state */}
+              {imageDropdownOpen && imageOptions.length === 0 && !imagesLoading && image.trim().length > 0 && (
+                <div
+                  ref={dropdownRef}
+                  className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-3 shadow-md"
+                >
+                  <p className="text-xs text-muted-foreground">
+                    本地无匹配镜像，创建时将自动拉取 <span className="font-mono font-medium text-foreground">{image.trim()}</span>
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Resources */}
@@ -169,8 +287,8 @@ export function ContainerCreate() {
           <Button variant="outline" onClick={() => setOpen(false)}>
             {t("common", "cancel")}
           </Button>
-          <Button onClick={handleCreate} disabled={!canCreate || creating}>
-            {creating ? `${t("containers", "creating")}...` : t("containers", "create")}
+          <Button onClick={handleCreate} disabled={!canCreate}>
+            {t("containers", "create")}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,14 +1,17 @@
 import { create } from "zustand";
-import { invoke } from "@/lib/tauri";
+import { invoke, listen } from "@/lib/tauri";
+import { useAppStore } from "@/stores/appStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import type {
   ContainerInfo,
   ContainerCreateRequest,
   ContainerTemplate,
   ContainerFilter,
+  DockerImageInfo,
 } from "@/types/container";
 
 // Re-export types for backward compatibility
-export type { ContainerInfo, ContainerCreateRequest, ContainerTemplate };
+export type { ContainerInfo, ContainerCreateRequest, ContainerTemplate, DockerImageInfo };
 
 interface ContainerState {
   // Container list
@@ -16,6 +19,12 @@ interface ContainerState {
   loading: boolean;
   error: string | null;
   fetchContainers: () => Promise<void>;
+  _fetchAbortController: AbortController | null;
+
+  // Docker images
+  images: DockerImageInfo[];
+  imagesLoading: boolean;
+  fetchImages: () => Promise<void>;
 
   // Selection
   selectedContainerId: string | null;
@@ -39,21 +48,61 @@ interface ContainerState {
   filteredContainers: () => ContainerInfo[];
 }
 
-let mockIdCounter = 0;
-
 export const useContainerStore = create<ContainerState>()((set, get) => ({
   containers: [],
   loading: false,
   error: null,
+  _fetchAbortController: null,
 
   fetchContainers: async () => {
-    set({ loading: true, error: null });
+    // Cancel previous request if still in progress
+    const prevController = get()._fetchAbortController;
+    if (prevController) {
+      prevController.abort();
+    }
+
+    // Create new abort controller for this request
+    const controller = new AbortController();
+    set({ _fetchAbortController: controller, loading: true, error: null });
+
     try {
-      const containers = await invoke<ContainerInfo[]>("container_list");
-      set({ containers, loading: false });
-    } catch {
-      // Mock data for non-Tauri development
-      set({ loading: false });
+      // Timeout protection: 8 seconds max
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        8000,
+      );
+
+      const result = await invoke<ContainerInfo[]>("container_list");
+      clearTimeout(timeoutId);
+
+      if (!controller.signal.aborted) {
+        // Merge with any "creating" placeholders that haven't been replaced yet
+        const placeholders = get().containers.filter((c) => c.id.startsWith("__creating_"));
+        set({ containers: [...result, ...placeholders], loading: false, _fetchAbortController: null });
+      }
+    } catch (err) {
+      if (controller.signal.aborted) {
+        console.warn("[containerStore] fetchContainers aborted");
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[containerStore] fetchContainers failed:", message);
+      }
+      // On failure, keep existing containers visible, just stop loading
+      set({ loading: false, _fetchAbortController: null });
+    }
+  },
+
+  images: [],
+  imagesLoading: false,
+  fetchImages: async () => {
+    set({ imagesLoading: true });
+    try {
+      const images = await invoke<DockerImageInfo[]>("image_list");
+      set({ images, imagesLoading: false });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[containerStore] fetchImages failed:", message);
+      set({ imagesLoading: false });
     }
   },
 
@@ -61,65 +110,212 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
   selectContainer: (id) => set({ selectedContainerId: id }),
 
   createContainer: async (req) => {
+    // Optimistic update: add a placeholder card immediately
+    const placeholderId = `__creating_${Date.now()}`;
+    const placeholder: ContainerInfo = {
+      id: placeholderId,
+      shortId: "creating...",
+      name: req.name,
+      image: req.image,
+      status: "creating",
+      state: "creating",
+      createdAt: new Date().toISOString(),
+      ports: [],
+      labels: {},
+      cpuCores: req.cpuCores,
+      memoryMb: req.memoryMb,
+    };
+    set((state) => ({ containers: [...state.containers, placeholder], error: null }));
+
+    const notify = useAppStore.getState().addNotification;
+
+    // Helper to update placeholder status text
+    const updatePlaceholder = (statusText: string) => {
+      set((state) => ({
+        containers: state.containers.map((c) =>
+          c.id === placeholderId ? { ...c, shortId: statusText } : c,
+        ),
+      }));
+    };
+
     try {
-      const container = await invoke<ContainerInfo>("container_create", { req });
-      set((state) => ({ containers: [...state.containers, container] }));
+      // Step 1: Check if image exists locally
+      let needsPull = false;
+      try {
+        const images = await invoke<DockerImageInfo[]>("image_list");
+        const imageTag = req.image;
+        needsPull = !images.some((img) =>
+          img.repoTags.some((tag) => tag === imageTag),
+        );
+      } catch {
+        // If image_list fails, try to create directly
+        needsPull = false;
+      }
+
+      // Step 2: Pull image if needed (non-blocking backend, event-driven)
+      if (needsPull) {
+        const mirrors = useSettingsStore.getState().settings.registryMirrors;
+        const hasMirrors = mirrors.length > 0;
+        const pullChannelId = `pull-${Date.now()}`;
+
+        updatePlaceholder("正在拉取镜像...");
+        notify({
+          type: "info",
+          title: `正在拉取镜像 ${req.image}`,
+          message: hasMirrors
+            ? `使用镜像加速源拉取，共 ${mirrors.length} 个源...`
+            : "首次使用此镜像需要下载，请稍候...",
+          dismissable: true,
+        });
+
+        // image_pull now returns immediately (spawns background task)
+        // Returns the channel_id string
+        await invoke<string>("image_pull", {
+          image: req.image,
+          mirrors: hasMirrors ? mirrors : null,
+          channel_id: pullChannelId,
+        });
+
+        // Wait for pull completion via event
+        const pullResult = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+          let unlistenFn: (() => void) | null = null;
+
+          // 120-second overall timeout for pull
+          const timeoutId = setTimeout(() => {
+            unlistenFn?.();
+            resolve({ success: false, error: "镜像拉取超时（120秒）" });
+          }, 120000);
+
+          void listen<{
+            status: string;
+            progress_percent: number;
+            complete: boolean;
+            error?: string | null;
+          }>(`image:pull:${pullChannelId}`, (progress) => {
+            // Update placeholder with real-time status
+            if (!progress.complete) {
+              const pct = progress.progress_percent;
+              const statusMsg = pct > 0 ? `拉取中 ${pct}%` : progress.status || "拉取中...";
+              updatePlaceholder(statusMsg);
+            }
+
+            if (progress.complete) {
+              clearTimeout(timeoutId);
+              unlistenFn?.();
+              if (progress.error) {
+                resolve({ success: false, error: progress.error });
+              } else {
+                resolve({ success: true });
+              }
+            }
+          }).then((unsub) => {
+            unlistenFn = unsub;
+          });
+        });
+
+        if (!pullResult.success) {
+          // Pull failed — remove placeholder
+          set((state) => ({
+            containers: state.containers.filter((c) => c.id !== placeholderId),
+            error: pullResult.error || "镜像拉取失败",
+          }));
+          notify({
+            type: "error",
+            title: "镜像拉取失败",
+            message: pullResult.error || "未知错误",
+            dismissable: true,
+          });
+          throw new Error(pullResult.error || "镜像拉取失败");
+        }
+
+        notify({
+          type: "success",
+          title: `镜像 ${req.image} 拉取完成`,
+          dismissable: true,
+        });
+      }
+
+      // Step 3: Create container (image already available)
+      updatePlaceholder("正在创建容器...");
+      const container = await invoke<ContainerInfo>("container_create", { request: req });
+      // Replace placeholder with real container
+      set((state) => ({
+        containers: state.containers.map((c) =>
+          c.id === placeholderId ? container : c,
+        ),
+      }));
+
+      // Check if auto-start succeeded
+      if (container.state === "created" || container.status === "created") {
+        // Container was created but auto-start failed (e.g. invalid CMD for the image)
+        notify({
+          type: "warning",
+          title: `容器 ${req.name} 已创建`,
+          message: "容器创建成功但未能自动启动，可能是镜像不支持默认命令。请尝试手动启动。",
+          dismissable: true,
+        });
+      } else {
+        notify({
+          type: "success",
+          title: `容器 ${req.name} 创建成功`,
+          dismissable: true,
+        });
+      }
       return container;
-    } catch {
-      // Mock for non-Tauri development
-      const container: ContainerInfo = {
-        id: `mock-${++mockIdCounter}-${Date.now()}`,
-        shortId: `mock-${mockIdCounter}`.slice(0, 12),
-        name: req.name ?? `container-${mockIdCounter}`,
-        templateId: req.templateId,
-        image: req.image ?? "ubuntu:latest",
-        status: "running",
-        createdAt: new Date().toISOString(),
-        cpuCores: req.cpuCores ?? 2,
-        memoryMb: req.memoryMb ?? 2048,
-        ports: [],
-      };
-      set((state) => ({ containers: [...state.containers, container] }));
-      return container;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[containerStore] createContainer failed:", message);
+      // Remove the placeholder on failure
+      set((state) => ({
+        containers: state.containers.filter((c) => c.id !== placeholderId),
+        error: message,
+      }));
+      notify({
+        type: "error",
+        title: "容器创建失败",
+        message,
+        dismissable: true,
+      });
+      throw err;
     }
   },
 
   startContainer: async (id) => {
     try {
       await invoke("container_start", { id });
-    } catch {
-      // Mock
+      // Refresh from backend to get real status
+      await get().fetchContainers();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[containerStore] startContainer failed:", message);
+      set({ error: message });
     }
-    set((state) => ({
-      containers: state.containers.map((c) =>
-        c.id === id ? { ...c, status: "running" as const } : c,
-      ),
-    }));
   },
 
   stopContainer: async (id) => {
     try {
       await invoke("container_stop", { id });
-    } catch {
-      // Mock
+      // Refresh from backend to get real status
+      await get().fetchContainers();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[containerStore] stopContainer failed:", message);
+      set({ error: message });
     }
-    set((state) => ({
-      containers: state.containers.map((c) =>
-        c.id === id ? { ...c, status: "stopped" as const } : c,
-      ),
-    }));
   },
 
   deleteContainer: async (id) => {
     try {
       await invoke("container_delete", { id });
-    } catch {
-      // Mock
+      set((state) => ({
+        containers: state.containers.filter((c) => c.id !== id),
+        selectedContainerId: state.selectedContainerId === id ? null : state.selectedContainerId,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[containerStore] deleteContainer failed:", message);
+      set({ error: message });
     }
-    set((state) => ({
-      containers: state.containers.filter((c) => c.id !== id),
-      selectedContainerId: state.selectedContainerId === id ? null : state.selectedContainerId,
-    }));
   },
 
   templates: [],
@@ -127,16 +323,18 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
     try {
       const templates = await invoke<ContainerTemplate[]>("container_templates");
       set({ templates });
-    } catch {
-      // Mock templates
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[containerStore] fetchTemplates failed:", message);
+      // Provide built-in templates as fallback (these are part of the app, not mock)
       set({
         templates: [
           {
             id: "node-dev",
             name: "Node.js Dev",
             description: "Node.js development environment",
-            image: "node:20-slim",
-            defaultCommand: "bash",
+            image: "node:20-alpine",
+            defaultCommand: "sh",
             defaultCpuCores: 2,
             defaultMemoryMb: 2048,
             tags: ["node", "javascript"],
@@ -174,7 +372,7 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
     const { containers, filter } = get();
     return containers.filter((c) => {
       if (filter.status !== "all" && c.status !== filter.status) return false;
-      if (filter.templateId !== null && c.templateId !== filter.templateId) return false;
+      if (filter.templateId !== null && c.labels?.["com.cratebay.template_id"] !== filter.templateId) return false;
       if (
         filter.search.length > 0 &&
         !c.name.toLowerCase().includes(filter.search.toLowerCase()) &&

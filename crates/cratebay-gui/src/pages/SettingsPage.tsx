@@ -27,6 +27,9 @@ import {
   Package,
   Play,
   Square,
+  Plus,
+  X,
+  RotateCcw,
 } from "lucide-react";
 
 export function SettingsPage() {
@@ -111,11 +114,13 @@ function GeneralTab() {
           onValueChange={(v) => void updateSettings({ language: v as "en" | "zh-CN" })}
         >
           <SelectTrigger className="w-48">
-            <SelectValue />
+            <SelectValue>
+              {settings.language === "zh-CN" ? "简体中文" : "English"}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="en">{t("settings", "english")}</SelectItem>
-            <SelectItem value="zh-CN">{t("settings", "simplifiedChinese")}</SelectItem>
+            <SelectItem value="en">English</SelectItem>
+            <SelectItem value="zh-CN">简体中文</SelectItem>
           </SelectContent>
         </Select>
       </SettingRow>
@@ -500,6 +505,126 @@ function RuntimeTab() {
           </span>
         </div>
       </SettingRow>
+
+      {/* Registry Mirrors */}
+      <div className="mt-6 border-t border-border pt-4">
+        <RegistryMirrorsSection />
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Registry Mirrors Section ---------- */
+
+function RegistryMirrorsSection() {
+  const settings = useSettingsStore((s) => s.settings);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
+  const [newMirror, setNewMirror] = useState("");
+
+  const mirrors = settings.registryMirrors;
+
+  const addMirror = () => {
+    const trimmed = newMirror.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!trimmed || mirrors.includes(trimmed)) {
+      setNewMirror("");
+      return;
+    }
+    void updateSettings({ registryMirrors: [...mirrors, trimmed] });
+    setNewMirror("");
+  };
+
+  const removeMirror = (index: number) => {
+    const updated = mirrors.filter((_, i) => i !== index);
+    void updateSettings({ registryMirrors: updated });
+  };
+
+  const resetToDefaults = () => {
+    // Dynamic import to get DEFAULT_REGISTRY_MIRRORS
+    import("@/types/settings").then(({ DEFAULT_REGISTRY_MIRRORS }) => {
+      void updateSettings({ registryMirrors: [...DEFAULT_REGISTRY_MIRRORS] });
+    });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addMirror();
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-foreground">Docker 镜像加速源</h3>
+          <p className="text-xs text-muted-foreground">
+            配置镜像源加速 Docker 镜像拉取，按顺序依次尝试
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="gap-1.5 text-xs"
+          onClick={resetToDefaults}
+        >
+          <RotateCcw size={12} />
+          恢复默认
+        </Button>
+      </div>
+
+      {/* Mirror list */}
+      <div className="flex flex-col gap-1.5">
+        {mirrors.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border py-4 text-center text-xs text-muted-foreground">
+            未配置镜像加速源，将直接从 Docker Hub 拉取
+          </div>
+        ) : (
+          mirrors.map((mirror, index) => (
+            <div
+              key={`${mirror}-${index}`}
+              className="group flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-muted-foreground w-5">
+                  {index + 1}.
+                </span>
+                <span className="text-sm font-mono text-foreground">{mirror}</span>
+              </div>
+              <button
+                onClick={() => removeMirror(index)}
+                className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive transition-all"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Add new mirror */}
+      <div className="flex gap-2">
+        <Input
+          value={newMirror}
+          onChange={(e) => setNewMirror(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="输入镜像源地址，如 mirror.example.com"
+          className="flex-1 text-sm font-mono"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={addMirror}
+          disabled={!newMirror.trim()}
+          className="gap-1.5"
+        >
+          <Plus size={14} />
+          添加
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        拉取镜像时会按上述顺序尝试加速源，全部失败后回退到 Docker Hub 直连
+      </p>
     </div>
   );
 }

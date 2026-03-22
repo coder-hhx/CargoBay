@@ -8,6 +8,7 @@ import type {
   LlmModelInfo,
   AppSettings,
 } from "@/types/settings";
+import { DEFAULT_REGISTRY_MIRRORS } from "@/types/settings";
 
 // Re-export types for backward compatibility
 export type {
@@ -65,6 +66,7 @@ const defaultSettings: AppSettings = {
   containerDefaultTtlHours: 8,
   confirmDestructiveOps: true,
   reasoningEffort: "medium",
+  registryMirrors: DEFAULT_REGISTRY_MIRRORS,
 };
 
 let providerIdCounter = 0;
@@ -242,15 +244,21 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       const keys: (keyof AppSettings)[] = [
         "language", "theme", "sendOnEnter", "showAgentThinking",
         "maxConversationHistory", "containerDefaultTtlHours",
-        "confirmDestructiveOps", "reasoningEffort",
+        "confirmDestructiveOps", "reasoningEffort", "registryMirrors",
       ];
       const fetched: Partial<AppSettings> = {};
       for (const key of keys) {
         const value = await invoke<string | null>("settings_get", { key });
-        if (value !== null && value !== undefined) {
+          if (value !== null && value !== undefined) {
           // Parse booleans and numbers back from string storage
           if (value === "true" || value === "false") {
             (fetched as Record<string, unknown>)[key] = value === "true";
+          } else if (key === "registryMirrors") {
+            try {
+              (fetched as Record<string, unknown>)[key] = JSON.parse(value);
+            } catch {
+              // Invalid JSON, keep default
+            }
           } else if (!isNaN(Number(value)) && key !== "language" && key !== "theme" && key !== "reasoningEffort") {
             (fetched as Record<string, unknown>)[key] = Number(value);
           } else {
@@ -270,7 +278,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     try {
       // settings_update takes (key, value) pairs, so we update each changed key
       for (const [key, value] of Object.entries(patch)) {
-        await invoke("settings_update", { key, value: String(value) });
+        const serialized = Array.isArray(value) ? JSON.stringify(value) : String(value);
+        await invoke("settings_update", { key, value: serialized });
       }
     } catch {
       // Mock for non-Tauri development

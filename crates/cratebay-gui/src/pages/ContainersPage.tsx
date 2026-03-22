@@ -42,18 +42,27 @@ export function ContainersPage() {
     () => ({
       all: containers.length,
       running: containers.filter((c) => c.status === "running").length,
-      stopped: containers.filter((c) => c.status === "stopped").length,
-      creating: containers.filter((c) => c.status === "creating").length,
+      stopped: containers.filter((c) => c.status === "stopped" || c.status === "exited" || c.status === "dead").length,
+      creating: containers.filter((c) => c.status === "creating" || c.status === "created").length,
     }),
     [containers],
   );
 
-  // Filtered containers (supporting "creating" status in chips)
+  // Filtered containers
   const filteredContainers = useMemo(() => {
     const statusFilter = filter.status as FilterStatus;
     return containers.filter((c) => {
-      if (statusFilter !== "all" && c.status !== statusFilter) return false;
-      if (filter.templateId !== null && c.templateId !== filter.templateId) return false;
+      // Status filter
+      if (statusFilter !== "all") {
+        if (statusFilter === "stopped") {
+          if (c.status !== "stopped" && c.status !== "exited" && c.status !== "dead") return false;
+        } else if (statusFilter === "creating") {
+          if (c.status !== "creating" && c.status !== "created") return false;
+        } else if (c.status !== statusFilter) {
+          return false;
+        }
+      }
+      if (filter.templateId !== null && c.labels?.["com.cratebay.template_id"] !== filter.templateId) return false;
       if (
         filter.search.length > 0 &&
         !c.name.toLowerCase().includes(filter.search.toLowerCase()) &&
@@ -65,7 +74,6 @@ export function ContainersPage() {
     });
   }, [containers, filter]);
 
-  // Allow "creating" as extended filter via chip click
   const currentChipFilter: FilterStatus =
     (filter.status as FilterStatus) in FILTER_LABEL_KEYS
       ? (filter.status as FilterStatus)
@@ -76,8 +84,8 @@ export function ContainersPage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header — stats + actions (no h1, TopBar already shows page title) */}
+    <div className="relative flex h-full flex-col overflow-hidden">
+      {/* Header — stats + actions */}
       <div className="flex items-center justify-between px-6 py-3">
         <p className="text-xs text-muted-foreground">
           {containers.length} {t("containers", "containerCount")} &middot; {counts.running} {t("containers", "running")}
@@ -157,7 +165,7 @@ export function ContainersPage() {
       <div className="flex-1 overflow-auto px-6 py-4">
         {viewMode === "table" ? (
           <ContainerList />
-        ) : loading ? (
+        ) : loading && filteredContainers.length === 0 ? (
           <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
             {t("containers", "loadingContainers")}
           </div>
@@ -178,7 +186,7 @@ export function ContainersPage() {
         )}
       </div>
 
-      {/* Detail dialog */}
+      {/* Detail slide panel — positioned within the content area */}
       <ContainerDetail />
     </div>
   );

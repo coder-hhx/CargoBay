@@ -11,27 +11,28 @@ export interface ContainerInfo {
   id: string;
   shortId: string;
   name: string;
-  templateId: string;
   image: string;
-  status: "running" | "stopped" | "creating" | "error";
+  status: "running" | "stopped" | "creating" | "exited" | "paused" | "restarting" | "removing" | "dead" | "created";
+  state: string;
   createdAt: string;
-  cpuCores: number;
-  memoryMb: number;
+  cpuCores?: number;
+  memoryMb?: number;
   ports: PortMapping[];
+  labels: Record<string, string>;
 }
 
 /**
  * Request payload for creating a new container.
  */
 export interface ContainerCreateRequest {
-  templateId: string;
-  name?: string;
-  image?: string;
+  name: string;
+  image: string;
+  templateId?: string;
   command?: string;
-  env?: Record<string, string>;
+  env?: string[];
   cpuCores?: number;
   memoryMb?: number;
-  ttlHours?: number;
+  autoStart?: boolean;
 }
 
 /**
@@ -73,6 +74,16 @@ export interface ContainerStatusEvent {
   containerId: string;
   status: "running" | "stopped" | "error";
   message?: string;
+}
+
+/**
+ * Docker image information from local Docker daemon.
+ */
+export interface DockerImageInfo {
+  id: string;
+  repoTags: string[];
+  size: number;
+  created: number;
 }
 
 /**

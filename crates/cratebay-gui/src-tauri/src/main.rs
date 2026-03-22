@@ -396,6 +396,8 @@ fn main() {
             commands::container::container_exec_stream,
             commands::container::container_logs,
             commands::container::container_inspect,
+            commands::container::image_list,
+            commands::container::image_pull,
             // LLM
             commands::llm::llm_proxy_stream,
             commands::llm::llm_proxy_cancel,

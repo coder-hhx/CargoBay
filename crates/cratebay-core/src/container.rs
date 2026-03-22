@@ -7,6 +7,7 @@ use bollard::container::{
     RemoveContainerOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
+use bollard::image::ListImagesOptions;
 use bollard::Docker;
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -14,7 +15,8 @@ use std::collections::HashMap;
 use crate::error::AppError;
 use crate::models::{
     ContainerCreateRequest, ContainerDetail, ContainerInfo, ContainerListFilters, ContainerState,
-    ContainerStatus, ExecResult, ExecStreamChunk, LogEntry, LogOptions, PortMapping,
+    ContainerStatus, DockerImageInfo, ExecResult, ExecStreamChunk, LogEntry, LogOptions,
+    PortMapping,
 };
 
 /// List all containers, optionally filtered.
@@ -136,6 +138,9 @@ pub async fn list(
 }
 
 /// Create a new container from a request.
+///
+/// Assumes the image is already available locally. The caller (Tauri command)
+/// is responsible for pulling the image before calling this function.
 pub async fn create(
     docker: &Docker,
     request: ContainerCreateRequest,
@@ -157,14 +162,19 @@ pub async fn create(
 
     let config = Config {
         image: Some(request.image.clone()),
-        cmd: request
-            .command
-            .as_ref()
-            .map(|c| vec!["/bin/sh".to_string(), "-c".to_string(), c.clone()]),
+        cmd: Some(
+            request
+                .command
+                .as_ref()
+                .map(|c| vec!["/bin/sh".to_string(), "-c".to_string(), c.clone()])
+                .unwrap_or_else(|| vec!["/bin/sh".to_string()]),
+        ),
         env: request.env.clone(),
         host_config: Some(host_config),
         labels: Some(labels),
         working_dir: request.working_dir.clone(),
+        tty: Some(true),
+        open_stdin: Some(true),
         ..Default::default()
     };
 
@@ -176,8 +186,17 @@ pub async fn create(
     let response = docker.create_container(Some(options), config).await?;
 
     // Auto-start if requested (default: true)
+    // If start fails (e.g. OCI shim error for images without /bin/sh),
+    // the container is still created — return it with "created" status
+    // rather than failing the entire operation.
     if request.auto_start.unwrap_or(true) {
-        docker.start_container::<String>(&response.id, None).await?;
+        if let Err(e) = docker.start_container::<String>(&response.id, None).await {
+            tracing::warn!(
+                "Container {} created but auto-start failed: {}. Container remains in 'created' state.",
+                response.id,
+                e
+            );
+        }
     }
 
     inspect(docker, &response.id)
@@ -450,4 +469,236 @@ pub async fn logs(
     }
 
     Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// Docker Image operations
+// ---------------------------------------------------------------------------
+
+/// List local Docker images.
+pub async fn image_list(docker: &Docker) -> Result<Vec<DockerImageInfo>, AppError> {
+    let options = ListImagesOptions::<String> {
+        all: false,
+        ..Default::default()
+    };
+
+    let images = docker.list_images(Some(options)).await?;
+
+    let results = images
+        .into_iter()
+        .map(|img| {
+            let id = img.id.clone();
+            let short_id = id
+                .strip_prefix("sha256:")
+                .unwrap_or(&id)
+                .chars()
+                .take(12)
+                .collect::<String>();
+            DockerImageInfo {
+                id: short_id,
+                repo_tags: img.repo_tags,
+                size: img.size,
+                created: img.created,
+            }
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Progress callback for image pull operations.
+pub type PullProgressCallback = Box<dyn Fn(PullProgress) + Send + 'static>;
+
+/// Pull progress info.
+#[derive(Debug, Clone)]
+pub struct PullProgress {
+    pub status: String,
+    pub progress_detail: Option<String>,
+    pub current_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// Pull a Docker image by name (e.g. "node:20-alpine").
+///
+/// If `mirror` is provided, rewrites Docker Hub images to use the mirror registry.
+/// Each pull attempt has a 30-second timeout to prevent infinite blocking.
+///
+/// The optional `on_progress` callback receives real-time layer download progress.
+pub async fn image_pull(
+    docker: &Docker,
+    image: &str,
+    mirror: Option<&str>,
+    on_progress: Option<PullProgressCallback>,
+) -> Result<(), AppError> {
+    use bollard::image::CreateImageOptions;
+
+    let pull_image = match mirror {
+        Some(m) if !m.is_empty() => rewrite_image_for_mirror(image, m),
+        _ => image.to_string(),
+    };
+
+    tracing::info!("Pulling image: {} (original: {})", pull_image, image);
+
+    let options = Some(CreateImageOptions {
+        from_image: pull_image.as_str(),
+        ..Default::default()
+    });
+
+    let mut stream = docker.create_image(options, None, None);
+    let mut last_progress_time = std::time::Instant::now();
+
+    // 60-second overall timeout for the pull stream
+    let pull_timeout = std::time::Duration::from_secs(60);
+    let start = std::time::Instant::now();
+
+    loop {
+        // Check overall timeout
+        if start.elapsed() > pull_timeout {
+            return Err(AppError::Runtime(format!(
+                "Image pull timed out after {}s for '{}'",
+                pull_timeout.as_secs(),
+                pull_image
+            )));
+        }
+
+        // Wait for next stream item with per-chunk timeout (15s)
+        let chunk_timeout =
+            tokio::time::timeout(std::time::Duration::from_secs(15), stream.next()).await;
+
+        match chunk_timeout {
+            Ok(Some(Ok(info))) => {
+                // Report progress
+                if let Some(ref cb) = on_progress {
+                    let status = info.status.unwrap_or_default();
+                    let progress = info.progress.unwrap_or_default();
+                    let (current, total) = match info.progress_detail {
+                        Some(detail) => (
+                            detail.current.unwrap_or(0) as u64,
+                            detail.total.unwrap_or(0) as u64,
+                        ),
+                        None => (0, 0),
+                    };
+
+                    // Throttle progress callbacks to max once per 500ms
+                    if last_progress_time.elapsed() > std::time::Duration::from_millis(500)
+                        || total > 0
+                    {
+                        cb(PullProgress {
+                            status,
+                            progress_detail: if progress.is_empty() {
+                                None
+                            } else {
+                                Some(progress)
+                            },
+                            current_bytes: current,
+                            total_bytes: total,
+                        });
+                        last_progress_time = std::time::Instant::now();
+                    }
+                }
+            }
+            Ok(Some(Err(e))) => {
+                return Err(e.into());
+            }
+            Ok(None) => {
+                // Stream finished successfully
+                break;
+            }
+            Err(_) => {
+                // Per-chunk timeout: no data in 15 seconds
+                return Err(AppError::Runtime(format!(
+                    "Image pull stalled (no data for 15s) for '{}'",
+                    pull_image
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Pull an image, trying a list of mirrors in order, falling back to direct pull.
+///
+/// Returns Ok(()) on the first successful pull. If all mirrors fail, attempts
+/// a direct pull as final fallback.
+pub async fn image_pull_with_mirrors(
+    docker: &Docker,
+    image: &str,
+    mirrors: &[String],
+    on_progress: Option<PullProgressCallback>,
+) -> Result<(), AppError> {
+    // Try each mirror in order
+    for (i, mirror) in mirrors.iter().enumerate() {
+        tracing::info!(
+            "Trying mirror {}/{}: '{}' for image '{}'",
+            i + 1,
+            mirrors.len(),
+            mirror,
+            image
+        );
+
+        // For mirrors, we don't pass the progress callback since it might be a transient attempt
+        match image_pull(docker, image, Some(mirror), None).await {
+            Ok(()) => {
+                tracing::info!("Successfully pulled '{}' via mirror '{}'", image, mirror);
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!("Mirror '{}' failed for '{}': {}", mirror, image, e);
+                continue;
+            }
+        }
+    }
+
+    // Fallback: direct pull without mirror (with progress callback)
+    tracing::info!("All mirrors failed, attempting direct pull for '{}'", image);
+    image_pull(docker, image, None, on_progress).await
+}
+
+/// Rewrite a Docker Hub image reference to use a mirror registry.
+///
+/// Rules:
+/// - "node:20-alpine" → "{mirror}/library/node:20-alpine" (official image)
+/// - "library/node:20-alpine" → "{mirror}/library/node:20-alpine"
+/// - "myuser/myapp:latest" → "{mirror}/myuser/myapp:latest"
+/// - "gcr.io/project/image:tag" → unchanged (non-Docker-Hub, has explicit registry)
+fn rewrite_image_for_mirror(image: &str, mirror: &str) -> String {
+    let mirror = mirror.trim_end_matches('/');
+
+    // Check if image has an explicit registry (contains '.' or ':' before the first '/')
+    // Examples with registry: "gcr.io/foo/bar", "registry.example.com:5000/foo"
+    // Examples without: "node:20", "library/node:20", "myuser/myapp:latest"
+    if let Some(first_slash_pos) = image.find('/') {
+        let before_slash = &image[..first_slash_pos];
+        if before_slash.contains('.') || before_slash.contains(':') {
+            // Has explicit registry — don't rewrite
+            return image.to_string();
+        }
+        // Has a namespace (e.g., "myuser/myapp:latest") — rewrite with namespace
+        format!("{}/{}", mirror, image)
+    } else {
+        // Simple image name like "node:20-alpine" — add "library/" prefix
+        format!("{}/library/{}", mirror, image)
+    }
+}
+
+/// Check if a Docker image exists locally.
+pub async fn image_exists(docker: &Docker, image: &str) -> Result<bool, AppError> {
+    match docker.inspect_image(image).await {
+        Ok(_) => Ok(true),
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Ensure image exists locally, pulling if necessary.
+pub async fn ensure_image(docker: &Docker, image: &str) -> Result<(), AppError> {
+    if !image_exists(docker, image).await? {
+        tracing::info!("Image '{}' not found locally, pulling...", image);
+        image_pull(docker, image, None, None).await?;
+        tracing::info!("Image '{}' pulled successfully", image);
+    }
+    Ok(())
 }

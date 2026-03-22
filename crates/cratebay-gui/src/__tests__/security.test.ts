@@ -55,6 +55,7 @@ describe("API Key Security", () => {
         containerDefaultTtlHours: 8,
         confirmDestructiveOps: true,
         reasoningEffort: "medium",
+        registryMirrors: [],
       },
     });
   });

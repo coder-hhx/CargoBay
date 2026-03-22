@@ -3,6 +3,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Hide WebView/Tauri default unhandled rejection error banner */
+.script-error-overlay,
+[data-tauri-error],
+div[style*="background: #ff0000"],
+div[style*="background:#ff0000"],
+div[style*="background: red"],
+div[style*="background:red"],
+div[style*="background-color: #ff0000"],
+div[style*="background-color:#ff0000"],
+div[style*="background-color: red"],
+div[style*="background-color:red"] {
+  display: none !important;
+}
+
 @font-face {
   font-family: 'Geist Sans';
   src: url('./assets/fonts/GeistSans-Variable.woff2') format('woff2-variations');

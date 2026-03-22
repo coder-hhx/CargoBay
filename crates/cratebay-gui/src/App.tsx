@@ -5,6 +5,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { useMcpStore } from "@/stores/mcpStore";
 import { invoke, listen } from "@/lib/tauri";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ToastContainer } from "@/components/common/Toast";
 import { ChatPage } from "@/pages/ChatPage";
 import { ContainersPage } from "@/pages/ContainersPage";
 import { McpPage } from "@/pages/McpPage";
@@ -69,22 +70,58 @@ function mapRuntimeState(state: string | Record<string, string>): "starting" | "
 /**
  * Query Docker and Runtime status on startup.
  * Updates appStore with initial values.
+ * Both commands have 5-second timeout to prevent UI from hanging.
  */
 async function initRuntimeStatus() {
+  let dockerOk = false;
+
+  // 5-second timeout for docker_status
   try {
-    const dockerStatus = await invoke<DockerStatusResponse>("docker_status");
-    useAppStore.getState().setDockerConnected(dockerStatus.connected);
+    const dockerStatus = await Promise.race([
+      invoke<DockerStatusResponse>("docker_status"),
+      new Promise<DockerStatusResponse>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Docker status check timeout")),
+          5000,
+        ),
+      ),
+    ]);
+    dockerOk = dockerStatus.connected;
+    useAppStore.getState().setDockerConnected(dockerOk);
   } catch {
-    // Docker status command unavailable — keep default (disconnected)
+    // Docker status check failed or timed out — default to disconnected
+    useAppStore.getState().setDockerConnected(false);
   }
 
+  // 5-second timeout for runtime_status
   try {
-    const rtStatus = await invoke<RuntimeStatusResponse>("runtime_status");
-    useAppStore.getState().setRuntimeStatus(mapRuntimeState(rtStatus.state));
-    // Also update docker connection from runtime's docker_responsive check
-    useAppStore.getState().setDockerConnected(rtStatus.docker_responsive);
+    const rtStatus = await Promise.race([
+      invoke<RuntimeStatusResponse>("runtime_status"),
+      new Promise<RuntimeStatusResponse>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Runtime status check timeout")),
+          5000,
+        ),
+      ),
+    ]);
+
+    // If Docker is connected and responsive, force status to "running"
+    // regardless of what runtime_status thinks (avoids "starting" flicker)
+    if (dockerOk || rtStatus.docker_responsive) {
+      useAppStore.getState().setRuntimeStatus("running");
+      useAppStore.getState().setDockerConnected(true);
+    } else {
+      useAppStore.getState().setRuntimeStatus(mapRuntimeState(rtStatus.state));
+      useAppStore.getState().setDockerConnected(rtStatus.docker_responsive);
+    }
   } catch {
-    // Runtime status command unavailable — keep default (stopped)
+    // Runtime status check failed or timed out
+    // If Docker was already confirmed connected, set running anyway
+    if (dockerOk) {
+      useAppStore.getState().setRuntimeStatus("running");
+    } else {
+      useAppStore.getState().setRuntimeStatus("stopped");
+    }
   }
 }
 
@@ -162,13 +199,16 @@ function App() {
   }, [theme]);
 
   return (
-    <AppLayout>
-      {currentPage === "chat" && <ChatPage />}
-      {currentPage === "containers" && <ContainersPage />}
-      {currentPage === "images" && <ImagesPage />}
-      {currentPage === "mcp" && <McpPage />}
-      {currentPage === "settings" && <SettingsPage />}
-    </AppLayout>
+    <>
+      <AppLayout>
+        {currentPage === "chat" && <ChatPage />}
+        {currentPage === "containers" && <ContainersPage />}
+        {currentPage === "images" && <ImagesPage />}
+        {currentPage === "mcp" && <McpPage />}
+        {currentPage === "settings" && <SettingsPage />}
+      </AppLayout>
+      <ToastContainer />
+    </>
   );
 }
 
