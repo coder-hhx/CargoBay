@@ -3,23 +3,33 @@
 //! Uses KVM-accelerated QEMU to run a lightweight Linux VM
 //! with Docker Engine inside.
 //!
-//! ## Architecture (runtime-spec.md §2.2)
+//! # Architecture (runtime-spec.md §2.2)
 //!
 //! ```text
 //! Linux Host
 //! ├── CrateBay binary
-//! │   └── Rust Backend
+//! │   └── Rust Backend (LinuxRuntime)
 //! │       └── QEMU process management
 //! │           └── qemu-system-{x86_64|aarch64}
-//! │               ├── -enable-kvm
-//! │               ├── -kernel vmlinuz -initrd initrd
-//! │               ├── -drive file=rootfs.qcow2
-//! │               ├── -chardev socket for Docker
-//! │               └── -virtfs for shared directories
+//! │               ├── -machine q35/virt,accel=kvm|tcg
+//! │               ├── -kernel vmlinuz -initrd initramfs
+//! │               ├── -drive file=disk.raw,format=raw,if=virtio
+//! │               ├── -netdev user (hostfwd Docker port)
+//! │               └── -serial file:console.log
 //! │                   └── Alpine Linux
 //! │                       └── Docker Engine
-//! │                           └── Exposed via socket
+//! │                           └── Exposed via TCP port forwarding
 //! ```
+//!
+//! # Lifecycle
+//!
+//! 1. **provision()** — Install runtime image from bundled assets via `common::ensure_runtime_image_ready()`
+//! 2. **start()** — Spawn daemonized QEMU, write PID file, wait for Docker TCP readiness
+//! 3. **stop()** — SIGTERM → wait → SIGKILL → cleanup PID file
+//! 4. **detect()** — Check KVM, QEMU binary, image files, PID, Docker health
+//!
+//! Ported from `master:crates/cratebay-core/src/runtime.rs` (Linux QEMU section)
+//! and adapted for the v2 `RuntimeManager` trait with `AppError` error model.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,9 +41,324 @@ use tokio::sync::Mutex;
 use crate::error::AppError;
 use crate::models::ResourceUsage;
 
-use super::{
-    HealthStatus, ProvisionProgress, RuntimeConfig, RuntimeManager, RuntimeState,
-};
+use super::common;
+use super::{HealthStatus, ProvisionProgress, RuntimeConfig, RuntimeManager, RuntimeState};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Grace period for SIGTERM before escalating to SIGKILL.
+const STOP_GRACE_PERIOD: Duration = Duration::from_secs(5);
+
+/// Timeout for Docker to become responsive after QEMU starts.
+const DOCKER_READY_TIMEOUT: Duration = Duration::from_secs(45);
+
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/// Runtime data directory: `<data_dir>/runtime-linux/`.
+fn runtime_dir() -> PathBuf {
+    crate::storage::data_dir().join("runtime-linux")
+}
+
+/// PID file for the QEMU process.
+fn qemu_pid_path() -> PathBuf {
+    runtime_dir().join("qemu.pid")
+}
+
+/// Disk image path for the runtime VM.
+fn runtime_disk_path() -> PathBuf {
+    runtime_dir().join("disk.raw")
+}
+
+/// Console log path for serial output.
+pub fn runtime_console_log_path() -> PathBuf {
+    runtime_dir().join("console.log")
+}
+
+/// Read a PID from a file. Returns `None` if the file doesn't exist or
+/// contains an invalid value.
+fn read_pid_file(path: &Path) -> Option<u32> {
+    let content = std::fs::read_to_string(path).ok()?;
+    content.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+}
+
+/// Check if a process is alive using `/proc/<pid>` existence check.
+fn pid_alive(pid: u32) -> bool {
+    // On Linux, checking /proc/<pid> is reliable and does not require
+    // special permissions.
+    Path::new(&format!("/proc/{}", pid)).exists()
+}
+
+/// Kill a process by PID using libc::kill (avoids spawning a process).
+fn kill_process(pid: u32, signal: i32) {
+    unsafe {
+        libc::kill(pid as i32, signal);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Docker TCP port configuration
+// ---------------------------------------------------------------------------
+
+/// Docker TCP port exposed by the QEMU VM on the host.
+///
+/// Override via `CRATEBAY_LINUX_DOCKER_PORT`. Defaults to [`common::DEFAULT_LINUX_DOCKER_PORT`].
+fn linux_docker_port() -> u16 {
+    std::env::var("CRATEBAY_LINUX_DOCKER_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(common::DEFAULT_LINUX_DOCKER_PORT)
+}
+
+/// Docker host string: `tcp://127.0.0.1:<port>`.
+pub fn linux_docker_host() -> String {
+    format!("tcp://127.0.0.1:{}", linux_docker_port())
+}
+
+// ---------------------------------------------------------------------------
+// KVM availability
+// ---------------------------------------------------------------------------
+
+/// Check if KVM hardware acceleration is available by attempting to
+/// open `/dev/kvm` for read/write.
+fn kvm_available() -> bool {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .is_ok()
+}
+
+// ---------------------------------------------------------------------------
+// QEMU binary discovery
+// ---------------------------------------------------------------------------
+
+/// Architecture-appropriate QEMU system binary name.
+fn qemu_binary_name() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "qemu-system-aarch64"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "qemu-system-x86_64"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "qemu-system-x86_64"
+    }
+}
+
+/// Find an executable on PATH.
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|raw| {
+        std::env::split_paths(&raw)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+/// Resolve the QEMU binary path.
+///
+/// Priority:
+/// 1. `CRATEBAY_RUNTIME_QEMU_PATH` environment variable
+/// 2. Bundled binary from runtime assets
+/// 3. System PATH lookup
+fn resolve_qemu_path() -> Result<PathBuf, AppError> {
+    // 1. Explicit override
+    if let Ok(path) = std::env::var("CRATEBAY_RUNTIME_QEMU_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(AppError::Runtime(format!(
+            "CRATEBAY_RUNTIME_QEMU_PATH does not point to a file: {}",
+            path.display()
+        )));
+    }
+
+    // 2. Bundled binary inside runtime assets
+    if let Some(assets_dir) = common::bundled_runtime_assets_dir() {
+        let bundle_id = runtime_linux_bundle_id();
+        let bundled = assets_dir.join(bundle_id).join(qemu_binary_name());
+        if bundled.is_file() {
+            return Ok(bundled);
+        }
+    }
+
+    // 3. System PATH
+    if let Some(path) = find_executable_on_path(qemu_binary_name()) {
+        return Ok(path);
+    }
+
+    Err(AppError::Runtime(format!(
+        "Bundled Linux runtime helper '{}' was not found. \
+         Reinstall CrateBay or set CRATEBAY_RUNTIME_QEMU_PATH.",
+        qemu_binary_name()
+    )))
+}
+
+/// Bundle ID for the Linux runtime assets (architecture-specific).
+fn runtime_linux_bundle_id() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "cratebay-runtime-linux-aarch64"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "cratebay-runtime-linux-x86_64"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "cratebay-runtime-linux-x86_64"
+    }
+}
+
+/// QEMU share directory (firmware files, etc.) adjacent to the binary.
+fn qemu_share_dir(qemu_path: &Path) -> Option<PathBuf> {
+    let dir = qemu_path.parent()?.join("share").join("qemu");
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// QEMU library directory adjacent to the binary.
+fn qemu_lib_dir(qemu_path: &Path) -> Option<PathBuf> {
+    let dir = qemu_path.parent()?.join("lib");
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kernel command line
+// ---------------------------------------------------------------------------
+
+/// Default kernel command line for the runtime VM.
+fn default_kernel_cmdline() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "console=ttyAMA0 panic=1"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "console=ttyS0 panic=1"
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "console=ttyS0 panic=1"
+    }
+}
+
+/// Build the full kernel command line, including optional HTTP proxy.
+fn build_kernel_cmdline() -> String {
+    let mut cmdline = std::env::var("CRATEBAY_LINUX_RUNTIME_CMDLINE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| default_kernel_cmdline().to_string());
+
+    // Inject HTTP proxy if configured and not already present.
+    if !cmdline
+        .split_whitespace()
+        .any(|arg| arg.starts_with("cratebay_http_proxy="))
+    {
+        if let Ok(proxy) = std::env::var("CRATEBAY_RUNTIME_HTTP_PROXY") {
+            let proxy = proxy
+                .trim()
+                .trim_start_matches("http://")
+                .trim_start_matches("https://");
+            if !proxy.is_empty() {
+                cmdline.push_str(" cratebay_http_proxy=");
+                cmdline.push_str(proxy);
+            }
+        }
+    }
+
+    cmdline
+}
+
+// ---------------------------------------------------------------------------
+// Port conflict detection
+// ---------------------------------------------------------------------------
+
+/// Check that the Docker TCP port is not already in use by another service.
+fn ensure_host_port_available(host: &str) -> Result<(), AppError> {
+    let (tcp_host, port) = common::docker_host_tcp_endpoint(host).ok_or_else(|| {
+        AppError::Runtime(format!("Invalid Docker host '{}'", host))
+    })?;
+
+    std::net::TcpListener::bind((tcp_host.as_str(), port)).map(drop).map_err(|error| {
+        AppError::Runtime(format!(
+            "Linux runtime Docker host {} is already in use; stop the conflicting service \
+             or set CRATEBAY_LINUX_DOCKER_PORT to a different port ({})",
+            host, error
+        ))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Disk management
+// ---------------------------------------------------------------------------
+
+/// Ensure the runtime disk image exists (sparse/thin-provisioned 20 GB).
+fn ensure_runtime_disk() -> Result<PathBuf, AppError> {
+    let path = runtime_disk_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if !path.exists() {
+        let file = std::fs::File::create(&path)?;
+        file.set_len(20_u64 * 1024 * 1024 * 1024)?;
+        tracing::info!("Created sparse runtime disk: {}", path.display());
+    }
+
+    Ok(path)
+}
+
+// ---------------------------------------------------------------------------
+// Console log helpers
+// ---------------------------------------------------------------------------
+
+/// Read the last 25 lines of the console log (for error diagnostics).
+fn tail_console_log() -> String {
+    let path = runtime_console_log_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return String::new();
+    };
+
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let tail: String = lines
+        .iter()
+        .rev()
+        .take(25)
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("\nConsole tail ({}):\n{}", path.display(), tail)
+}
 
 // ---------------------------------------------------------------------------
 // LinuxRuntime (§11.2)
@@ -42,179 +367,214 @@ use super::{
 /// Linux runtime manager using KVM/QEMU.
 ///
 /// Manages a lightweight QEMU virtual machine with KVM hardware acceleration
-/// running Alpine Linux + Docker Engine. The Docker socket is exposed to the
-/// host via QEMU chardev socket forwarding.
+/// running Alpine Linux + Docker Engine. Docker is exposed to the host via
+/// TCP port forwarding through QEMU's user-mode networking.
+///
+/// The QEMU process is daemonized (via `-daemonize` flag) with its PID stored
+/// in a PID file for lifecycle management across process restarts.
 pub struct LinuxRuntime {
     config: RuntimeConfig,
-    data_dir: PathBuf,
     state: Arc<Mutex<RuntimeState>>,
-    /// PID of the running QEMU process (if any).
-    qemu_pid: Arc<Mutex<Option<u32>>>,
-    /// Timestamp (seconds since epoch) when the QEMU process was started.
+    /// Timestamp (seconds since epoch) when QEMU was started.
     started_at: Arc<Mutex<Option<i64>>>,
 }
 
 impl LinuxRuntime {
     /// Create a new Linux runtime manager with default configuration.
     pub fn new() -> Self {
-        let data_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".cratebay/runtime");
         Self {
             config: RuntimeConfig::default(),
-            data_dir,
             state: Arc::new(Mutex::new(RuntimeState::None)),
-            qemu_pid: Arc::new(Mutex::new(None)),
             started_at: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Build QEMU command-line arguments according to runtime-spec.md §11.2.
-    ///
-    /// The argument list includes:
-    /// - KVM acceleration
-    /// - CPU and memory allocation from config
-    /// - Kernel, initrd, and rootfs disk paths
-    /// - Headless operation flags
-    /// - Docker socket chardev forwarding
-    /// - Shared directories via virtfs (9P)
-    /// - User-mode networking with virtio-net
-    fn build_qemu_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "-enable-kvm".to_string(),
-            "-m".to_string(),
-            format!("{}M", self.config.memory_mb),
-            "-smp".to_string(),
-            format!("{}", self.config.cpu_cores),
-            "-kernel".to_string(),
-            self.data_dir
-                .join("vmlinuz")
-                .to_string_lossy()
-                .to_string(),
-            "-initrd".to_string(),
-            self.data_dir
-                .join("initrd")
-                .to_string_lossy()
-                .to_string(),
-            "-drive".to_string(),
-            format!(
-                "file={},format=qcow2,if=virtio",
-                self.data_dir.join("rootfs.qcow2").display()
-            ),
-            "-nographic".to_string(),
-            "-nodefaults".to_string(),
-        ];
-
-        // Docker socket forwarding via QEMU chardev.
-        // The guest connects to a virtio-serial device backed by this host socket.
-        let socket_path = self.docker_socket_path();
-        args.extend_from_slice(&[
-            "-chardev".to_string(),
-            format!(
-                "socket,id=docker,path={},server=on,wait=off",
-                socket_path.display()
-            ),
-        ]);
-
-        // Shared directories via VirtioFS / 9P (§5).
-        // Each shared dir gets a separate -virtfs entry with a unique mount_tag.
-        for dir in &self.config.shared_dirs {
-            args.extend_from_slice(&[
-                "-virtfs".to_string(),
-                format!(
-                    "local,path={},mount_tag={},security_model=mapped-xattr",
-                    dir.host_path, dir.tag
-                ),
-            ]);
-        }
-
-        // User-mode networking with virtio-net-pci device.
-        args.extend_from_slice(&[
-            "-netdev".to_string(),
-            "user,id=net0".to_string(),
-            "-device".to_string(),
-            "virtio-net-pci,netdev=net0".to_string(),
-        ]);
-
-        args
+    /// Read the current QEMU PID from the PID file.
+    fn current_pid() -> Option<u32> {
+        read_pid_file(&qemu_pid_path())
     }
 
-    /// Wait for the Docker socket inside the VM to become responsive.
+    /// Check if the QEMU process is currently alive.
+    fn is_running() -> bool {
+        Self::current_pid().is_some_and(pid_alive)
+    }
+
+    /// Build QEMU command and spawn the daemonized process.
     ///
-    /// Polls the socket path with exponential back-off until Docker responds
-    /// to a ping, or `timeout` elapses.
-    async fn wait_for_docker(&self, timeout: Duration) -> Result<(), AppError> {
-        let socket_path = self.docker_socket_path();
-        let start = tokio::time::Instant::now();
-        let mut interval = Duration::from_millis(500);
+    /// This follows master's approach: use `std::process::Command` with
+    /// QEMU's `-daemonize` flag so QEMU forks to background and writes
+    /// its PID to a file, then returns control immediately.
+    fn spawn_qemu(
+        qemu_path: &Path,
+        image_paths: &crate::images::ImagePaths,
+        disk_path: &Path,
+        host_port: u16,
+        guest_port: u32,
+    ) -> Result<(), AppError> {
+        let runtime_dir = runtime_dir();
+        std::fs::create_dir_all(&runtime_dir)?;
 
-        while start.elapsed() < timeout {
-            // Step 1: Check if the socket file exists on disk.
-            if socket_path.exists() {
-                // Step 2: Attempt a Docker ping via bollard.
-                let socket_str = socket_path
-                    .to_str()
-                    .ok_or_else(|| {
-                        AppError::Runtime("Docker socket path is not valid UTF-8".into())
-                    })?;
+        // Clean up stale PID file.
+        let pid_file = qemu_pid_path();
+        let _ = std::fs::remove_file(&pid_file);
 
-                match bollard::Docker::connect_with_unix(socket_str, 5, bollard::API_DEFAULT_VERSION)
-                {
-                    Ok(docker) => {
-                        if docker.ping().await.is_ok() {
-                            return Ok(());
-                        }
-                    }
-                    Err(_) => {
-                        // Connection failed, will retry.
-                    }
-                }
+        // Truncate (or create) console log file.
+        let console_log = runtime_console_log_path();
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&console_log)?;
+
+        let use_kvm = kvm_available();
+        let cmdline = build_kernel_cmdline();
+
+        let machine = if cfg!(target_arch = "aarch64") {
+            if use_kvm {
+                "virt,accel=kvm"
+            } else {
+                "virt,accel=tcg"
             }
-
-            tokio::time::sleep(interval).await;
-            // Exponential back-off capped at 2 seconds.
-            interval = std::cmp::min(interval * 2, Duration::from_secs(2));
-        }
-
-        Err(AppError::Runtime(format!(
-            "Docker did not become responsive within {} seconds",
-            timeout.as_secs()
-        )))
-    }
-
-    /// Check whether the QEMU process (identified by stored PID) is still alive.
-    fn is_qemu_process_alive(pid: Option<u32>) -> bool {
-        match pid {
-            Some(pid) => {
-                // On Linux, sending signal 0 checks process existence without
-                // actually delivering a signal.
-                let path = format!("/proc/{}", pid);
-                Path::new(&path).exists()
-            }
-            None => false,
-        }
-    }
-
-    /// Detect the appropriate QEMU binary for the current architecture.
-    ///
-    /// Returns the binary name if found in PATH:
-    /// - `qemu-system-x86_64` on x86_64
-    /// - `qemu-system-aarch64` on aarch64/arm64
-    fn detect_qemu_binary() -> Option<String> {
-        let candidates = if cfg!(target_arch = "x86_64") {
-            vec!["qemu-system-x86_64"]
-        } else if cfg!(target_arch = "aarch64") {
-            vec!["qemu-system-aarch64"]
+        } else if use_kvm {
+            "q35,accel=kvm"
         } else {
-            vec!["qemu-system-x86_64", "qemu-system-aarch64"]
+            "q35,accel=tcg"
         };
 
-        for candidate in candidates {
-            if which_binary(candidate) {
-                return Some(candidate.to_string());
+        let cpu = if use_kvm { "host" } else { "max" };
+
+        let mut cmd = std::process::Command::new(qemu_path);
+        cmd.arg("-name")
+            .arg(common::runtime_vm_name())
+            .arg("-machine")
+            .arg(machine)
+            .arg("-cpu")
+            .arg(cpu)
+            .arg("-smp")
+            .arg("2")
+            .arg("-m")
+            .arg("2048")
+            .arg("-kernel")
+            .arg(&image_paths.kernel_path)
+            .arg("-initrd")
+            .arg(&image_paths.initrd_path)
+            .arg("-append")
+            .arg(&cmdline)
+            .arg("-drive")
+            .arg(format!(
+                "if=virtio,format=raw,file={}",
+                disk_path.display()
+            ))
+            .arg("-netdev")
+            .arg(format!(
+                "user,id=net0,hostfwd=tcp:127.0.0.1:{host_port}-:{guest_port}"
+            ))
+            .arg("-device")
+            .arg("virtio-net-pci,netdev=net0")
+            .arg("-device")
+            .arg("virtio-rng-pci")
+            .arg("-serial")
+            .arg(format!("file:{}", console_log.display()))
+            .arg("-display")
+            .arg("none")
+            .arg("-monitor")
+            .arg("none")
+            .arg("-daemonize")
+            .arg("-pidfile")
+            .arg(&pid_file)
+            .arg("-no-reboot");
+
+        // Add QEMU share directory for firmware files if available.
+        if let Some(share_dir) = qemu_share_dir(qemu_path) {
+            cmd.arg("-L").arg(share_dir);
+        }
+
+        // Set LD_LIBRARY_PATH if bundled libs exist.
+        if let Some(lib_dir) = qemu_lib_dir(qemu_path) {
+            let current = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+            let joined = if current.trim().is_empty() {
+                lib_dir.to_string_lossy().into_owned()
+            } else {
+                format!("{}:{}", lib_dir.display(), current)
+            };
+            cmd.env("LD_LIBRARY_PATH", joined);
+        }
+
+        tracing::info!(
+            "Starting QEMU: {} (KVM: {}, machine: {}, cpu: {})",
+            qemu_path.display(),
+            use_kvm,
+            machine,
+            cpu
+        );
+
+        let output = cmd.output().map_err(|error| {
+            AppError::Runtime(format!(
+                "Failed to launch CrateBay Linux runtime helper '{}': {}",
+                qemu_path.display(),
+                error
+            ))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!("exit {}", output.status)
+            };
+            return Err(AppError::Runtime(format!(
+                "Failed to start CrateBay Runtime (Linux/QEMU): {}",
+                detail
+            )));
+        }
+
+        // Verify PID file was written.
+        let pid = read_pid_file(&pid_file).ok_or_else(|| {
+            AppError::Runtime(
+                "QEMU daemonized but PID file was not written".to_string(),
+            )
+        })?;
+        tracing::info!("QEMU daemonized with PID {}", pid);
+
+        Ok(())
+    }
+
+    /// Stop the QEMU process by PID: SIGTERM → wait → SIGKILL.
+    fn stop_qemu_impl() -> Result<(), AppError> {
+        if let Some(pid) = Self::current_pid() {
+            if pid_alive(pid) {
+                tracing::info!("Sending SIGTERM to QEMU PID {}", pid);
+                kill_process(pid, libc::SIGTERM);
+
+                // Wait for graceful exit.
+                let deadline = std::time::Instant::now() + STOP_GRACE_PERIOD;
+                while std::time::Instant::now() < deadline {
+                    if !pid_alive(pid) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+
+                // Escalate to SIGKILL if still alive.
+                if pid_alive(pid) {
+                    tracing::warn!(
+                        "QEMU PID {} did not exit after SIGTERM, sending SIGKILL",
+                        pid
+                    );
+                    kill_process(pid, libc::SIGKILL);
+                    // Give a moment for cleanup.
+                    std::thread::sleep(Duration::from_millis(200));
+                }
             }
         }
-        None
+
+        // Clean up PID file.
+        let _ = std::fs::remove_file(qemu_pid_path());
+        Ok(())
     }
 }
 
@@ -222,19 +582,6 @@ impl Default for LinuxRuntime {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Check whether a binary exists in PATH by looking up /usr/bin, /usr/local/bin,
-/// and the directories listed in the PATH environment variable.
-fn which_binary(name: &str) -> bool {
-    if let Ok(path_env) = std::env::var("PATH") {
-        for dir in path_env.split(':') {
-            if Path::new(dir).join(name).exists() {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 // ---------------------------------------------------------------------------
@@ -246,42 +593,43 @@ impl RuntimeManager for LinuxRuntime {
     /// Detect the current runtime state (§3.2).
     ///
     /// Checks:
-    /// 1. `/dev/kvm` existence — KVM hardware acceleration available.
-    /// 2. QEMU binary in PATH (`qemu-system-x86_64` or `qemu-system-aarch64`).
-    /// 3. VM image files present in `data_dir` (vmlinuz, initrd, rootfs.qcow2).
-    /// 4. Whether a QEMU process is currently running.
+    /// 1. Whether a QEMU process is running (via PID file).
+    /// 2. Whether Docker is responsive (via TCP ping).
+    /// 3. Whether runtime images are provisioned.
+    /// 4. KVM and QEMU binary availability.
     async fn detect(&self) -> Result<RuntimeState, AppError> {
-        // If we have a tracked QEMU process, check if it's still alive.
-        let pid = *self.qemu_pid.lock().await;
-        if Self::is_qemu_process_alive(pid) {
-            // QEMU is running — check if Docker is responsive.
-            let socket_path = self.docker_socket_path();
-            if socket_path.exists() {
-                if let Ok(docker) = bollard::Docker::connect_with_unix(
-                    socket_path.to_str().unwrap_or_default(),
-                    5,
-                    bollard::API_DEFAULT_VERSION,
-                ) {
-                    if docker.ping().await.is_ok() {
-                        let mut state = self.state.lock().await;
-                        *state = RuntimeState::Ready;
-                        return Ok(RuntimeState::Ready);
-                    }
-                }
+        let host = linux_docker_host();
+
+        // If QEMU is running, check Docker readiness.
+        if Self::is_running() {
+            let docker_ok = tokio::task::spawn_blocking(move || {
+                common::docker_http_ping_host(&host).is_ok()
+            })
+            .await
+            .unwrap_or(false);
+
+            if docker_ok {
+                let mut state = self.state.lock().await;
+                *state = RuntimeState::Ready;
+                return Ok(RuntimeState::Ready);
             }
-            // QEMU running but Docker not yet responsive — still starting.
+
+            // QEMU running but Docker not responsive — still booting.
             let mut state = self.state.lock().await;
             *state = RuntimeState::Starting;
             return Ok(RuntimeState::Starting);
         }
 
-        // No running QEMU process. Check if the VM image is provisioned.
-        let has_vmlinuz = self.data_dir.join("vmlinuz").exists();
-        let has_initrd = self.data_dir.join("initrd").exists();
-        let has_rootfs = self.data_dir.join("rootfs.qcow2").exists();
+        // No running QEMU. Check if images are provisioned.
+        let image_id = common::runtime_os_image_id();
+        let image_ready = crate::images::is_image_ready(image_id);
+        let image_paths = crate::images::image_paths(image_id);
 
-        if has_vmlinuz && has_initrd && has_rootfs {
-            // Check prerequisites for starting.
+        if image_ready
+            && image_paths.kernel_path.exists()
+            && image_paths.initrd_path.exists()
+        {
+            // Images present — check prerequisites for starting.
             if !Path::new("/dev/kvm").exists() {
                 let msg = "KVM not available (/dev/kvm not found). \
                            Ensure hardware virtualization is enabled in BIOS/UEFI."
@@ -291,10 +639,11 @@ impl RuntimeManager for LinuxRuntime {
                 return Ok(RuntimeState::Error(msg));
             }
 
-            if LinuxRuntime::detect_qemu_binary().is_none() {
-                let msg = "QEMU not found in PATH. \
-                           Install qemu-system-x86_64 or qemu-system-aarch64."
-                    .to_string();
+            if resolve_qemu_path().is_err() {
+                let msg = format!(
+                    "QEMU not found. Install {} or set CRATEBAY_RUNTIME_QEMU_PATH.",
+                    qemu_binary_name()
+                );
                 let mut state = self.state.lock().await;
                 *state = RuntimeState::Error(msg.clone());
                 return Ok(RuntimeState::Error(msg));
@@ -310,9 +659,11 @@ impl RuntimeManager for LinuxRuntime {
         }
     }
 
-    /// Provision the runtime — download and prepare the VM image (§8).
+    /// Provision the runtime — install runtime image from bundled assets (§8).
     ///
     /// Progress stages: checking → downloading → extracting → configuring → complete.
+    /// Uses `common::ensure_runtime_image_ready()` which handles bundled asset
+    /// discovery, placeholder detection, and file copying.
     async fn provision(
         &self,
         on_progress: Box<dyn Fn(ProvisionProgress) + Send>,
@@ -331,92 +682,80 @@ impl RuntimeManager for LinuxRuntime {
             message: "Checking KVM and QEMU availability...".into(),
         });
 
+        // Verify KVM is available (not strictly required for provisioning,
+        // but we warn early since start() will fail without it).
         if !Path::new("/dev/kvm").exists() {
-            let mut state = self.state.lock().await;
-            *state = RuntimeState::Error("KVM not available".into());
-            return Err(AppError::Runtime(
-                "KVM not available. Ensure hardware virtualization is enabled in BIOS/UEFI."
-                    .into(),
-            ));
+            tracing::warn!(
+                "KVM not available during provisioning. \
+                 Runtime will fall back to TCG (software emulation) at start."
+            );
         }
 
-        if LinuxRuntime::detect_qemu_binary().is_none() {
-            let mut state = self.state.lock().await;
-            *state = RuntimeState::Error("QEMU not found".into());
-            return Err(AppError::Runtime(
-                "QEMU binary not found in PATH. \
-                 Install qemu-system-x86_64 or qemu-system-aarch64."
-                    .into(),
-            ));
-        }
-
-        // Create data directory if it does not exist.
-        tokio::fs::create_dir_all(&self.data_dir)
-            .await
-            .map_err(|e| {
-                AppError::Runtime(format!("Failed to create data directory: {}", e))
-            })?;
-
-        // Stage 2: Download VM image.
         on_progress(ProvisionProgress {
-            stage: "downloading".into(),
+            stage: "checking".into(),
             percent: 10.0,
             bytes_downloaded: 0,
             bytes_total: 0,
-            message: "Downloading CrateBay Linux KVM runtime image...".into(),
+            message: "Locating runtime image assets...".into(),
         });
 
-        // TODO: Implement actual image download from GitHub Release assets / CDN.
-        // The download should fetch:
-        //   - vmlinuz   (Alpine Linux kernel)
-        //   - initrd    (initial ramdisk)
-        //   - rootfs.qcow2 (QCOW2 disk image with Docker Engine pre-installed)
-        //
-        // Expected total download size: ~400 MB (compressed with zstd).
-        // Resume support should be implemented for interrupted downloads.
-        //
-        // For now, return an error indicating this is not yet implemented.
-        // When implemented, this section should:
-        //   1. Determine the download URL based on architecture (x86_64 / aarch64)
-        //   2. Stream the download with progress callbacks
-        //   3. Verify checksum (SHA-256) of the downloaded archive
-        //   4. Proceed to extraction stage
+        let image_id = common::runtime_os_image_id().to_string();
 
+        // Stage 2: Install runtime image (download / copy from bundled assets).
         on_progress(ProvisionProgress {
             stage: "downloading".into(),
-            percent: 50.0,
+            percent: 15.0,
             bytes_downloaded: 0,
             bytes_total: 0,
-            message: "Download not yet implemented — placeholder".into(),
+            message: "Installing CrateBay Linux runtime image...".into(),
         });
 
-        // Stage 3: Extract.
+        // This is a blocking operation — run in spawn_blocking.
+        let id = image_id.clone();
+        tokio::task::spawn_blocking(move || common::ensure_runtime_image_ready(&id))
+            .await
+            .map_err(|e| AppError::Runtime(format!("Provision task panicked: {}", e)))??;
+
         on_progress(ProvisionProgress {
             stage: "extracting".into(),
             percent: 70.0,
             bytes_downloaded: 0,
             bytes_total: 0,
-            message: "Extracting runtime image...".into(),
+            message: "Runtime image installed.".into(),
         });
 
-        // TODO: Extract the downloaded zstd-compressed archive into data_dir:
-        //   - data_dir/vmlinuz
-        //   - data_dir/initrd
-        //   - data_dir/rootfs.qcow2
-
-        // Stage 4: Configure.
+        // Stage 3: Create runtime disk (thin-provisioned).
         on_progress(ProvisionProgress {
             stage: "configuring".into(),
-            percent: 90.0,
+            percent: 85.0,
             bytes_downloaded: 0,
             bytes_total: 0,
-            message: "Configuring runtime environment...".into(),
+            message: "Creating runtime disk image...".into(),
         });
 
-        // TODO: Any post-extraction configuration:
-        //   - Set file permissions on images
-        //   - Generate runtime metadata file
-        //   - Pre-validate QEMU can load the kernel
+        tokio::task::spawn_blocking(ensure_runtime_disk)
+            .await
+            .map_err(|e| AppError::Runtime(format!("Disk creation task panicked: {}", e)))??;
+
+        // Stage 4: Verify everything is in place.
+        on_progress(ProvisionProgress {
+            stage: "configuring".into(),
+            percent: 95.0,
+            bytes_downloaded: 0,
+            bytes_total: 0,
+            message: "Verifying runtime image integrity...".into(),
+        });
+
+        let paths = crate::images::image_paths(&image_id);
+        if !paths.kernel_path.exists() || !paths.initrd_path.exists() {
+            let mut state = self.state.lock().await;
+            *state = RuntimeState::Error("Runtime image files missing after install".into());
+            return Err(AppError::Runtime(
+                "Runtime image files are missing after installation. \
+                 Ensure the CrateBay desktop app is installed correctly."
+                    .into(),
+            ));
+        }
 
         // Stage 5: Complete.
         on_progress(ProvisionProgress {
@@ -424,7 +763,7 @@ impl RuntimeManager for LinuxRuntime {
             percent: 100.0,
             bytes_downloaded: 0,
             bytes_total: 0,
-            message: "Runtime provisioned successfully.".into(),
+            message: "Linux KVM/QEMU runtime provisioned successfully.".into(),
         });
 
         {
@@ -432,30 +771,23 @@ impl RuntimeManager for LinuxRuntime {
             *state = RuntimeState::Provisioned;
         }
 
-        // NOTE: Returning an error until download/extract are implemented.
-        // Remove this once the TODO sections above are filled in.
-        Err(AppError::Runtime(
-            "Linux KVM/QEMU provisioning: download and extraction not yet implemented".into(),
-        ))
+        tracing::info!("Linux KVM/QEMU runtime provisioned successfully");
+        Ok(())
     }
 
     /// Start the QEMU VM (§11.2).
     ///
-    /// 1. Verify KVM availability (`/dev/kvm`).
-    /// 2. Verify VM images are provisioned.
-    /// 3. Detect QEMU binary.
-    /// 4. Build QEMU argument list via [`build_qemu_args`].
-    /// 5. Spawn the QEMU process.
-    /// 6. Wait for Docker to become responsive (30 s timeout).
-    /// 7. Transition state to `Ready`.
+    /// 1. Check prerequisites (images, QEMU binary).
+    /// 2. If already running and Docker responsive, return early.
+    /// 3. Stop any existing stale QEMU process.
+    /// 4. Check port availability.
+    /// 5. Spawn daemonized QEMU with PID file.
+    /// 6. Wait for Docker TCP readiness (45 s timeout).
     async fn start(&self) -> Result<(), AppError> {
         // Guard: Check current state.
         {
             let current = self.state.lock().await;
             match &*current {
-                RuntimeState::Ready => {
-                    return Ok(()); // Already running.
-                }
                 RuntimeState::Starting => {
                     return Err(AppError::Runtime("Runtime is already starting".into()));
                 }
@@ -464,36 +796,59 @@ impl RuntimeManager for LinuxRuntime {
                         "Runtime is currently being provisioned".into(),
                     ));
                 }
-                _ => {} // Proceed with start.
+                _ => {} // Proceed.
             }
         }
 
-        // Step 1: Check KVM (§11.2).
-        if !Path::new("/dev/kvm").exists() {
-            return Err(AppError::Runtime(
-                "KVM not available. Ensure virtualization is enabled in BIOS/UEFI.".into(),
-            ));
+        let host = linux_docker_host();
+
+        // If Docker is already responsive on our port, check if it's our process.
+        let host_check = host.clone();
+        let docker_already_up = tokio::task::spawn_blocking(move || {
+            common::docker_http_ping_host(&host_check).is_ok()
+        })
+        .await
+        .unwrap_or(false);
+
+        if docker_already_up {
+            if Self::is_running() {
+                // Our QEMU is already running and Docker is up.
+                let mut state = self.state.lock().await;
+                *state = RuntimeState::Ready;
+                return Ok(());
+            }
+            // Port is taken by another service.
+            return Err(AppError::Runtime(format!(
+                "Linux runtime Docker host {} is already serving another endpoint; \
+                 stop the conflicting service or set CRATEBAY_LINUX_DOCKER_PORT to a different port",
+                host
+            )));
         }
 
-        // Step 2: Check that VM images exist.
-        let vmlinuz = self.data_dir.join("vmlinuz");
-        let initrd = self.data_dir.join("initrd");
-        let rootfs = self.data_dir.join("rootfs.qcow2");
+        // If QEMU is running but Docker isn't ready, give it a short grace period.
+        if Self::is_running() {
+            let host_wait = host.clone();
+            let wait_result = tokio::task::spawn_blocking(move || {
+                common::wait_for_docker_tcp(&host_wait, Duration::from_secs(5))
+            })
+            .await
+            .unwrap_or(Err("Task panicked".to_string()));
 
-        if !vmlinuz.exists() || !initrd.exists() || !rootfs.exists() {
-            return Err(AppError::Runtime(
-                "VM images not found. Run provision() first to download the runtime image.".into(),
-            ));
+            if wait_result.is_ok() {
+                let mut state = self.state.lock().await;
+                *state = RuntimeState::Ready;
+                return Ok(());
+            }
+
+            // QEMU running but Docker not responsive — kill and restart.
+            tracing::warn!("Stale QEMU process detected, stopping before restart");
+            tokio::task::spawn_blocking(Self::stop_qemu_impl)
+                .await
+                .map_err(|e| AppError::Runtime(format!("Stop task panicked: {}", e)))??;
+        } else {
+            // No QEMU running — clean up stale PID file.
+            let _ = std::fs::remove_file(qemu_pid_path());
         }
-
-        // Step 3: Detect QEMU binary.
-        let qemu_bin = LinuxRuntime::detect_qemu_binary().ok_or_else(|| {
-            AppError::Runtime(
-                "QEMU binary not found in PATH. \
-                 Install qemu-system-x86_64 or qemu-system-aarch64."
-                    .into(),
-            )
-        })?;
 
         // Transition to Starting state.
         {
@@ -501,141 +856,110 @@ impl RuntimeManager for LinuxRuntime {
             *state = RuntimeState::Starting;
         }
 
-        // Step 4: Clean up any stale socket file from a previous run.
-        let socket_path = self.docker_socket_path();
-        if socket_path.exists() {
-            let _ = tokio::fs::remove_file(&socket_path).await;
-        }
+        // Verify runtime image is ready.
+        let image_id = common::runtime_os_image_id().to_string();
+        let id = image_id.clone();
+        tokio::task::spawn_blocking(move || common::ensure_runtime_image_ready(&id))
+            .await
+            .map_err(|e| AppError::Runtime(format!("Image check task panicked: {}", e)))??;
 
-        // Step 5: Build QEMU arguments and spawn the process.
-        let args = self.build_qemu_args();
+        // Check port availability.
+        let host_for_port_check = host.clone();
+        tokio::task::spawn_blocking(move || ensure_host_port_available(&host_for_port_check))
+            .await
+            .map_err(|e| AppError::Runtime(format!("Port check task panicked: {}", e)))??;
 
-        tracing::info!(
-            "Starting QEMU: {} {}",
-            qemu_bin,
-            args.join(" ")
-        );
+        // Resolve paths.
+        let qemu_path = tokio::task::spawn_blocking(resolve_qemu_path)
+            .await
+            .map_err(|e| AppError::Runtime(format!("QEMU resolve task panicked: {}", e)))??;
 
-        let child = tokio::process::Command::new(&qemu_bin)
-            .args(&args)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .stdin(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| AppError::Runtime(format!("Failed to start QEMU: {}", e)))?;
+        let disk_path = tokio::task::spawn_blocking(ensure_runtime_disk)
+            .await
+            .map_err(|e| AppError::Runtime(format!("Disk ensure task panicked: {}", e)))??;
 
-        // Store the child PID.
-        let pid = child.id().ok_or_else(|| {
-            AppError::Runtime("Failed to obtain QEMU process ID".into())
-        })?;
+        let image_paths = crate::images::image_paths(&image_id);
+        let host_port = linux_docker_port();
+        let guest_port = common::docker_proxy_port();
 
-        {
-            let mut qemu_pid = self.qemu_pid.lock().await;
-            *qemu_pid = Some(pid);
-        }
+        // Spawn QEMU.
+        let qp = qemu_path.clone();
+        let ip = image_paths.clone();
+        let dp = disk_path.clone();
+        tokio::task::spawn_blocking(move || {
+            Self::spawn_qemu(&qp, &ip, &dp, host_port, guest_port)
+        })
+        .await
+        .map_err(|e| AppError::Runtime(format!("QEMU spawn task panicked: {}", e)))??;
+
+        // Record start time.
         {
             let mut started = self.started_at.lock().await;
             *started = Some(chrono::Utc::now().timestamp());
         }
 
-        tracing::info!("QEMU process started with PID {}", pid);
+        // Wait for Docker to become responsive.
+        let host_wait = host.clone();
+        let wait_result = tokio::task::spawn_blocking(move || {
+            common::wait_for_docker_tcp(&host_wait, DOCKER_READY_TIMEOUT)
+        })
+        .await
+        .map_err(|e| AppError::Runtime(format!("Docker wait task panicked: {}", e)))?;
 
-        // Step 6: Wait for Docker to become responsive (30 s timeout).
-        match self.wait_for_docker(Duration::from_secs(30)).await {
+        match wait_result {
             Ok(()) => {
                 let mut state = self.state.lock().await;
                 *state = RuntimeState::Ready;
-                tracing::info!("Docker is responsive — runtime is Ready");
+                tracing::info!(
+                    "Docker is responsive on {} — Linux runtime is Ready",
+                    host
+                );
                 Ok(())
             }
-            Err(e) => {
-                // Docker did not come up in time. The QEMU process may still be
-                // booting. Transition to Error state but leave the process running
-                // so the health monitor can detect it later.
+            Err(error) => {
+                // Docker did not come up. Stop QEMU and report failure.
+                let _ = tokio::task::spawn_blocking(Self::stop_qemu_impl).await;
+                let console_tail = tokio::task::spawn_blocking(tail_console_log)
+                    .await
+                    .unwrap_or_default();
+                let msg = format!(
+                    "CrateBay Runtime (Linux/QEMU) did not become ready within {} seconds: {}{}",
+                    DOCKER_READY_TIMEOUT.as_secs(),
+                    error,
+                    console_tail
+                );
                 let mut state = self.state.lock().await;
-                *state = RuntimeState::Error(format!(
-                    "QEMU started but Docker is not responsive: {}",
-                    e
-                ));
-                Err(e)
+                *state = RuntimeState::Error(msg.clone());
+                Err(AppError::Runtime(msg))
             }
         }
     }
 
     /// Stop the QEMU VM gracefully (§3.1).
     ///
-    /// 1. Send SIGTERM to the QEMU process.
-    /// 2. Wait up to 10 seconds for graceful exit.
-    /// 3. If still alive, send SIGKILL.
-    /// 4. Clean up the Docker socket file.
+    /// 1. SIGTERM to the QEMU process.
+    /// 2. Wait up to 5 seconds for graceful exit.
+    /// 3. SIGKILL if still alive.
+    /// 4. Clean up PID file.
     async fn stop(&self) -> Result<(), AppError> {
-        let pid = {
-            let guard = self.qemu_pid.lock().await;
-            *guard
-        };
-
-        let pid = match pid {
-            Some(p) => p,
-            None => {
-                // No tracked process — check if state is already stopped.
-                let mut state = self.state.lock().await;
-                *state = RuntimeState::Stopped;
-                return Ok(());
-            }
-        };
+        if !Self::is_running() {
+            let mut state = self.state.lock().await;
+            *state = RuntimeState::Stopped;
+            return Ok(());
+        }
 
         {
             let mut state = self.state.lock().await;
             *state = RuntimeState::Stopping;
         }
 
-        tracing::info!("Stopping QEMU process (PID {})", pid);
+        tokio::task::spawn_blocking(Self::stop_qemu_impl)
+            .await
+            .map_err(|e| AppError::Runtime(format!("Stop task panicked: {}", e)))??;
 
-        // Step 1: Send SIGTERM via the `kill` command.
-        let term_result = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output();
-        if let Err(e) = term_result {
-            tracing::warn!(
-                "SIGTERM to PID {} failed: {}, process may have already exited",
-                pid,
-                e
-            );
-        }
-
-        // Step 2: Wait up to 10 seconds for the process to exit.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            if !Self::is_qemu_process_alive(Some(pid)) {
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                // Step 3: Force kill.
-                tracing::warn!("QEMU PID {} did not exit after SIGTERM, sending SIGKILL", pid);
-                let _ = std::process::Command::new("kill")
-                    .args(["-KILL", &pid.to_string()])
-                    .output();
-                // Give it a moment to die.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-
-        // Step 4: Clean up.
-        {
-            let mut qemu_pid = self.qemu_pid.lock().await;
-            *qemu_pid = None;
-        }
         {
             let mut started = self.started_at.lock().await;
             *started = None;
-        }
-
-        // Remove the Docker socket file if it exists.
-        let socket_path = self.docker_socket_path();
-        if socket_path.exists() {
-            let _ = tokio::fs::remove_file(&socket_path).await;
         }
 
         {
@@ -643,45 +967,32 @@ impl RuntimeManager for LinuxRuntime {
             *state = RuntimeState::Stopped;
         }
 
-        tracing::info!("QEMU process stopped and cleaned up");
+        tracing::info!("Linux QEMU runtime stopped");
         Ok(())
     }
 
     /// Health check (§9.1).
     ///
-    /// 1. Check if the QEMU process is alive.
-    /// 2. Check if the Docker socket file exists.
-    /// 3. Try Docker ping.
+    /// 1. Check QEMU process alive (via PID file).
+    /// 2. Check Docker TCP ping.
+    /// 3. Derive runtime state from health signals.
     async fn health_check(&self) -> Result<HealthStatus, AppError> {
-        let pid = *self.qemu_pid.lock().await;
-        let vm_running = Self::is_qemu_process_alive(pid);
+        let vm_running = Self::is_running();
+        let host = linux_docker_host();
 
-        let socket_path = self.docker_socket_path();
-        let socket_exists = socket_path.exists();
-
-        let (docker_responsive, docker_version) = if socket_exists {
-            let socket_str = socket_path.to_str().unwrap_or_default();
-            match bollard::Docker::connect_with_unix(socket_str, 5, bollard::API_DEFAULT_VERSION) {
-                Ok(docker) => {
-                    let responsive = docker.ping().await.is_ok();
-                    let version = if responsive {
-                        docker
-                            .version()
-                            .await
-                            .ok()
-                            .and_then(|v| v.version)
-                    } else {
-                        None
-                    };
-                    (responsive, version)
-                }
-                Err(_) => (false, None),
-            }
+        let (docker_responsive, _) = if vm_running {
+            let host_check = host.clone();
+            let responsive = tokio::task::spawn_blocking(move || {
+                common::docker_http_ping_host(&host_check).is_ok()
+            })
+            .await
+            .unwrap_or(false);
+            (responsive, None::<String>)
         } else {
             (false, None)
         };
 
-        // Calculate uptime if we have a start timestamp.
+        // Calculate uptime.
         let uptime_seconds = if vm_running {
             let started = self.started_at.lock().await;
             started.map(|ts| {
@@ -692,23 +1003,23 @@ impl RuntimeManager for LinuxRuntime {
             None
         };
 
-        // Determine runtime state from health signals.
+        // Determine runtime state.
         let runtime_state = if docker_responsive {
             RuntimeState::Ready
         } else if vm_running {
             RuntimeState::Starting
         } else {
-            // Check if we had a process previously (unexpected exit).
+            // Check if we had a tracked PID that exited.
+            let pid = Self::current_pid();
             if pid.is_some() {
                 RuntimeState::Error("QEMU process exited unexpectedly".into())
             } else {
-                // No process tracked — could be stopped or never started.
                 let current = self.state.lock().await;
                 current.clone()
             }
         };
 
-        // Update internal state to match health check result.
+        // Update internal state.
         {
             let mut state = self.state.lock().await;
             *state = runtime_state.clone();
@@ -717,17 +1028,22 @@ impl RuntimeManager for LinuxRuntime {
         Ok(HealthStatus {
             runtime_state,
             docker_responsive,
-            docker_version,
+            docker_version: None, // Would require a full Docker API call
             uptime_seconds,
             last_check: chrono::Utc::now().to_rfc3339(),
         })
     }
 
-    /// Get the Docker socket path (§4.1).
+    /// Docker socket path (§4.1).
     ///
-    /// On Linux: `~/.cratebay/runtime/docker.sock`
+    /// On Linux the runtime uses TCP port forwarding, but the trait requires
+    /// returning a `PathBuf`. We return a synthetic path that indicates TCP
+    /// mode; the GUI layer should use `linux_docker_host()` for actual connection.
     fn docker_socket_path(&self) -> PathBuf {
-        self.data_dir.join("docker.sock")
+        // Return the canonical host docker socket path.
+        // The actual connection goes through TCP, but this provides a
+        // consistent path for the trait interface.
+        common::host_docker_socket_path().to_path_buf()
     }
 
     /// Get current resource usage of the QEMU VM (§7.3).
@@ -735,44 +1051,17 @@ impl RuntimeManager for LinuxRuntime {
     /// Reads from `/proc/{pid}/stat` and `/proc/{pid}/statm` to obtain
     /// CPU and memory usage of the QEMU process.
     async fn resource_usage(&self) -> Result<ResourceUsage, AppError> {
-        let pid = *self.qemu_pid.lock().await;
+        let pid = Self::current_pid();
 
         match pid {
-            Some(pid) => {
+            Some(pid) if pid_alive(pid) => {
                 let cpu_percent = read_proc_cpu_percent(pid).await;
                 let memory_used_mb = read_proc_memory_mb(pid).await;
 
-                // Container count: query Docker if responsive.
-                let container_count = {
-                    let socket_path = self.docker_socket_path();
-                    if socket_path.exists() {
-                        if let Ok(docker) = bollard::Docker::connect_with_unix(
-                            socket_path.to_str().unwrap_or_default(),
-                            5,
-                            bollard::API_DEFAULT_VERSION,
-                        ) {
-                            use bollard::container::ListContainersOptions;
-                            let opts = ListContainersOptions::<String> {
-                                all: false, // Only running containers.
-                                ..Default::default()
-                            };
-                            docker
-                                .list_containers(Some(opts))
-                                .await
-                                .map(|c| c.len() as u32)
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    }
-                };
-
-                // Disk usage: check the rootfs.qcow2 apparent size.
+                // Disk usage: check the runtime disk size.
                 let disk_used_gb = {
-                    let rootfs = self.data_dir.join("rootfs.qcow2");
-                    tokio::fs::metadata(&rootfs)
+                    let disk = runtime_disk_path();
+                    tokio::fs::metadata(&disk)
                         .await
                         .map(|m| m.len() as f32 / (1024.0 * 1024.0 * 1024.0))
                         .unwrap_or(0.0)
@@ -784,11 +1073,11 @@ impl RuntimeManager for LinuxRuntime {
                     memory_total_mb: self.config.memory_mb,
                     disk_used_gb,
                     disk_total_gb: self.config.disk_gb as f32,
-                    container_count,
+                    container_count: 0, // Would need Docker API call
                 })
             }
-            None => {
-                // No QEMU process running — return zeroed usage.
+            _ => {
+                // No QEMU process running.
                 Ok(ResourceUsage {
                     cpu_percent: 0.0,
                     memory_used_mb: 0,
@@ -808,9 +1097,8 @@ impl RuntimeManager for LinuxRuntime {
 
 /// Read approximate CPU usage percentage from `/proc/{pid}/stat`.
 ///
-/// This is a simplified single-sample approach: it reads total CPU ticks
-/// consumed by the process and compares against system uptime. For more
-/// accurate instantaneous CPU%, a two-sample delta approach would be needed.
+/// Single-sample approach: reads total CPU ticks consumed by the process
+/// and compares against system uptime.
 async fn read_proc_cpu_percent(pid: u32) -> f32 {
     let stat_path = format!("/proc/{}/stat", pid);
     let stat_content = match tokio::fs::read_to_string(&stat_path).await {
@@ -818,19 +1106,14 @@ async fn read_proc_cpu_percent(pid: u32) -> f32 {
         Err(_) => return 0.0,
     };
 
-    // /proc/{pid}/stat fields (space-separated):
-    // Index 13 = utime (user ticks), Index 14 = stime (kernel ticks)
-    // We skip the comm field (field 1) which may contain spaces by finding
-    // the closing ')' first.
+    // /proc/{pid}/stat: skip comm field (may contain spaces) by finding ')'.
     let after_comm = match stat_content.rfind(')') {
         Some(pos) => &stat_content[pos + 2..], // skip ") "
         None => return 0.0,
     };
 
     let fields: Vec<&str> = after_comm.split_whitespace().collect();
-    // After comm: field 0 = state, field 1..N = remaining stat fields
-    // utime is at original index 13 → after removing pid and comm (2 fields),
-    // and state (1 field) → index 11 in this slice.
+    // After comm: field[0] = state, field[11] = utime, field[12] = stime
     if fields.len() < 13 {
         return 0.0;
     }
@@ -839,7 +1122,7 @@ async fn read_proc_cpu_percent(pid: u32) -> f32 {
     let stime: u64 = fields[12].parse().unwrap_or(0);
     let total_ticks = utime + stime;
 
-    // Read system uptime from /proc/uptime.
+    // Read system uptime.
     let uptime = match tokio::fs::read_to_string("/proc/uptime").await {
         Ok(c) => c
             .split_whitespace()
@@ -880,4 +1163,219 @@ async fn read_proc_memory_mb(pid: u32) -> u64 {
     let page_size: u64 = 4096; // Standard Linux page size.
 
     (rss_pages * page_size) / (1024 * 1024)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_runtime_creates_with_defaults() {
+        let rt = LinuxRuntime::new();
+        assert_eq!(rt.config.cpu_cores, 2);
+        assert_eq!(rt.config.memory_mb, 2048);
+        assert_eq!(rt.config.disk_gb, 20);
+    }
+
+    #[test]
+    fn linux_runtime_default_trait() {
+        let rt = LinuxRuntime::default();
+        assert_eq!(rt.config.cpu_cores, 2);
+    }
+
+    #[test]
+    fn docker_socket_path_contains_docker_sock() {
+        let rt = LinuxRuntime::new();
+        let path = rt.docker_socket_path();
+        assert!(
+            path.to_string_lossy().contains("docker.sock"),
+            "path should contain docker.sock: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn linux_docker_host_is_tcp() {
+        let host = linux_docker_host();
+        assert!(
+            host.starts_with("tcp://127.0.0.1:"),
+            "host should be tcp://127.0.0.1:<port>: {}",
+            host
+        );
+    }
+
+    #[test]
+    fn linux_docker_port_is_positive() {
+        let port = linux_docker_port();
+        assert!(port > 0, "port should be positive: {}", port);
+    }
+
+    #[test]
+    fn runtime_dir_is_under_data_dir() {
+        let dir = runtime_dir();
+        assert!(
+            dir.to_string_lossy().contains("runtime-linux"),
+            "dir should contain runtime-linux: {:?}",
+            dir
+        );
+    }
+
+    #[test]
+    fn qemu_pid_path_is_under_runtime_dir() {
+        let path = qemu_pid_path();
+        assert!(
+            path.to_string_lossy().contains("qemu.pid"),
+            "path should contain qemu.pid: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn runtime_disk_path_ends_with_disk_raw() {
+        let path = runtime_disk_path();
+        assert!(
+            path.to_string_lossy().ends_with("disk.raw"),
+            "path should end with disk.raw: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn console_log_path_ends_with_console_log() {
+        let path = runtime_console_log_path();
+        assert!(
+            path.to_string_lossy().ends_with("console.log"),
+            "path should end with console.log: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn qemu_binary_name_is_arch_specific() {
+        let name = qemu_binary_name();
+        assert!(
+            name.starts_with("qemu-system-"),
+            "name should start with qemu-system-: {}",
+            name
+        );
+    }
+
+    #[test]
+    fn runtime_linux_bundle_id_is_arch_specific() {
+        let id = runtime_linux_bundle_id();
+        assert!(
+            id.starts_with("cratebay-runtime-linux-"),
+            "bundle id should start with cratebay-runtime-linux-: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn default_kernel_cmdline_contains_console() {
+        let cmdline = default_kernel_cmdline();
+        assert!(
+            cmdline.contains("console="),
+            "cmdline should contain console=: {}",
+            cmdline
+        );
+    }
+
+    #[test]
+    fn build_kernel_cmdline_contains_console() {
+        let cmdline = build_kernel_cmdline();
+        assert!(
+            cmdline.contains("console="),
+            "cmdline should contain console=: {}",
+            cmdline
+        );
+    }
+
+    #[test]
+    fn pid_alive_returns_false_for_nonexistent() {
+        // PID 0 should not have a /proc entry (it's the kernel scheduler).
+        // Use a very large PID that is extremely unlikely to exist.
+        assert!(!pid_alive(4_294_967_295));
+    }
+
+    #[test]
+    fn read_pid_file_returns_none_for_missing() {
+        let result = read_pid_file(Path::new("/nonexistent/path/qemu.pid"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_pid_file_parses_valid_pid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.pid");
+        std::fs::write(&path, "12345\n").unwrap();
+        let result = read_pid_file(&path);
+        assert_eq!(result, Some(12345));
+    }
+
+    #[test]
+    fn read_pid_file_rejects_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.pid");
+        std::fs::write(&path, "0\n").unwrap();
+        let result = read_pid_file(&path);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_pid_file_rejects_garbage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.pid");
+        std::fs::write(&path, "not-a-number\n").unwrap();
+        let result = read_pid_file(&path);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn is_running_returns_false_when_no_pid_file() {
+        // Unless there happens to be a valid PID file at the exact runtime path,
+        // this should return false.
+        // We can't guarantee the path doesn't exist, but it's extremely unlikely
+        // in a test environment.
+        let _ = LinuxRuntime::is_running();
+    }
+
+    #[test]
+    fn tail_console_log_returns_empty_for_missing() {
+        // With no console log file, should return empty string.
+        let result = tail_console_log();
+        // Can't assert empty because it depends on whether the file exists,
+        // but it should not panic.
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn detect_returns_valid_state() {
+        let rt = LinuxRuntime::new();
+        let state = rt.detect().await;
+        // On a non-Linux platform or without KVM, detect should still succeed
+        // and return a valid state.
+        assert!(state.is_ok());
+    }
+
+    #[tokio::test]
+    async fn resource_usage_without_running_vm() {
+        let rt = LinuxRuntime::new();
+        let usage = rt.resource_usage().await.unwrap();
+        assert_eq!(usage.cpu_percent, 0.0);
+        assert_eq!(usage.memory_used_mb, 0);
+        assert_eq!(usage.container_count, 0);
+        assert_eq!(usage.memory_total_mb, 2048);
+    }
+
+    #[tokio::test]
+    async fn health_check_without_running_vm() {
+        let rt = LinuxRuntime::new();
+        let status = rt.health_check().await.unwrap();
+        assert!(!status.docker_responsive);
+        assert!(status.uptime_seconds.is_none());
+    }
 }

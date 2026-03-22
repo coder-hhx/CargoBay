@@ -5,6 +5,8 @@
 //! This module defines the platform-agnostic [`RuntimeManager`] trait and
 //! all supporting types for managing the built-in container runtime.
 
+pub mod common;
+
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "linux")]
