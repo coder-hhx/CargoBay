@@ -1,6 +1,6 @@
 # Built-in Container Runtime Specification
 
-> Version: 1.0.0 | Last Updated: 2026-03-20 | Author: architect
+> Version: 1.1.0 | Last Updated: 2026-03-21 | Author: architect
 
 ---
 
@@ -198,10 +198,12 @@ pub trait RuntimeManager: Send + Sync {
     /// Detect current runtime state
     async fn detect(&self) -> Result<RuntimeState, AppError>;
 
-    /// Download and prepare VM image (first run)
+    /// Download and prepare VM image (first run).
+    /// Uses `Box<dyn Fn>` instead of `impl Fn` for async_trait
+    /// object safety (required for `Arc<dyn RuntimeManager>`).
     async fn provision(
         &self,
-        on_progress: impl Fn(ProvisionProgress) + Send + 'static,
+        on_progress: Box<dyn Fn(ProvisionProgress) + Send>,
     ) -> Result<(), AppError>;
 
     /// Start the runtime VM

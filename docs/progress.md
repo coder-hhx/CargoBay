@@ -74,8 +74,8 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - AGENTS.md 写的 "Vite 7.x" 实际不存在，使用 Vite 6.4.1（稳定版）
 - tauri-specta/specta 使用 rc 版本 (2.0.0-rc.21/rc.22)
 
-## 进行中 🔄
-- [x] Runtime 自动启动后端集成 — 2026-03-21 ✅ 已完成
+## 已完成（Quick Resume 验证轮）✅ — 2026-03-21
+- [x] Runtime 自动启动后端集成
   - ✅ AppState.docker 改为 `Arc<Mutex<Option<Arc<Docker>>>>` 支持动态更新
   - ✅ main.rs 后台线程自动启动 runtime (detect→provision→start→wait for Docker→fallback)
   - ✅ system.rs 新增 runtime_start, runtime_stop 命令 + docker_status source 检测
@@ -83,37 +83,51 @@ pnpm run test               → ✅ 4 passed (Vitest)
   - ✅ App.tsx 监听 docker:connected 事件刷新前端状态
   - ✅ Settings RuntimeTab 添加 Start/Stop 按钮 + runtimeLoading 状态
   - ✅ 编译通过：TypeScript 0 errors, Rust 0 errors (2 dead_code warnings)
+- [x] 任务 A: GUI 验证 — 通过
+  - ✅ pnpm build 成功 (Vite 6.4.1)
+  - ✅ cargo build -p cratebay-gui 成功 (27s, 2 dead_code warnings: CONTAINER_STATUS_CHANGE, MCP_CONNECTION_CHANGE)
+  - ✅ pnpm tauri dev 启动正常：runtime auto-start → 骨架失败 → fallback 外部 Docker → 前端正常渲染
+  - ✅ Settings Runtime tab: Start/Stop 按钮、CPU/Memory 滑块均存在
+  - ⚠️ CPU/Memory 滑块值仅保存在本地 state，未持久化到后端
+- [x] 任务 B: 文档一致性审查 — 发现 7 个偏差
+  - ⚠️ [高] runtime_start/runtime_stop 未在 api-spec.md 中定义 → 需更新 spec
+  - ⚠️ [高] ImagesPage 代码存在但 frontend-spec 未定义 → 需人工决定保留或删除
+  - ⚠️ [高] Settings 6 Tab vs spec 3 Tab → 需更新 spec
+  - ⚠️ [高] AppState.docker 类型 Arc<Mutex<Option<Arc<Docker>>>> vs spec Option<Arc<Docker>> → 需更新 spec
+  - ⚠️ [中] appStore 多出 runtimeLoading 字段 → 需更新 spec
+  - ⚠️ [中] backend-spec 未列 runtime_start/stop 命令 → 需更新 spec
+  - ✅ [低] provision() 回调 Box vs impl (async_trait 对象安全) → 可接受
+- [x] 任务 C: 自研 Runtime 移植方案
+  - ✅ master runtime 相关代码约 9857 行，v2 骨架 3017 行但核心逻辑缺失
+  - ✅ 完全缺失：Hypervisor 实现 (macOS 1749/Linux 1941/Windows 1626 行) + OS 镜像系统 (738 行)
+  - ✅ 推荐混合架构：保留 v2 RuntimeManager trait，内部委托 master 逻辑
+  - ✅ 移植分 3 Phase，~10 文件，~5200 行，优先级 macOS → Linux → Windows
+
+## 进行中 🔄
+（暂无）
 
 ## 待开始 📋
-### 任务 A: 验证 GUI 应用运行 🔴 优先
-- 运行 `pnpm tauri dev` 验证 GUI 正常启动
-- 检查 runtime 自动启动日志
-- 检查前端渲染是否正常
-- 验证 Settings 中 Runtime Start/Stop 按钮是否工作
 
-### 任务 B: 文档与实现一致性审查 🔴 优先
-- 对比 api-spec.md vs 实际 Tauri 命令（重点：runtime_start, runtime_stop 是否在 spec 中）
-- 对比 frontend-spec.md vs 实际前端实现（Settings 6 Tab vs spec 3 Tab）
-- 对比 runtime-spec.md vs runtime 实现（骨架 vs 完整实现）
-- 对比 backend-spec.md vs 后端实现
+### 任务 E: Spec 文档对齐更新 🔴 优先
+- 更新 api-spec.md: 添加 runtime_start, runtime_stop 命令定义
+- 更新 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段 + ImagesPage（待确认）
+- 更新 backend-spec.md: AppState.docker 新类型 + 命令分组补充
 
-### 任务 C: 自研 Runtime 实际实现 🔴 优先
-- **问题**：v2 的 macOS/Linux/Windows runtime 全部是骨架代码
-  - macos.rs: provision() 返回 "VM image download not yet implemented"
-  - macos.rs: start() 返回 "VZ.framework bridge not yet implemented"
-  - 同理 linux.rs 和 windows.rs
-- **master 分支已有完整实现**（需要移植）：
-  - `master:crates/cratebay-core/src/runtime.rs` (2839行) — VM 镜像管理 + ensure_runtime_vm_running
-  - `master:crates/cratebay-core/src/hypervisor.rs` — Hypervisor trait, VmConfig, VmState
-  - `master:crates/cratebay-gui/src-tauri/src/lib.rs` — connect_cratebay_runtime_docker()
-- **用户要求**："自研runtime，但也能识别外部runtime，可以通过设置选择容器运行时"
-- **当前行为**：auto-start 尝试 runtime → 骨架代码失败 → fallback 到外部 Docker
-- **需要**：从 master 移植完整 VM 启动逻辑到 v2 的多文件架构中
+### 任务 F: 自研 Runtime 移植实施 🔴 优先
+- Phase 1: 基础设施（images.rs, fsutil.rs, store 兼容层）~900 行
+- Phase 2: 核心 Runtime（common.rs + 重写 macos/linux/windows.rs）~3500 行
+- Phase 3: 集成（mod.rs + main.rs + system.rs 适配）~300 行
+- 优先级：macOS → Linux → Windows
 
 ### 任务 D: 修复 pre-commit 钩子 Bug
 - `.githooks/pre-commit` 行 289-290 运行 `cargo test -p cratebay-cli --lib`
 - cratebay-cli 没有 lib target，只有 bin target，导致钩子失败
 - 临时用 `--no-verify` 跳过，需要修复
+
+### 待人工决策
+1. **ImagesPage** 是否保留？（代码存在但 spec 未定义）
+2. **Runtime 移植**是否立即开始？优先 macOS？
+3. **Spec 文档更新**是否先于 Runtime 移植执行？
 
 ## 阻塞/问题 ⚠️
 - **pre-commit 钩子 Bug**: `cargo test -p cratebay-cli --lib` 失败（CLI 无 lib target），当前用 `--no-verify` 跳过
@@ -166,114 +180,85 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：功能验证 + 文档对齐 + 自研 Runtime 移植（2026-03-21）
+### 当前阶段：Spec 对齐 + 自研 Runtime 移植（2026-03-21）
 
-Step 0-7 基础骨架 + GUI 改进 + Runtime 自动启动后端 + Settings 控制 UI 全部完成。
-当前有 **三个并行任务** 需要执行。
+Step 0-7 基础骨架全部完成。GUI 验证通过，文档一致性审查完成（7 个偏差已识别），Runtime 移植方案已制定。
+
+### 待人工决策（阻塞后续工作）
+1. **ImagesPage** 是否保留？（代码存在但 frontend-spec 未定义）
+2. **Runtime 移植**是否立即开始？优先 macOS？
+3. **Spec 文档更新**是否先于 Runtime 移植执行？
 
 ### 可执行步骤
 
 ```
 1. 读取 AGENTS.md + 本文件（progress.md）
-2. 按"用户永久规则"创建 cratebay-dev 固定团队（注意：团队名不要与上一会话冲突）
-3. 并行执行以下 3 个任务（各分配给一个 agent）：
+2. 按"用户永久规则"创建 cratebay-dev 固定团队
+3. 询问用户上述 3 个待决策项
+4. 根据用户决定，执行以下任务：
 
-   任务 A — GUI 验证 (分配给 tester):
-   a. cd crates/cratebay-gui && pnpm build          # 前端构建验证
-   b. cd 项目根 && cargo build -p cratebay-gui      # Rust 构建验证
-   c. pnpm tauri dev                                 # 启动应用
-   d. 检查启动日志：
-      - "Starting built-in runtime auto-start sequence..."
-      - "Runtime start failed: ..." → "Falling back to external Docker..."
-      - 前端是否正常渲染
-   e. 验证 Settings → Runtime tab → Start/Stop 按钮是否可见
-   f. 汇报所有发现的问题
+   任务 E — Spec 文档对齐（分配给 doc-keeper 或 architect）:
+   a. 更新 api-spec.md: 添加 runtime_start, runtime_stop 命令定义
+   b. 更新 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段 + ImagesPage（待确认）
+   c. 更新 backend-spec.md: AppState.docker 新类型 + 命令分组
+   d. 版本号递增
 
-   任务 B — 文档一致性审查 (分配给 architect):
-   a. 读取 docs/specs/api-spec.md，提取所有 Tauri 命令定义
-   b. 读取 crates/cratebay-gui/src-tauri/src/commands/*.rs，提取实际 #[tauri::command]
-   c. 对比找出 Spec 未定义但已实现的（如 runtime_start/runtime_stop）
-   d. 同样对比 frontend-spec.md, runtime-spec.md, backend-spec.md
-   e. 输出偏差报告（每项标注 ✅一致 / ⚠️偏差 / ❌缺失）
-   f. 对于发现的偏差，提出修复方案（更新 spec 还是更新代码）
+   任务 F — 自研 Runtime 移植（分配给 runtime-dev + backend-dev）:
+   Phase 1: 基础设施移植
+     - 新增 images.rs (738行 OS 镜像管理)
+     - 新增 fsutil.rs (39行 macOS clonefile)
+     - 扩展 storage.rs (data_dir, config_dir, write_atomic)
+   Phase 2: 核心 Runtime 重写
+     - 新增 runtime/common.rs (~700行 全局配置+镜像安装+Docker ping)
+     - 重写 runtime/macos.rs (→~1200行 VZ runner 启动+vsock 桥接)
+     - 重写 runtime/linux.rs (→~1100行 QEMU 完整启动)
+     - 重写 runtime/windows.rs (→~1500行 WSL2 完整管理)
+   Phase 3: 集成
+     - 更新 runtime/mod.rs + main.rs + system.rs
+     - 更新 Cargo.toml 依赖 (libc 等)
+   优先级: macOS → Linux → Windows
 
-   任务 C — 自研 Runtime 分析 (分配给 runtime-dev):
-   a. 切到 master 分支读取完整 runtime 实现：
-      - crates/cratebay-core/src/runtime.rs (2839行)
-      - crates/cratebay-core/src/hypervisor.rs
-      - crates/cratebay-gui/src-tauri/src/lib.rs 中的 connect_cratebay_runtime_docker()
-   b. 切回 rewrite/v2 分支读取骨架代码：
-      - crates/cratebay-core/src/runtime/{mod.rs, macos.rs, linux.rs, windows.rs}
-   c. 列出 master 有但 v2 缺失的具体功能模块：
-      - VM 镜像下载管理
-      - VZ.framework 桥接（macOS）
-      - KVM/QEMU 完整启动（Linux）
-      - WSL2 完整管理（Windows）
-      - Docker socket 等待和连接
-   d. 制定移植方案：哪些代码可以直接复用，哪些需要改造以适配多文件架构
-   e. 评估移植工作量（文件数、代码行数、关键依赖）
+   任务 D — 修复 pre-commit 钩子:
+   - `.githooks/pre-commit` 行 289-290 的 cratebay-cli --lib 问题
 
-4. 三个任务完成后，team-lead 汇总结果，制定后续计划
-5. 更新本文件标记完成
+5. 完成后更新本文件
 ```
 
-### Runtime 自动启动后端架构（已完成，供参考）
+### Runtime 移植方案概要（来自 runtime-dev 分析）
 
 ```
-main.rs setup:
-  std::thread::spawn("runtime-auto-start") {
-    1. 检查 Docker 是否已连接 → 如果已连接，跳过
-    2. runtime.detect() → 检测当前状态
-    3. 如果 None → runtime.provision() + emit runtime:provision-progress
-    4. runtime.start() → 启动 runtime
-    5. 等待 Docker socket (45s 超时，每 500ms 轮询)
-    6. 成功 → state.set_docker() + emit docker:connected
-    7. 失败 → try_reconnect_docker() fallback 到外部 Docker
-  }
+架构选择：混合架构
+  - 保留 v2 的 RuntimeManager trait（async, 进度回调, 健康检查）
+  - 不移植 master 的 Hypervisor trait（避免两层抽象）
+  - 将 master 的实现逻辑直接嵌入 RuntimeManager impl
 
-AppState:
-  docker: Arc<Mutex<Option<Arc<Docker>>>>  // 支持动态更新
-  runtime: Arc<dyn RuntimeManager>          // 平台特定实现
+master runtime 代码: ~9857 行
+v2 骨架代码: ~3017 行（核心逻辑全缺失）
+移植新增: ~5200 行，~10 文件
 
-Settings RuntimeTab:
-  - Start 按钮 → invoke("runtime_start")
-  - Stop 按钮 → invoke("runtime_stop")
-  - runtimeLoading 状态跟踪操作进度
+缺失模块:
+  - Hypervisor 实现: macOS 1749 + Linux 1941 + Windows 1626 行
+  - OS 镜像目录系统: 738 行
+  - 文件工具: 39 行
+  - runtime.rs 协调层: 2839 行（全局配置+资产查找+镜像安装+VM 生命周期+Docker ping）
+
+关键风险:
+  - macOS VZ.framework 通过外部 runner 进程（Swift）桥接，需确认是否继续使用
+  - master 是同步代码，v2 是 async trait，需 spawn_blocking 包装
+  - VM 状态存储: master 用 JSON 文件，v2 用 SQLite，需决定方案
 ```
 
-### macOS Runtime 现状（骨架 vs master 完整实现）
+### 文档偏差清单（来自 architect 审查）
 
-| 功能 | v2 (rewrite/v2) | master | 状态 |
-|------|-----------------|--------|------|
-| detect() | ✅ 检查 socket 文件 | ✅ 完整 | 一致 |
-| provision() | ❌ 返回 "not yet implemented" | ✅ VM 镜像下载+解压 | **需要移植** |
-| start() | ❌ 返回 "not yet implemented" | ✅ VZ.framework 桥接 | **需要移植** |
-| stop() | ⚠️ 基础实现 | ✅ 完整 VM 停止 | 需要增强 |
-| health_check() | ⚠️ 基础 socket 检查 | ✅ Docker ping | 需要增强 |
-| Docker 连接 | ✅ try_connect_docker() | ✅ connect_cratebay_runtime_docker() | 基本一致 |
-
-### Step 7 完成总结（基础骨架）
-
-**测试成果**:
-- cargo test: 269 passed, 0 failed, 5 ignored (Docker-dependent)
-- vitest: 197 passed, 2 skipped
-- Playwright E2E: 68 用例 + 5 Page Object Models
-- Criterion benchmarks: startup_bench (5 bench) + storage_bench (4 bench)
-- 安全测试: 路径穿越 8 + JSON-RPC 注入 9 + SQL 注入 4 + API Key 泄露 3 = 24 个
-
-**CI/CD 管线**:
-- ci.yml: 4 阶段 (check/fmt/clippy/lint → test → size-check/perf-bench → canary), 三平台 matrix, coverage
-- release.yml: v* tag 触发, code signing, SHA256 checksums
-- pages.yml: website/ 自动部署到 GitHub Pages
-
-### 下一步建议
-
-```
-1. git tag v2.0.0-alpha.1 && git push --tags    → 触发 release.yml
-2. 验证 GitHub Release 产物 (macOS/Linux/Windows 二进制)
-3. 验证 cratebay.io 网站自动部署
-4. 规划 v2.0.0-beta.1 路线图 (用户反馈 + 性能调优)
-```
+| # | 严重性 | 描述 | 修复方向 |
+|---|--------|------|----------|
+| 1 | 高 | runtime_start/runtime_stop 未在 api-spec.md 中定义 | 更新 spec |
+| 2 | 高 | ImagesPage 代码存在但 frontend-spec 未定义 | 待人工决定 |
+| 3 | 高 | Settings 6 Tab vs spec 3 Tab | 更新 spec |
+| 4 | 高 | AppState.docker 类型不匹配 spec | 更新 spec |
+| 5 | 中 | appStore 多出 runtimeLoading 字段 | 更新 spec |
+| 6 | 中 | backend-spec 未列 runtime_start/stop 命令 | 更新 spec |
+| 7 | 低 | provision() 回调 Box vs impl | 可接受 |
 
 ### 历史偏差修复记录
 

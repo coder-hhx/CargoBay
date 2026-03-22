@@ -1,6 +1,6 @@
 # Backend Specification
 
-> Version: 1.2.0 | Last Updated: 2026-03-20 | Author: architect
+> Version: 1.3.0 | Last Updated: 2026-03-21 | Author: architect
 
 ---
 
@@ -251,12 +251,16 @@ mod windows;
 
 /// Platform-agnostic trait
 pub trait RuntimeManager: Send + Sync {
-    async fn detect(&self) -> Result<RuntimeStatus, AppError>;
-    async fn provision(&self) -> Result<(), AppError>;
+    async fn detect(&self) -> Result<RuntimeState, AppError>;
+    async fn provision(
+        &self,
+        on_progress: Box<dyn Fn(ProvisionProgress) + Send>,
+    ) -> Result<(), AppError>;
     async fn start(&self) -> Result<(), AppError>;
     async fn stop(&self) -> Result<(), AppError>;
-    async fn health_check(&self) -> Result<bool, AppError>;
+    async fn health_check(&self) -> Result<HealthStatus, AppError>;
     fn docker_socket_path(&self) -> PathBuf;
+    async fn resource_usage(&self) -> Result<ResourceUsage, AppError>;
 }
 
 /// Factory function
@@ -925,7 +929,7 @@ Commands are organized by domain module:
 | LLM | `commands/llm.rs` | proxy_stream, proxy_cancel, provider_list, provider_create, provider_update, provider_delete, provider_test, models_fetch, models_list, models_toggle |
 | Storage | `commands/storage.rs` | settings_get, settings_update, api_key_save, api_key_delete, conversation_list, conversation_get_messages, conversation_create, conversation_delete, conversation_save_message, conversation_update_title |
 | MCP | `commands/mcp.rs` | server_list, server_add, server_remove, server_start, server_stop, client_call_tool, client_list_tools, export_client_config |
-| System | `commands/system.rs` | system_info, docker_status, runtime_status |
+| System | `commands/system.rs` | system_info, docker_status, runtime_status, runtime_start, runtime_stop |
 
 ### 4.2 AppState Structure
 
@@ -941,8 +945,10 @@ use cratebay_core::mcp::McpManager;
 use cratebay_core::runtime::RuntimeManager;
 
 pub struct AppState {
-    /// Docker client (optional — Docker may not be available)
-    pub docker: Option<Arc<Docker>>,
+    /// Docker client (optional — Docker may not be available).
+    /// Wrapped in `Arc<Mutex<...>>` so it can be updated dynamically
+    /// after the built-in runtime starts Docker.
+    pub docker: Arc<Mutex<Option<Arc<Docker>>>>,
 
     /// SQLite database connection
     pub db: Arc<Mutex<Connection>>,
@@ -962,11 +968,26 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Get a reference to the Docker client, or error if unavailable.
-    pub fn require_docker(&self) -> Result<&Docker, AppError> {
-        self.docker
-            .as_deref()
-            .ok_or_else(|| AppError::Docker(/* ... */))
+    /// Get a clone of the Docker client Arc, or error if unavailable.
+    pub fn require_docker(&self) -> Result<Arc<Docker>, AppError> {
+        let guard = self.docker.lock().map_err(|e| {
+            AppError::Runtime(format!("Docker state mutex poisoned: {}", e))
+        })?;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::Docker(/* connection unavailable */))
+    }
+
+    /// Update the Docker client (e.g., after runtime starts or stops).
+    pub fn set_docker(&self, docker: Option<Arc<Docker>>) {
+        if let Ok(mut guard) = self.docker.lock() {
+            *guard = docker;
+        }
+    }
+
+    /// Check if Docker is currently available.
+    pub fn has_docker(&self) -> bool {
+        self.docker.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 }
 ```
@@ -1132,6 +1153,8 @@ fn main() {
             commands::system::system_info,
             commands::system::docker_status,
             commands::system::runtime_status,
+            commands::system::runtime_start,
+            commands::system::runtime_stop,
         ]);
 
     // Export TypeScript bindings

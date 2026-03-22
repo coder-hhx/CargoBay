@@ -1,6 +1,6 @@
 # Tauri Commands API Specification
 
-> Version: 1.2.0 | Last Updated: 2026-03-20 | Author: architect
+> Version: 1.3.0 | Last Updated: 2026-03-21 | Author: architect
 
 ---
 
@@ -1417,6 +1417,61 @@ pub struct ResourceUsage {
 
 ---
 
+#### `runtime_start`
+
+Manually start the built-in container runtime. Triggers detect → provision (if needed) → start → wait for Docker. Called from the Settings page Runtime tab or retry buttons.
+
+```rust
+#[tauri::command]
+pub async fn runtime_start(
+    state: State<'_, AppState>,
+) -> Result<String, AppError>
+```
+
+**Parameters:** None
+
+**Returns:** `String` — Human-readable status message describing the outcome:
+- `"Runtime started and Docker connected"` — Success, Docker is available.
+- `"Runtime started but Docker not yet responsive"` — VM started but Docker didn't respond within the 45-second timeout.
+
+**Behavior:**
+1. Detects the current runtime state via `runtime.detect()`.
+2. If state is `None`, provisions the runtime (downloads VM image) with logging callbacks.
+3. Starts the runtime VM via `runtime.start()`.
+4. Polls the Docker socket for up to 45 seconds.
+5. On successful Docker connection, updates `AppState.docker` with the new client.
+
+**Errors:** `AppError::Runtime`
+
+---
+
+#### `runtime_stop`
+
+Manually stop the built-in container runtime. Clears the Docker connection and attempts to reconnect to any external Docker.
+
+```rust
+#[tauri::command]
+pub async fn runtime_stop(
+    state: State<'_, AppState>,
+) -> Result<String, AppError>
+```
+
+**Parameters:** None
+
+**Returns:** `String` — Human-readable status message:
+- `"Runtime stopped, reconnected to external Docker"` — Stopped, and an external Docker was found.
+- `"Runtime stopped"` — Stopped, no external Docker available.
+
+**Behavior:**
+1. Stops the runtime VM via `runtime.stop()`.
+2. Clears `AppState.docker` (sets to `None`).
+3. Attempts `docker::try_connect()` to discover external Docker installations.
+4. If an external Docker is found, updates `AppState.docker` with the external client.
+
+**Errors:** `AppError::Runtime`
+
+---
+
 #### `system_info`
 
 Get system-level information.
@@ -1671,4 +1726,6 @@ const containers = await safeInvoke(() => containerList());
 | `mcp_export_client_config` | GET | — | `Value` | No |
 | `docker_status` | GET | — | `DockerStatus` | No |
 | `runtime_status` | GET | — | `RuntimeStatusInfo` | No |
+| `runtime_start` | POST | — | `String` | No |
+| `runtime_stop` | POST | — | `String` | No |
 | `system_info` | GET | — | `SystemInfo` | No |

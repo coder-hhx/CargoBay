@@ -1,6 +1,6 @@
 # Frontend Specification
 
-> Version: 1.1.0 | Last Updated: 2026-03-20 | Author: frontend-architect
+> Version: 1.2.0 | Last Updated: 2026-03-21 | Author: frontend-architect
 
 ---
 
@@ -134,6 +134,7 @@ crates/cratebay-gui/src/
 ├── pages/
 │   ├── ChatPage.tsx            # Default page — Chat-First interface
 │   ├── ContainersPage.tsx      # Unified container management
+│   ├── ImagesPage.tsx          # Container image management (pull, list, delete)
 │   ├── McpPage.tsx             # MCP server management
 │   └── SettingsPage.tsx        # App settings and preferences
 └── tools/
@@ -271,7 +272,7 @@ Manages application-level state: theme, sidebar, current page, global status.
 ```typescript
 interface AppState {
   // Navigation
-  currentPage: "chat" | "containers" | "mcp" | "settings";
+  currentPage: "chat" | "containers" | "images" | "mcp" | "settings";
   setCurrentPage: (page: AppState["currentPage"]) => void;
 
   // Theme
@@ -289,6 +290,10 @@ interface AppState {
   runtimeStatus: "starting" | "running" | "stopped" | "error";
   setDockerConnected: (connected: boolean) => void;
   setRuntimeStatus: (status: AppState["runtimeStatus"]) => void;
+
+  // Runtime control operations
+  runtimeLoading: boolean;
+  setRuntimeLoading: (loading: boolean) => void;
 
   // Notifications
   notifications: Notification[];
@@ -811,7 +816,35 @@ Unified container and sandbox management — a visual dashboard for what the age
 - Inline actions: start, stop, delete, open terminal
 - Container detail panel with logs and exec terminal
 
-### 5.3 McpPage
+### 5.3 ImagesPage
+
+Container image management -- pull, list, and delete container images.
+
+**Layout:**
+```
+┌──────────────────────────────────────────────┐
+│  TopBar: "Images" + Pull Image button        │
+├──────────────────────────────────────────────┤
+│  Image List                                  │
+│  ┌──────────────────────────────────────┐    │
+│  │ node:20-alpine   150 MB   2 days ago │    │
+│  │ python:3.12      200 MB   1 week ago │    │
+│  │ alpine:latest     8 MB   3 days ago  │    │
+│  └──────────────────────────────────────┘    │
+├──────────────────────────────────────────────┤
+│  Image Detail (selected)                     │
+│  - Tags, size, layers, created date          │
+│  - Delete button                             │
+└──────────────────────────────────────────────┘
+```
+
+**Key Behaviors:**
+- Lists all locally available container images from Docker
+- Pull new images by name:tag with progress indication
+- Delete unused images with confirmation dialog
+- Display image metadata: repository, tags, size, creation date
+
+### 5.4 McpPage
 
 MCP server management — configure, monitor, and test MCP server connections.
 
@@ -836,41 +869,61 @@ MCP server management — configure, monitor, and test MCP server connections.
 └──────────────────────────────────────────────┘
 ```
 
-### 5.4 SettingsPage
+### 5.5 SettingsPage
 
-Application configuration: LLM providers, API keys, preferences.
+Application configuration with 6 tabs: General, Providers, Appearance, Runtime, Advanced, About.
 
 **Layout:**
 ```
-┌──────────────────────────────────────────────┐
-│  TopBar: "Settings"                          │
-├──────────────────────────────────────────────┤
-│  Tabs: [General] [LLM Providers] [Advanced]  │
-├──────────────────────────────────────────────┤
-│  General:                                    │
-│  - Language (en / zh-CN)                     │
-│  - Theme (dark / light / system)             │
-│  - Send on Enter toggle                      │
-│  - Show agent thinking toggle                │
-│                                              │
-│  LLM Providers:                              │
-│  - Provider list with add/edit/delete        │
-│  - Provider form: name, base URL, API key,   │
-│    API format (dropdown)                     │
-│  - API key input (masked, saved to backend)  │
-│  - Test connection button                    │
-│  - Model list (fetched from /v1/models)      │
-│  - Model enable/disable checkboxes           │
-│  - Refresh models button                     │
-│  - Reasoning effort selector (shown only     │
-│    for OpenAI Responses API providers)       │
-│                                              │
-│  Advanced:                                   │
-│  - Container default TTL                     │
-│  - Max conversation history                  │
-│  - Confirm destructive operations            │
-│  - Export/import settings                    │
-└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  TopBar: "Settings"                                          │
+├──────────────────────────────────────────────────────────────┤
+│  Tabs: [General] [Providers] [Appearance] [Runtime]          │
+│        [Advanced] [About]                                    │
+├──────────────────────────────────────────────────────────────┤
+│  General:                                                    │
+│  - Language (en / zh-CN)                                     │
+│  - Theme (dark / light / system)                             │
+│  - Send on Enter toggle                                      │
+│  - Show agent thinking toggle                                │
+│                                                              │
+│  Providers:                                                  │
+│  - Provider list with add/edit/delete                        │
+│  - Provider form: name, base URL, API key,                   │
+│    API format (dropdown)                                     │
+│  - API key input (masked, saved to backend)                  │
+│  - Test connection button                                    │
+│  - Model list (fetched from /v1/models)                      │
+│  - Model enable/disable checkboxes                           │
+│  - Refresh models button                                     │
+│  - Reasoning effort selector (shown only                     │
+│    for OpenAI Responses API providers)                       │
+│                                                              │
+│  Appearance:                                                 │
+│  - Theme mode (dark / light / system) with icon buttons      │
+│  - Font size slider (12-18px)                                │
+│  - Accent color selector (color swatches)                    │
+│                                                              │
+│  Runtime:                                                    │
+│  - VM Status (running/starting/stopped/error indicator)      │
+│  - Docker Connection status indicator                        │
+│  - Runtime Control: Start / Stop buttons                     │
+│    (calls runtime_start / runtime_stop Tauri commands)        │
+│  - CPU Cores slider (1-16)                                   │
+│  - Memory Allocation slider (2-32 GB)                        │
+│                                                              │
+│  Advanced:                                                   │
+│  - Container default TTL                                     │
+│  - Max conversation history                                  │
+│  - Confirm destructive operations                            │
+│                                                              │
+│  About:                                                      │
+│  - CrateBay logo and branding                                │
+│  - Version number                                            │
+│  - Built with info (Tauri v2 + React + TypeScript)           │
+│  - License (MIT)                                             │
+│  - Links to GitHub and website                               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -884,7 +937,7 @@ CrateBay uses **Zustand-based routing** — no React Router. This is a desktop a
 ```typescript
 // In appStore.ts
 interface AppState {
-  currentPage: "chat" | "containers" | "mcp" | "settings";
+  currentPage: "chat" | "containers" | "images" | "mcp" | "settings";
   setCurrentPage: (page: AppState["currentPage"]) => void;
 }
 
@@ -896,6 +949,7 @@ function App() {
     <AppLayout>
       {currentPage === "chat" && <ChatPage />}
       {currentPage === "containers" && <ContainersPage />}
+      {currentPage === "images" && <ImagesPage />}
       {currentPage === "mcp" && <McpPage />}
       {currentPage === "settings" && <SettingsPage />}
     </AppLayout>
@@ -905,7 +959,7 @@ function App() {
 
 ### Rationale
 
-- **4 pages** — URL-based routing adds unnecessary complexity for a desktop app
+- **5 pages** — URL-based routing adds unnecessary complexity for a desktop app
 - **No deep linking needed** — this is not a web app
 - **State preservation** — pages maintain state when switching (Zustand persists)
 - **Faster transitions** — no route matching overhead
