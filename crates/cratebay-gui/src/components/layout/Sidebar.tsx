@@ -40,9 +40,22 @@ export function Sidebar() {
   const deleteSession = useChatStore((s) => s.deleteSession);
 
   return (
-    <div className="flex h-full w-full flex-col bg-card pt-2">
+    <div className="flex h-full w-full flex-col bg-card">
+      {/* Logo header */}
+      <div className="flex items-center gap-2 px-3 py-3 text-sm font-semibold text-foreground">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white text-xs font-bold flex-shrink-0">
+          C
+        </div>
+        <span className="truncate">CrateBay</span>
+      </div>
+
+      {/* Divider */}
+      <div className="px-3">
+        <div className="h-px bg-border" />
+      </div>
+
       {/* Navigation items */}
-      <nav className="flex flex-col gap-1 px-3">
+      <nav className="flex flex-col gap-1 px-3 pt-2">
         {navItems.map((item) => {
           const Icon = item.icon;
           const label = t("nav", item.labelKey);
