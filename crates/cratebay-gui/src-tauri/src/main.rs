@@ -9,6 +9,8 @@ mod state;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri::{Emitter, Manager};
 
 use state::AppState;
@@ -22,6 +24,7 @@ async fn try_reconnect_docker(app_handle: &tauri::AppHandle) {
         tracing::info!("Docker reconnected via fallback path");
         let state = app_handle.state::<AppState>();
         state.set_docker(Some(Arc::new(docker)));
+        let _ = app_handle.emit("docker:connected", true);
     } else {
         tracing::warn!("Docker still not available after reconnection attempt");
     }
@@ -177,6 +180,15 @@ fn main() {
     tauri::Builder::default()
         .manage(app_state)
         .setup(move |app| {
+            // macOS: hide title text, show overlay traffic light buttons
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title("");
+                    let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
+                }
+            }
+
             // Start periodic health monitor (every 30s)
             let app_handle = app.handle().clone();
             let health_runtime = runtime.clone();

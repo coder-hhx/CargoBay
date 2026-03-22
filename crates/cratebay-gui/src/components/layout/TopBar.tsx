@@ -43,7 +43,10 @@ export function TopBar() {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
 
   return (
-    <header className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-border px-4">
+    <header className="flex flex-shrink-0 flex-col">
+      {/* Drag region for macOS overlay titlebar */}
+      <div className="h-8 flex-shrink-0" data-tauri-drag-region />
+      <div className="flex h-12 items-center gap-3 border-b border-border px-4">
       {/* Sidebar toggle */}
       <Button
         variant="ghost"
@@ -63,6 +66,7 @@ export function TopBar() {
       ) : (
         <DefaultTopBarContent currentPage={currentPage} />
       )}
+      </div>
     </header>
   );
 }

@@ -41,21 +41,24 @@ export function Sidebar() {
 
   return (
     <div className="flex h-full w-full flex-col bg-card">
-      {/* Logo header */}
-      <div className="flex items-center gap-2 px-3 py-3 text-sm font-semibold text-foreground">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white text-xs font-bold flex-shrink-0">
-          C
-        </div>
-        <span className="truncate">CrateBay</span>
-      </div>
+      {/* Drag region for macOS overlay titlebar */}
+      <div className="h-8 flex-shrink-0" data-tauri-drag-region />
 
-      {/* Divider */}
-      <div className="px-3">
-        <div className="h-px bg-border" />
+      {/* Logo header — aligned with nav items */}
+      <div className="flex items-center gap-2.5 px-3 pb-4">
+        <img
+          src="/logo.png"
+          alt="CrateBay"
+          className="h-7 w-7 flex-shrink-0 rounded-md"
+          draggable={false}
+        />
+        <span className="bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-sm font-semibold text-transparent">
+          CrateBay
+        </span>
       </div>
 
       {/* Navigation items */}
-      <nav className="flex flex-col gap-1 px-3 pt-2">
+      <nav className="flex flex-col gap-1 px-3">
         {navItems.map((item) => {
           const Icon = item.icon;
           const label = t("nav", item.labelKey);
