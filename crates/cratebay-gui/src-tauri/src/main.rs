@@ -9,11 +9,100 @@ mod state;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::Utc;
+
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 use tauri::{Emitter, Manager};
 
+use cratebay_core::{storage, MutexExt};
+
 use state::AppState;
+
+/// Check whether the shared Docker client in AppState is currently responsive.
+///
+/// This uses the already-connected client instead of creating a new connection
+/// each time, and retries briefly to smooth transient socket jitter.
+async fn is_shared_docker_responsive(app_handle: &tauri::AppHandle) -> bool {
+    let docker = {
+        let state = app_handle.state::<AppState>();
+        let guard = match state.docker.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to lock Docker state for health reconciliation: {}",
+                    e
+                );
+                return false;
+            }
+        };
+        guard.clone()
+    };
+
+    let Some(docker) = docker else {
+        return false;
+    };
+
+    for attempt in 0..3 {
+        if docker.ping().await.is_ok() {
+            return true;
+        }
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
+    false
+}
+
+/// Start runtime health monitor in Tauri async runtime.
+///
+/// Compared to the core-layer monitor thread, this version can reconcile
+/// transient degraded health results against AppState's shared Docker client
+/// before emitting `runtime:health`, reducing Ready→Starting flicker.
+fn start_runtime_health_monitor(
+    app_handle: tauri::AppHandle,
+    runtime: Arc<dyn cratebay_core::runtime::RuntimeManager>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+
+            let mut health = match runtime.health_check().await {
+                Ok(status) => status,
+                Err(e) => {
+                    tracing::warn!("Health check failed: {}", e);
+                    cratebay_core::runtime::HealthStatus {
+                        runtime_state: cratebay_core::runtime::RuntimeState::Error(e.to_string()),
+                        docker_responsive: false,
+                        docker_version: None,
+                        uptime_seconds: None,
+                        last_check: Utc::now().to_rfc3339(),
+                    }
+                }
+            };
+
+            if !health.docker_responsive
+                && matches!(
+                    health.runtime_state,
+                    cratebay_core::runtime::RuntimeState::Starting
+                        | cratebay_core::runtime::RuntimeState::Ready
+                        | cratebay_core::runtime::RuntimeState::Error(_)
+                )
+                && is_shared_docker_responsive(&app_handle).await
+            {
+                tracing::debug!(
+                    "Health monitor: keeping runtime Ready based on shared Docker client"
+                );
+                health.runtime_state = cratebay_core::runtime::RuntimeState::Ready;
+                health.docker_responsive = true;
+            }
+
+            let _ = app_handle.emit(events::event_names::RUNTIME_HEALTH, &health);
+        }
+    });
+}
 
 /// Try to (re)connect to Docker via any available path.
 ///
@@ -28,6 +117,118 @@ async fn try_reconnect_docker(app_handle: &tauri::AppHandle) {
     } else {
         tracing::warn!("Docker still not available after reconnection attempt");
     }
+}
+
+const SETTINGS_KEY_RUNTIME_HTTP_PROXY: &str = "runtimeHttpProxy";
+const SETTINGS_KEY_RUNTIME_HTTP_PROXY_BRIDGE: &str = "runtimeHttpProxyBridge";
+const SETTINGS_KEY_RUNTIME_HTTP_PROXY_BIND_HOST: &str = "runtimeHttpProxyBindHost";
+const SETTINGS_KEY_RUNTIME_HTTP_PROXY_BIND_PORT: &str = "runtimeHttpProxyBindPort";
+const SETTINGS_KEY_RUNTIME_HTTP_PROXY_GUEST_HOST: &str = "runtimeHttpProxyGuestHost";
+
+#[derive(Debug)]
+struct RuntimeHttpProxySettings {
+    proxy: Option<String>,
+    bridge_enabled: bool,
+    bind_host: Option<String>,
+    bind_port: Option<u16>,
+    guest_host: Option<String>,
+}
+
+fn normalize_optional_setting(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_boolish(raw: Option<String>) -> Option<bool> {
+    let value = raw?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn set_or_remove_env_var(key: &str, value: Option<&str>) {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        std::env::set_var(key, value);
+    } else {
+        std::env::remove_var(key);
+    }
+}
+
+fn load_runtime_http_proxy_settings(
+    app_handle: &tauri::AppHandle,
+) -> Option<RuntimeHttpProxySettings> {
+    let state = app_handle.state::<AppState>();
+    let db = state.db.lock_or_recover().ok()?;
+
+    let proxy = normalize_optional_setting(
+        storage::get_setting(&db, SETTINGS_KEY_RUNTIME_HTTP_PROXY)
+            .ok()
+            .flatten(),
+    );
+    let bridge_enabled = parse_boolish(
+        storage::get_setting(&db, SETTINGS_KEY_RUNTIME_HTTP_PROXY_BRIDGE)
+            .ok()
+            .flatten(),
+    )
+    .unwrap_or(false);
+    let bind_host = normalize_optional_setting(
+        storage::get_setting(&db, SETTINGS_KEY_RUNTIME_HTTP_PROXY_BIND_HOST)
+            .ok()
+            .flatten(),
+    );
+    let bind_port = storage::get_setting(&db, SETTINGS_KEY_RUNTIME_HTTP_PROXY_BIND_PORT)
+        .ok()
+        .flatten()
+        .and_then(|raw| raw.trim().parse::<u16>().ok())
+        .filter(|port| *port > 0);
+    let guest_host = normalize_optional_setting(
+        storage::get_setting(&db, SETTINGS_KEY_RUNTIME_HTTP_PROXY_GUEST_HOST)
+            .ok()
+            .flatten(),
+    );
+
+    Some(RuntimeHttpProxySettings {
+        proxy,
+        bridge_enabled,
+        bind_host,
+        bind_port,
+        guest_host,
+    })
+}
+
+fn apply_runtime_http_proxy_env(app_handle: &tauri::AppHandle) {
+    let Some(settings) = load_runtime_http_proxy_settings(app_handle) else {
+        return;
+    };
+
+    set_or_remove_env_var("CRATEBAY_RUNTIME_HTTP_PROXY", settings.proxy.as_deref());
+    std::env::set_var(
+        "CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE",
+        if settings.bridge_enabled { "1" } else { "0" },
+    );
+    set_or_remove_env_var(
+        "CRATEBAY_RUNTIME_HTTP_PROXY_BIND_HOST",
+        settings.bind_host.as_deref(),
+    );
+    set_or_remove_env_var(
+        "CRATEBAY_RUNTIME_HTTP_PROXY_BIND_PORT",
+        settings.bind_port.map(|port| port.to_string()).as_deref(),
+    );
+    set_or_remove_env_var(
+        "CRATEBAY_RUNTIME_HTTP_PROXY_GUEST_HOST",
+        settings.guest_host.as_deref(),
+    );
+
+    tracing::info!(
+        bridge_enabled = settings.bridge_enabled,
+        bind_host = ?settings.bind_host,
+        bind_port = ?settings.bind_port,
+        guest_host = ?settings.guest_host,
+        proxy_configured = settings.proxy.is_some(),
+        "Applied runtime HTTP proxy settings for runtime auto-start"
+    );
 }
 
 fn main() {
@@ -192,12 +393,7 @@ fn main() {
             // Start periodic health monitor (every 30s)
             let app_handle = app.handle().clone();
             let health_runtime = runtime.clone();
-            cratebay_core::runtime::start_health_monitor(
-                health_runtime,
-                move |health| {
-                    let _ = app_handle.emit(events::event_names::RUNTIME_HEALTH, &health);
-                },
-            );
+            start_runtime_health_monitor(app_handle, health_runtime);
             tracing::info!("Runtime health monitor started");
 
             // ── Runtime auto-start (background, non-blocking) ────────
@@ -231,6 +427,10 @@ fn main() {
 
                         tracing::info!("Starting built-in runtime auto-start sequence...");
 
+                        // Apply persisted runtime HTTP proxy settings so the VM can reach registries
+                        // when started automatically (without the user clicking "Start Runtime").
+                        apply_runtime_http_proxy_env(&auto_start_handle);
+
                         // Step 1: Detect current state
                         let current_state = match auto_start_runtime.detect().await {
                             Ok(s) => s,
@@ -255,6 +455,11 @@ fn main() {
                                             progress.percent,
                                             progress.message
                                         );
+                                        let _ = handle_clone.emit(
+                                            events::event_names::RUNTIME_PROVISION,
+                                            &progress,
+                                        );
+                                        // Backward-compatible alias (deprecated)
                                         let _ = handle_clone.emit("runtime:provision-progress", &progress);
                                     }),
                                 ).await {
@@ -396,7 +601,12 @@ fn main() {
             commands::container::container_exec_stream,
             commands::container::container_logs,
             commands::container::container_inspect,
+            commands::container::container_stats,
             commands::container::image_list,
+            commands::container::image_search,
+            commands::container::image_inspect,
+            commands::container::image_remove,
+            commands::container::image_tag,
             commands::container::image_pull,
             // LLM
             commands::llm::llm_proxy_stream,

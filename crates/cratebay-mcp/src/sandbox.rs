@@ -149,7 +149,7 @@ pub async fn create_sandbox(
             "cpu_cores must be 1-16".to_string(),
         ));
     }
-    if memory_mb < 256 || memory_mb > 65536 {
+    if !(256..=65536).contains(&memory_mb) {
         return Err(McpError::InvalidParams(
             "memory_mb must be 256-65536".to_string(),
         ));

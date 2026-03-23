@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { SettingsPageObject } from "./pages";
+import { installTauriMock } from "./tauri-mock";
 
 /**
  * Settings E2E Tests
@@ -10,6 +11,8 @@ test.describe("Settings", () => {
 
   test.beforeEach(async ({ page }) => {
     settingsPage = new SettingsPageObject(page);
+
+    await installTauriMock(page);
 
     // 导航到应用
     await settingsPage.goto("/");
@@ -199,8 +202,11 @@ test.describe("Settings", () => {
       }
 
       // 验证页面仍然活跃
-      const stillLoaded = await page.url().includes("settings").catch(() => false);
-      expect(typeof stillLoaded).toBe("boolean");
+      const settingsTabVisible = await page
+        .locator('[data-testid="settings-tab-general"]')
+        .isVisible({ timeout: 3000 })
+        .catch(() => false);
+      expect(settingsTabVisible).toBeTruthy();
     }
   });
 

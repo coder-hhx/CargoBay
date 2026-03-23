@@ -8,6 +8,7 @@
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { containerTools } from "./containerTools";
+import { imageTools } from "./imageTools";
 import { filesystemTools } from "./filesystemTools";
 import { shellTools } from "./shellTools";
 import { mcpTools } from "./mcpTools";
@@ -24,6 +25,7 @@ import type { RiskLevel } from "@/types/agent";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const builtinTools: AgentTool<any>[] = [
   ...containerTools,
+  ...imageTools,
   ...filesystemTools,
   ...shellTools,
   ...mcpTools,
@@ -51,6 +53,12 @@ export const toolRiskLevels: Record<string, RiskLevel> = {
   container_delete: "high",
   container_exec: "medium",
   container_logs: "low",
+  image_list: "low",
+  image_search: "low",
+  image_pull: "medium",
+  image_remove: "high",
+  image_inspect: "low",
+  image_tag: "medium",
 
   // Filesystem tools
   file_read: "low",

@@ -49,7 +49,10 @@ export function Sidebar() {
           className="h-7 w-7 flex-shrink-0"
           draggable={false}
         />
-        <span className="bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-sm font-semibold text-transparent">
+        <span
+          data-testid="app-title"
+          className="bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-sm font-semibold text-transparent"
+        >
           CrateBay
         </span>
       </div>
@@ -64,6 +67,8 @@ export function Sidebar() {
             <button
               key={item.id}
               onClick={() => setCurrentPage(item.id)}
+              data-testid={`nav-${item.id}`}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors focus:outline-none",
                 active
@@ -91,6 +96,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => void createSession()}
+              data-testid="new-session"
               className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none"
               title={t("sidebar", "newConversation")}
             >
@@ -98,7 +104,10 @@ export function Sidebar() {
             </button>
           </div>
 
-          <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto">
+          <div
+            className="flex flex-1 flex-col gap-0.5 overflow-y-auto"
+            data-testid="session-list"
+          >
             {sessions.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted-foreground">
                 {t("sidebar", "noConversations")}
@@ -107,6 +116,7 @@ export function Sidebar() {
               sessions.map((session) => (
                 <div
                   key={session.id}
+                  data-testid="session-item"
                   className={cn(
                     "group relative flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors",
                     session.id === activeSessionId
@@ -135,6 +145,7 @@ export function Sidebar() {
                       e.stopPropagation();
                       void deleteSession(session.id);
                     }}
+                    data-testid="session-delete"
                     className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:outline-none group-hover:opacity-100"
                     title={t("sidebar", "deleteConversation")}
                   >

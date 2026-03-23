@@ -70,7 +70,7 @@ pub fn validate_resource_limits(cpu: u32, memory_mb: u64) -> Result<(), AppError
     if cpu == 0 || cpu > 16 {
         return Err(AppError::Validation("CPU cores must be 1-16".into()));
     }
-    if memory_mb < 256 || memory_mb > 65536 {
+    if !(256..=65536).contains(&memory_mb) {
         return Err(AppError::Validation("Memory must be 256-65536 MB".into()));
     }
     Ok(())

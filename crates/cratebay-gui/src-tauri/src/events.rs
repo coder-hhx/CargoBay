@@ -10,9 +10,12 @@ pub mod event_names {
     /// `image:pull:{channel_id}` where channel_id is unique per pull operation.
     pub const IMAGE_PULL_PROGRESS_PREFIX: &str = "image:pull";
 
+    #[allow(dead_code)]
     pub const CONTAINER_STATUS_CHANGE: &str = "container:status-change";
+    #[allow(dead_code)]
     pub const MCP_CONNECTION_CHANGE: &str = "mcp:connection-change";
     pub const RUNTIME_HEALTH: &str = "runtime:health";
+    pub const RUNTIME_PROVISION: &str = "runtime:provision";
 }
 
 /// Build a scoped LLM stream event name.

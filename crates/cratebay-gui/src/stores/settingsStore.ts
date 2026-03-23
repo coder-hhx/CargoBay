@@ -1,11 +1,12 @@
 import { create } from "zustand";
-import { invoke } from "@/lib/tauri";
+import { invoke, isTauri } from "@/lib/tauri";
 import type {
   ApiFormat,
   LlmProviderInfo,
   LlmProviderCreateRequest,
   LlmProviderUpdateRequest,
   LlmModelInfo,
+  ProviderTestResult,
   AppSettings,
 } from "@/types/settings";
 import { DEFAULT_REGISTRY_MIRRORS } from "@/types/settings";
@@ -17,6 +18,7 @@ export type {
   LlmProviderCreateRequest,
   LlmProviderUpdateRequest,
   LlmModelInfo,
+  ProviderTestResult,
   AppSettings,
 };
 
@@ -32,7 +34,7 @@ interface SettingsState {
   createProvider: (request: LlmProviderCreateRequest) => Promise<LlmProviderInfo>;
   updateProvider: (id: string, request: LlmProviderUpdateRequest) => Promise<LlmProviderInfo>;
   deleteProvider: (id: string) => Promise<void>;
-  testProvider: (id: string) => Promise<boolean>;
+  testProvider: (id: string) => Promise<ProviderTestResult>;
 
   // Models
   models: Record<string, LlmModelInfo[]>; // providerId → models[]
@@ -67,9 +69,26 @@ const defaultSettings: AppSettings = {
   confirmDestructiveOps: true,
   reasoningEffort: "medium",
   registryMirrors: DEFAULT_REGISTRY_MIRRORS,
+  runtimeHttpProxy: "",
+  runtimeHttpProxyBridge: false,
+  runtimeHttpProxyBindHost: "0.0.0.0",
+  runtimeHttpProxyBindPort: 3128,
+  runtimeHttpProxyGuestHost: "192.168.64.1",
 };
 
 let providerIdCounter = 0;
+
+const SETTINGS_KEY_DEFAULT_PROVIDER = "default_provider";
+const SETTINGS_KEY_DEFAULT_MODEL = "default_model";
+
+function shouldUseMockFallback(): boolean {
+  return !isTauri();
+}
+
+async function persistSelectionSetting(key: string, value: string | null): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("settings_update", { key, value: value ?? "" });
+}
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   // LLM Providers
@@ -82,13 +101,44 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     try {
       const providers = await invoke<LlmProviderInfo[]>("llm_provider_list");
       set({ providers, providersLoading: false });
-    } catch {
-      // In non-Tauri env, keep current state
+
+      // Load stored models for each provider (no network call)
+      if (isTauri() && providers.length > 0) {
+        const entries = await Promise.all(
+          providers.map(async (p) => {
+            try {
+              const models = await invoke<LlmModelInfo[]>("llm_models_list", {
+                provider_id: p.id,
+              });
+              return [p.id, models] as const;
+            } catch {
+              return [p.id, [] as LlmModelInfo[]] as const;
+            }
+          }),
+        );
+        set((state) => ({
+          models: { ...state.models, ...Object.fromEntries(entries) },
+        }));
+      }
+
+      // If no active provider is selected yet, select the first one.
+      if (get().activeProviderId === null && providers.length > 0) {
+        get().setActiveProvider(providers[0].id);
+      }
+    } catch (err) {
       set({ providersLoading: false });
+      if (!shouldUseMockFallback()) {
+        console.warn("[settingsStore] fetchProviders failed:", err);
+        return;
+      }
+      // In non-Tauri env, keep current state
     }
   },
 
-  setActiveProvider: (id) => set({ activeProviderId: id }),
+  setActiveProvider: (id) => {
+    set({ activeProviderId: id });
+    void persistSelectionSetting(SETTINGS_KEY_DEFAULT_PROVIDER, id);
+  },
 
   createProvider: async (request) => {
     try {
@@ -99,9 +149,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         providers: [...state.providers, provider],
         activeProviderId: provider.id,
       }));
+      void persistSelectionSetting(SETTINGS_KEY_DEFAULT_PROVIDER, provider.id);
       return provider;
-    } catch {
-      // Mock for non-Tauri development
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        throw err;
+      }
+
+      // Mock for non-Tauri development only
       const provider: LlmProviderInfo = {
         id: `provider-${++providerIdCounter}-${Date.now()}`,
         name: request.name,
@@ -116,6 +171,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         providers: [...state.providers, provider],
         activeProviderId: provider.id,
       }));
+      void persistSelectionSetting(SETTINGS_KEY_DEFAULT_PROVIDER, provider.id);
       return provider;
     }
   },
@@ -130,8 +186,12 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         providers: state.providers.map((p) => (p.id === id ? provider : p)),
       }));
       return provider;
-    } catch {
-      // Mock for non-Tauri development
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        throw err;
+      }
+
+      // Mock for non-Tauri development only
       const existing = get().providers.find((p) => p.id === id);
       if (existing === undefined) throw new Error(`Provider ${id} not found`);
       const updated: LlmProviderInfo = {
@@ -151,24 +211,37 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   deleteProvider: async (id) => {
-    try {
+    if (isTauri()) {
       await invoke("llm_provider_delete", { id });
-    } catch {
-      // Mock for non-Tauri development
     }
+
+    let nextActiveProvider: string | null = null;
+    let nextActiveModel: string | null = null;
     set((state) => ({
       providers: state.providers.filter((p) => p.id !== id),
       activeProviderId: state.activeProviderId === id ? null : state.activeProviderId,
+      activeModelId: state.activeProviderId === id ? null : state.activeModelId,
       models: Object.fromEntries(Object.entries(state.models).filter(([k]) => k !== id)),
     }));
+    {
+      const current = get();
+      nextActiveProvider = current.activeProviderId;
+      nextActiveModel = current.activeModelId;
+    }
+    void persistSelectionSetting(SETTINGS_KEY_DEFAULT_PROVIDER, nextActiveProvider);
+    void persistSelectionSetting(SETTINGS_KEY_DEFAULT_MODEL, nextActiveModel);
   },
 
   testProvider: async (id) => {
-    try {
-      return await invoke<boolean>("llm_provider_test", { id });
-    } catch {
-      return false;
+    if (isTauri()) {
+      return invoke<ProviderTestResult>("llm_provider_test", { provider_id: id });
     }
+    return {
+      success: true,
+      latencyMs: 0,
+      model: "mock-model",
+      error: null,
+    };
   },
 
   // Models
@@ -176,20 +249,31 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   activeModelId: null,
   modelsLoading: {},
 
-  setActiveModel: (modelId) => set({ activeModelId: modelId }),
+  setActiveModel: (modelId) => {
+    set({ activeModelId: modelId });
+    void persistSelectionSetting(SETTINGS_KEY_DEFAULT_MODEL, modelId);
+  },
 
   fetchModels: async (providerId) => {
     set((state) => ({
       modelsLoading: { ...state.modelsLoading, [providerId]: true },
     }));
     try {
-      const models = await invoke<LlmModelInfo[]>("llm_models_fetch", { providerId });
+      const models = await invoke<LlmModelInfo[]>("llm_models_fetch", { provider_id: providerId });
       set((state) => ({
         models: { ...state.models, [providerId]: models },
         modelsLoading: { ...state.modelsLoading, [providerId]: false },
       }));
-    } catch {
-      // Mock: generate some sample models
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        set((state) => ({
+          modelsLoading: { ...state.modelsLoading, [providerId]: false },
+        }));
+        console.warn("[settingsStore] fetchModels failed:", err);
+        return;
+      }
+
+      // Mock for non-Tauri development only: generate some sample models
       const mockModels: LlmModelInfo[] = [
         {
           id: "mock-model-1",
@@ -208,9 +292,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   toggleModel: async (providerId, modelId, enabled) => {
     try {
-      await invoke("llm_models_toggle", { providerId, modelId, enabled });
-    } catch {
-      // Mock for non-Tauri development
+      await invoke("llm_models_toggle", {
+        provider_id: providerId,
+        model_id: modelId,
+        enabled,
+      });
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        console.warn("[settingsStore] toggleModel failed:", err);
+      }
+      // Mock for non-Tauri development only
     }
     set((state) => ({
       models: {
@@ -245,11 +336,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         "language", "theme", "sendOnEnter", "showAgentThinking",
         "maxConversationHistory", "containerDefaultTtlHours",
         "confirmDestructiveOps", "reasoningEffort", "registryMirrors",
+        "runtimeHttpProxy", "runtimeHttpProxyBridge", "runtimeHttpProxyBindHost",
+        "runtimeHttpProxyBindPort", "runtimeHttpProxyGuestHost",
       ];
       const fetched: Partial<AppSettings> = {};
       for (const key of keys) {
         const value = await invoke<string | null>("settings_get", { key });
-          if (value !== null && value !== undefined) {
+        if (value !== null && value !== undefined) {
           // Parse booleans and numbers back from string storage
           if (value === "true" || value === "false") {
             (fetched as Record<string, unknown>)[key] = value === "true";
@@ -259,15 +352,43 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
             } catch {
               // Invalid JSON, keep default
             }
-          } else if (!isNaN(Number(value)) && key !== "language" && key !== "theme" && key !== "reasoningEffort") {
+          } else if (
+            !isNaN(Number(value)) &&
+            key !== "language" &&
+            key !== "theme" &&
+            key !== "reasoningEffort" &&
+            key !== "runtimeHttpProxy" &&
+            key !== "runtimeHttpProxyBindHost" &&
+            key !== "runtimeHttpProxyGuestHost"
+          ) {
             (fetched as Record<string, unknown>)[key] = Number(value);
           } else {
             (fetched as Record<string, unknown>)[key] = value;
           }
         }
       }
-      set({ settings: { ...defaultSettings, ...fetched } });
-    } catch {
+      const defaultProvider = await invoke<string | null>("settings_get", {
+        key: SETTINGS_KEY_DEFAULT_PROVIDER,
+      });
+      const defaultModel = await invoke<string | null>("settings_get", {
+        key: SETTINGS_KEY_DEFAULT_MODEL,
+      });
+      set({
+        settings: { ...defaultSettings, ...fetched },
+        activeProviderId:
+          defaultProvider !== null && defaultProvider.trim().length > 0
+            ? defaultProvider
+            : get().activeProviderId,
+        activeModelId:
+          defaultModel !== null && defaultModel.trim().length > 0
+            ? defaultModel
+            : get().activeModelId,
+      });
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        console.warn("[settingsStore] fetchSettings failed:", err);
+        return;
+      }
       // Keep defaults in non-Tauri env
     }
   },
@@ -281,8 +402,12 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         const serialized = Array.isArray(value) ? JSON.stringify(value) : String(value);
         await invoke("settings_update", { key, value: serialized });
       }
-    } catch {
-      // Mock for non-Tauri development
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        console.warn("[settingsStore] updateSettings failed:", err);
+        return;
+      }
+      // Mock for non-Tauri development only
     }
   },
 
@@ -294,14 +419,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   saveApiKey: async (providerId, key) => {
     try {
-      await invoke("api_key_save", { providerId, apiKey: key });
+      await invoke("api_key_save", {
+        provider_id: providerId,
+        api_key: key,
+      });
       set((state) => ({
         providers: state.providers.map((p) =>
           p.id === providerId ? { ...p, hasApiKey: true } : p,
         ),
       }));
-    } catch {
-      // Mock for non-Tauri development
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        throw err;
+      }
+      // Mock for non-Tauri development only
       set((state) => ({
         providers: state.providers.map((p) =>
           p.id === providerId ? { ...p, hasApiKey: key.length > 0 } : p,
@@ -312,9 +443,12 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   deleteApiKey: async (providerId) => {
     try {
-      await invoke("api_key_delete", { providerId });
-    } catch {
-      // Mock for non-Tauri development
+      await invoke("api_key_delete", { provider_id: providerId });
+    } catch (err) {
+      if (!shouldUseMockFallback()) {
+        throw err;
+      }
+      // Mock for non-Tauri development only
     }
     set((state) => ({
       providers: state.providers.map((p) =>

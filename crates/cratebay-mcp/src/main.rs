@@ -162,15 +162,13 @@ async fn handle_request(
         )),
     };
 
-    let response_str = match response_value {
+    match response_value {
         Ok(result) => {
             let response = JsonRpcResponse::new(id, result);
             serde_json::to_string(&response).ok()
         }
         Err(err_response) => serde_json::to_string(&err_response).ok(),
-    };
-
-    response_str
+    }
 }
 
 /// Handle the `initialize` request.

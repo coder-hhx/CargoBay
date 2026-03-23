@@ -20,7 +20,7 @@ fn api_format_as_str_roundtrip() {
     ];
     for format in &formats {
         let s = format.as_str();
-        let recovered = ApiFormat::from_str(s);
+        let recovered = ApiFormat::parse_db(s);
         assert_eq!(
             recovered.as_ref(),
             Some(format),
@@ -34,9 +34,9 @@ fn api_format_as_str_roundtrip() {
 
 #[test]
 fn api_format_from_str_unknown_returns_none() {
-    assert_eq!(ApiFormat::from_str("unknown"), None);
-    assert_eq!(ApiFormat::from_str(""), None);
-    assert_eq!(ApiFormat::from_str("OpenAI"), None); // Case-sensitive
+    assert_eq!(ApiFormat::parse_db("unknown"), None);
+    assert_eq!(ApiFormat::parse_db(""), None);
+    assert_eq!(ApiFormat::parse_db("OpenAI"), None); // Case-sensitive
 }
 
 #[test]
@@ -264,8 +264,8 @@ fn llm_provider_serde_roundtrip() {
 
     assert_eq!(recovered.id, "test-id");
     assert_eq!(recovered.api_format, ApiFormat::Anthropic);
-    assert_eq!(recovered.enabled, true);
-    assert_eq!(recovered.has_api_key, false);
+    assert!(recovered.enabled);
+    assert!(!recovered.has_api_key);
 }
 
 // ─── UsageStats Default ────────────────────────────────────────────

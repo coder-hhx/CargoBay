@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { McpPageObject } from "./pages";
+import { installTauriMock } from "./tauri-mock";
 
 /**
  * MCP Servers E2E Tests
@@ -11,68 +12,47 @@ test.describe("MCP Servers", () => {
   test.beforeEach(async ({ page }) => {
     mcpPage = new McpPageObject(page);
 
-    // Mock MCP 服务器数据
-    await page.addInitScript(() => {
-      (window as any).__MOCK_TAURI__ = {
-        mcpServers: [
-          {
-            id: "shadcn-1",
-            name: "shadcn",
-            command: "shadcn",
-            args: [],
-            env: {},
-            enabled: true,
-            status: "connected",
-            transport: "stdio",
-            toolCount: 7,
-          },
-          {
-            id: "cratebay-1",
-            name: "cratebay-mcp",
-            command: "cratebay-mcp",
-            args: ["--workspace", "/workspace"],
-            env: { CRATEBAY_MCP_WORKSPACE_ROOT: "/workspace" },
-            enabled: false,
-            status: "disconnected",
-            transport: "stdio",
-            toolCount: 12,
-          },
-        ],
-        mcpTools: [
-          {
-            serverId: "shadcn-1",
-            serverName: "shadcn",
-            name: "get_project_registries",
-            description: "Get configured registry names from components.json",
-            inputSchema: { type: "object", properties: {} },
-          },
-          {
-            serverId: "shadcn-1",
-            serverName: "shadcn",
-            name: "list_items_in_registries",
-            description: "List items from registries",
-            inputSchema: { type: "object", properties: {} },
-          },
-        ],
-      };
-
-      // Mock invoke
-      const originalInvoke = (window as any).__TAURI_API__.invoke;
-      (window as any).__TAURI_API__.invoke = async (
-        command: string,
-        args?: Record<string, unknown>
-      ) => {
-        switch (command) {
-          case "mcp_list_servers":
-            return (window as any).__MOCK_TAURI__.mcpServers;
-          case "mcp_server_tools":
-            return (window as any).__MOCK_TAURI__.mcpTools.filter(
-              (t: any) => t.serverId === (args as any)?.serverId
-            );
-          default:
-            return null;
-        }
-      };
+    await installTauriMock(page, {
+      mcpServers: [
+        {
+          id: "shadcn-1",
+          name: "shadcn",
+          command: "shadcn",
+          args: [],
+          env: {},
+          enabled: true,
+          status: "connected",
+          transport: "stdio",
+          toolCount: 7,
+        },
+        {
+          id: "cratebay-1",
+          name: "cratebay-mcp",
+          command: "cratebay-mcp",
+          args: ["--workspace", "/workspace"],
+          env: { CRATEBAY_MCP_WORKSPACE_ROOT: "/workspace" },
+          enabled: false,
+          status: "disconnected",
+          transport: "stdio",
+          toolCount: 12,
+        },
+      ],
+      mcpTools: [
+        {
+          serverId: "shadcn-1",
+          serverName: "shadcn",
+          name: "get_project_registries",
+          description: "Get configured registry names from components.json",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          serverId: "shadcn-1",
+          serverName: "shadcn",
+          name: "list_items_in_registries",
+          description: "List items from registries",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
     });
 
     // 导航到应用
@@ -359,6 +339,8 @@ test.describe("MCP Servers", () => {
     // 刷新页面
     await page.reload();
     await page.waitForTimeout(1000);
+    await mcpPage.navigateToMcp();
+    await page.waitForTimeout(500);
 
     // 寻找空状态消息或 Add 按钮
     const emptyMsg = page.locator("text=No servers, text=Get started, text=Add");

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useAppStore } from "@/stores/appStore";
@@ -39,12 +39,12 @@ export function SettingsPage() {
     <div className="flex h-full flex-col overflow-auto p-6">
       <Tabs defaultValue="general" className="flex-1">
         <TabsList>
-          <TabsTrigger value="general">{t("settings", "general")}</TabsTrigger>
-          <TabsTrigger value="providers">{t("settings", "providers")}</TabsTrigger>
-          <TabsTrigger value="appearance">{t("settings", "appearance")}</TabsTrigger>
-          <TabsTrigger value="runtime">{t("settings", "runtime")}</TabsTrigger>
-          <TabsTrigger value="advanced">{t("settings", "advanced")}</TabsTrigger>
-          <TabsTrigger value="about">{t("settings", "about")}</TabsTrigger>
+          <TabsTrigger value="general" data-testid="settings-tab-general">{t("settings", "general")}</TabsTrigger>
+          <TabsTrigger value="providers" data-testid="settings-tab-providers">{t("settings", "providers")}</TabsTrigger>
+          <TabsTrigger value="appearance" data-testid="settings-tab-appearance">{t("settings", "appearance")}</TabsTrigger>
+          <TabsTrigger value="runtime" data-testid="settings-tab-runtime">{t("settings", "runtime")}</TabsTrigger>
+          <TabsTrigger value="advanced" data-testid="settings-tab-advanced">{t("settings", "advanced")}</TabsTrigger>
+          <TabsTrigger value="about" data-testid="settings-tab-about">{t("settings", "about")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-4">
@@ -331,6 +331,8 @@ function RuntimeStatusDot({
 
 function RuntimeTab() {
   const { t } = useI18n();
+  const settings = useSettingsStore((s) => s.settings);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
   const runtimeStatus = useAppStore((s) => s.runtimeStatus);
   const dockerConnected = useAppStore((s) => s.dockerConnected);
   const runtimeLoading = useAppStore((s) => s.runtimeLoading);
@@ -338,6 +340,25 @@ function RuntimeTab() {
   const addNotification = useAppStore((s) => s.addNotification);
   const [cpuCores, setCpuCores] = useState(4);
   const [memoryGB, setMemoryGB] = useState(8);
+  const [proxyInput, setProxyInput] = useState(settings.runtimeHttpProxy);
+  const [bridgeEnabled, setBridgeEnabled] = useState(settings.runtimeHttpProxyBridge);
+  const [bindHostInput, setBindHostInput] = useState(settings.runtimeHttpProxyBindHost);
+  const [bindPortInput, setBindPortInput] = useState(String(settings.runtimeHttpProxyBindPort));
+  const [guestHostInput, setGuestHostInput] = useState(settings.runtimeHttpProxyGuestHost);
+
+  useEffect(() => {
+    setProxyInput(settings.runtimeHttpProxy);
+    setBridgeEnabled(settings.runtimeHttpProxyBridge);
+    setBindHostInput(settings.runtimeHttpProxyBindHost);
+    setBindPortInput(String(settings.runtimeHttpProxyBindPort));
+    setGuestHostInput(settings.runtimeHttpProxyGuestHost);
+  }, [
+    settings.runtimeHttpProxy,
+    settings.runtimeHttpProxyBridge,
+    settings.runtimeHttpProxyBindHost,
+    settings.runtimeHttpProxyBindPort,
+    settings.runtimeHttpProxyGuestHost,
+  ]);
 
   const runtimeStatusLabels: Record<"starting" | "running" | "stopped" | "error", string> = {
     running: t("settings", "runtimeRunning"),
@@ -391,6 +412,74 @@ function RuntimeTab() {
       setRuntimeLoading(false);
     }
   };
+
+  const handleRuntimeRestart = async () => {
+    try {
+      setRuntimeLoading(true);
+      if (runtimeStatus !== "stopped") {
+        await invoke("runtime_stop");
+      }
+      await invoke("runtime_start");
+      addNotification({
+        type: "success",
+        title: t("settings", "runtimeRestart"),
+        message: t("settings", "runtimeProxyRestartHint"),
+        dismissable: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addNotification({
+        type: "error",
+        title: t("common", "error"),
+        message,
+        dismissable: true,
+      });
+    } finally {
+      setRuntimeLoading(false);
+    }
+  };
+
+  const handleSaveRuntimeProxy = async () => {
+    const parsedBindPort = Number(bindPortInput.trim());
+    const bindPort = Number.isInteger(parsedBindPort) && parsedBindPort > 0 && parsedBindPort <= 65535
+      ? parsedBindPort
+      : 3128;
+    const bindHost = bindHostInput.trim().length > 0 ? bindHostInput.trim() : "0.0.0.0";
+    const guestHost = guestHostInput.trim().length > 0 ? guestHostInput.trim() : "192.168.64.1";
+    const proxy = proxyInput.trim();
+
+    try {
+      await updateSettings({
+        runtimeHttpProxy: proxy,
+        runtimeHttpProxyBridge: bridgeEnabled,
+        runtimeHttpProxyBindHost: bindHost,
+        runtimeHttpProxyBindPort: bindPort,
+        runtimeHttpProxyGuestHost: guestHost,
+      });
+      addNotification({
+        type: "success",
+        title: t("settings", "runtimeProxySaveSuccess"),
+        message: t("settings", "runtimeProxyRestartHint"),
+        dismissable: true,
+      });
+      setBindPortInput(String(bindPort));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addNotification({
+        type: "error",
+        title: t("common", "error"),
+        message,
+        dismissable: true,
+      });
+    }
+  };
+
+  const runtimeProxyDirty =
+    proxyInput.trim() !== settings.runtimeHttpProxy ||
+    bridgeEnabled !== settings.runtimeHttpProxyBridge ||
+    bindHostInput.trim() !== settings.runtimeHttpProxyBindHost ||
+    bindPortInput.trim() !== String(settings.runtimeHttpProxyBindPort) ||
+    guestHostInput.trim() !== settings.runtimeHttpProxyGuestHost;
 
   return (
     <div className="flex max-w-2xl flex-col">
@@ -460,8 +549,82 @@ function RuntimeTab() {
             <Square size={14} />
             {t("common", "stop")}
           </Button>
+          <Button
+            onClick={() => void handleRuntimeRestart()}
+            disabled={runtimeLoading}
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+          >
+            <RotateCcw size={14} />
+            {t("settings", "runtimeRestart")}
+          </Button>
         </div>
       </SettingRow>
+
+      <SettingRow
+        label={t("settings", "runtimeHttpProxy")}
+        description={t("settings", "runtimeHttpProxyDesc")}
+      >
+        <Input
+          value={proxyInput}
+          onChange={(e) => setProxyInput(e.target.value)}
+          placeholder="127.0.0.1:7890"
+          className="w-64 font-mono text-xs"
+        />
+      </SettingRow>
+
+      <SettingRow
+        label={t("settings", "runtimeHttpProxyBridge")}
+        description={t("settings", "runtimeHttpProxyBridgeDesc")}
+      >
+        <Switch
+          checked={bridgeEnabled}
+          onCheckedChange={setBridgeEnabled}
+        />
+      </SettingRow>
+
+      {bridgeEnabled && (
+        <>
+          <SettingRow label={t("settings", "runtimeHttpProxyBindHost")}>
+            <Input
+              value={bindHostInput}
+              onChange={(e) => setBindHostInput(e.target.value)}
+              className="w-48 font-mono text-xs"
+            />
+          </SettingRow>
+          <SettingRow label={t("settings", "runtimeHttpProxyBindPort")}>
+            <Input
+              type="number"
+              min={1}
+              max={65535}
+              value={bindPortInput}
+              onChange={(e) => setBindPortInput(e.target.value)}
+              className="w-32 font-mono text-xs"
+            />
+          </SettingRow>
+          <SettingRow label={t("settings", "runtimeHttpProxyGuestHost")}>
+            <Input
+              value={guestHostInput}
+              onChange={(e) => setGuestHostInput(e.target.value)}
+              className="w-48 font-mono text-xs"
+            />
+          </SettingRow>
+        </>
+      )}
+
+      <div className="flex items-center justify-between py-3 border-b border-border">
+        <p className="text-xs text-muted-foreground">{t("settings", "runtimeProxyRestartHint")}</p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void handleSaveRuntimeProxy()}
+          disabled={!runtimeProxyDirty}
+          className="gap-1.5"
+        >
+          {t("settings", "runtimeProxySave")}
+        </Button>
+      </div>
 
       {/* CPU Cores */}
       <SettingRow

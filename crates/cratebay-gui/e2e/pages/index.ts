@@ -55,7 +55,7 @@ export class AppLayoutPage extends BasePage {
     '[data-testid="nav-settings"], button:has-text("Settings")';
 
   // 应用标题
-  readonly appTitle = "text=CrateBay";
+  readonly appTitle = '[data-testid="app-title"]';
 
   async navigateToChat() {
     await this.click(this.chatNavButton);
@@ -125,7 +125,7 @@ export class ChatPageObject extends AppLayoutPage {
 
   // 会话
   readonly newSessionButton =
-    '[data-testid="new-session"], button:has-text("New")';
+    'header [data-testid="new-session"], header button:has-text("New")';
   readonly sessionList = '[data-testid="session-list"]';
 
   async sendMessage(text: string) {

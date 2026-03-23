@@ -26,7 +26,7 @@ export function McpToolList({ serverId }: McpToolListProps) {
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" data-testid="mcp-tool-list">
       {tools.map((tool) => (
         <McpToolRow key={`${tool.serverId}-${tool.name}`} tool={tool} />
       ))}
@@ -36,7 +36,7 @@ export function McpToolList({ serverId }: McpToolListProps) {
 
 function McpToolRow({ tool }: { tool: McpToolInfo }) {
   return (
-    <div className="rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted/50">
+    <div className="rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted/50" data-testid="mcp-tool-item">
       <div className="flex items-center gap-2">
         <Wrench className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
         <span className="font-medium text-foreground">{tool.name}</span>

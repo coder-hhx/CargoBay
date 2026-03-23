@@ -41,6 +41,16 @@ const DEFAULT_DISTRO_NAME: &str = "cratebay-runtime";
 /// WSL2 asset subdirectory name inside the bundled runtime assets.
 const WSL_ASSETS_SUBDIR: &str = "runtime-wsl";
 
+/// Number of ping attempts performed in each health check cycle.
+const HEALTH_PING_ATTEMPTS: usize = 3;
+
+/// Delay between ping retry attempts in a health check cycle.
+const HEALTH_PING_RETRY_DELAY: Duration = Duration::from_millis(400);
+
+/// Consecutive failed health-check cycles required before degrading
+/// from `Ready` to `Starting`.
+const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 2;
+
 // ---------------------------------------------------------------------------
 // WindowsRuntime struct
 // ---------------------------------------------------------------------------
@@ -60,6 +70,8 @@ pub struct WindowsRuntime {
     guest_ip: Arc<Mutex<Option<String>>>,
     /// Docker TCP endpoint string (e.g. `tcp://172.28.x.x:2375`).
     docker_host: Arc<Mutex<Option<String>>>,
+    /// Number of consecutive health-check cycles with failed Docker ping.
+    consecutive_health_failures: Arc<Mutex<u8>>,
 }
 
 impl WindowsRuntime {
@@ -78,7 +90,50 @@ impl WindowsRuntime {
             state: Arc::new(Mutex::new(RuntimeState::None)),
             guest_ip: Arc::new(Mutex::new(None)),
             docker_host: Arc::new(Mutex::new(None)),
+            consecutive_health_failures: Arc::new(Mutex::new(0)),
         }
+    }
+
+    /// Ping a Docker TCP endpoint with retries to smooth transient failures.
+    async fn ping_docker_host_with_retry(host: &str) -> bool {
+        for attempt in 0..HEALTH_PING_ATTEMPTS {
+            let host_c = host.to_string();
+            let ping_ok =
+                tokio::task::spawn_blocking(move || common::docker_http_ping_host(&host_c).is_ok())
+                    .await
+                    .unwrap_or(false);
+
+            if ping_ok {
+                return true;
+            }
+
+            if attempt + 1 < HEALTH_PING_ATTEMPTS {
+                tokio::time::sleep(HEALTH_PING_RETRY_DELAY).await;
+            }
+        }
+
+        false
+    }
+
+    /// Ping Docker inside WSL guest with retries.
+    async fn ping_docker_guest_with_retry(distro: String, port: u16) -> bool {
+        for attempt in 0..HEALTH_PING_ATTEMPTS {
+            let distro_c = distro.clone();
+            let ping_ok =
+                tokio::task::spawn_blocking(move || wsl_docker_ping_in_guest(&distro_c, port))
+                    .await
+                    .unwrap_or(false);
+
+            if ping_ok {
+                return true;
+            }
+
+            if attempt + 1 < HEALTH_PING_ATTEMPTS {
+                tokio::time::sleep(HEALTH_PING_RETRY_DELAY).await;
+            }
+        }
+
+        false
     }
 }
 
@@ -358,6 +413,14 @@ impl RuntimeManager for WindowsRuntime {
             .unwrap_or(false);
 
         if !running {
+            {
+                let mut failures = self.consecutive_health_failures.lock().await;
+                *failures = 0;
+            }
+            {
+                let mut state = self.state.lock().await;
+                *state = RuntimeState::Stopped;
+            }
             return Ok(HealthStatus {
                 runtime_state: RuntimeState::Stopped,
                 docker_responsive: false,
@@ -370,11 +433,7 @@ impl RuntimeManager for WindowsRuntime {
         // Check Docker via TCP ping if we have a cached docker_host
         let docker_host = self.docker_host.lock().await.clone();
         let (docker_responsive, docker_version) = if let Some(ref host) = docker_host {
-            let host_c = host.clone();
-            let ping_ok =
-                tokio::task::spawn_blocking(move || common::docker_http_ping_host(&host_c).is_ok())
-                    .await
-                    .unwrap_or(false);
+            let ping_ok = Self::ping_docker_host_with_retry(host).await;
 
             let version = if ping_ok {
                 let distro = self.distro_name.clone();
@@ -391,17 +450,30 @@ impl RuntimeManager for WindowsRuntime {
             // No cached host — try guest-side ping
             let distro = self.distro_name.clone();
             let port = wsl_docker_port();
-            let ping_ok =
-                tokio::task::spawn_blocking(move || wsl_docker_ping_in_guest(&distro, port))
-                    .await
-                    .unwrap_or(false);
+            let ping_ok = Self::ping_docker_guest_with_retry(distro, port).await;
             (ping_ok, None)
         };
 
+        let current_state = {
+            let state = self.state.lock().await;
+            state.clone()
+        };
+
         let runtime_state = if docker_responsive {
+            let mut failures = self.consecutive_health_failures.lock().await;
+            *failures = 0;
             RuntimeState::Ready
         } else {
-            RuntimeState::Error("Distro running but Docker is not responsive".into())
+            let mut failures = self.consecutive_health_failures.lock().await;
+            *failures = failures.saturating_add(1);
+
+            if matches!(current_state, RuntimeState::Ready)
+                && *failures < READY_DOWNGRADE_FAILURE_THRESHOLD
+            {
+                RuntimeState::Ready
+            } else {
+                RuntimeState::Starting
+            }
         };
 
         // Get uptime
@@ -410,6 +482,11 @@ impl RuntimeManager for WindowsRuntime {
             .await
             .ok()
             .flatten();
+
+        {
+            let mut state = self.state.lock().await;
+            *state = runtime_state.clone();
+        }
 
         Ok(HealthStatus {
             runtime_state,

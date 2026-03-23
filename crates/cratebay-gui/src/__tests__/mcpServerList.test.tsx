@@ -18,6 +18,7 @@ vi.mock("@/lib/tauri", () => ({
 
 import { McpServerList } from "@/components/mcp/McpServerList";
 import { useMcpStore } from "@/stores/mcpStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import type { McpServerInfo } from "@/types/mcp";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,12 @@ describe("McpServerList", () => {
     resetStore();
     resetTauriMocks();
     vi.clearAllMocks();
+    useSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        language: "en",
+      },
+    }));
   });
 
   it("shows loading state", () => {
@@ -71,7 +78,7 @@ describe("McpServerList", () => {
   it("shows empty state when no servers configured", () => {
     render(<McpServerList {...defaultProps} />);
 
-    expect(screen.getByText("No MCP servers configured.")).toBeInTheDocument();
+    expect(screen.getByText("No MCP servers configured")).toBeInTheDocument();
     expect(
       screen.getByText("Add a server to connect external tools."),
     ).toBeInTheDocument();

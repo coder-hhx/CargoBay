@@ -11,6 +11,15 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
+declare global {
+  interface Window {
+    __MOCK_TAURI_INVOKE__?: (
+      cmd: string,
+      args?: Record<string, unknown>,
+    ) => unknown | Promise<unknown>;
+  }
+}
+
 /**
  * Check whether the app is running inside a Tauri webview.
  * In Tauri v2, the internal bridge is exposed as `__TAURI_INTERNALS__`.
@@ -27,8 +36,16 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
   if (isTauri()) {
     return tauriInvoke<T>(cmd, args);
   }
-  console.warn(`[tauri-mock] invoke("${cmd}") — Tauri not available, returning mock`);
-  return {} as T;
+
+  const mockInvoke =
+    typeof window !== "undefined" ? window.__MOCK_TAURI_INVOKE__ : undefined;
+  if (typeof mockInvoke === "function") {
+    return (await mockInvoke(cmd, args)) as T;
+  }
+
+  throw new Error(
+    `[tauri] invoke("${cmd}") failed: Tauri bridge unavailable and no browser mock is configured`,
+  );
 }
 
 /**
@@ -45,8 +62,31 @@ export async function listen<T>(
     });
     return unlisten;
   }
-  console.warn(`[tauri-mock] listen("${event}") — Tauri not available, no-op`);
+
+  if (typeof window === "undefined") {
+    return () => {
+      /* no-op */
+    };
+  }
+
+  const domHandler: EventListener = (evt) => {
+    const custom = evt as CustomEvent<unknown>;
+    const detail = custom.detail;
+
+    if (
+      detail !== null &&
+      typeof detail === "object" &&
+      "payload" in (detail as Record<string, unknown>)
+    ) {
+      handler((detail as { payload: T }).payload);
+      return;
+    }
+
+    handler(detail as T);
+  };
+
+  window.addEventListener(event, domHandler);
   return () => {
-    /* no-op */
+    window.removeEventListener(event, domHandler);
   };
 }

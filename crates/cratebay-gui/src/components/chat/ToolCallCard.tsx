@@ -36,6 +36,7 @@ export function ToolCallCard({ toolCall, onRetry }: ToolCallCardProps) {
 
   return (
     <div
+      data-testid="tool-call-card"
       className={cn(
         "my-2 rounded-lg border bg-card text-sm",
         statusConfig.borderClass,

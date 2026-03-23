@@ -1,6 +1,6 @@
 # Agent Integration Specification
 
-> Version: 1.2.0 | Last Updated: 2026-03-20 | Author: frontend-architect
+> Version: 1.2.1 | Last Updated: 2026-03-23 | Author: frontend-architect
 
 ---
 
@@ -853,7 +853,18 @@ export const containerListTool: AgentTool<typeof ContainerListParams, ContainerL
 | `container_exec` | Execute a command inside a container | medium | `containerId`, `command` |
 | `container_logs` | Get container stdout/stderr logs | low | `containerId`, `tail?`, `since?` |
 
-### 5.2 Filesystem Tools
+### 5.2 Image Tools
+
+| Tool | Description | Risk Level | Parameters |
+|------|-------------|-----------|------------|
+| `image_list` | List all local images | low | — |
+| `image_search` | Search registry images (Docker Hub via engine search API) | low | `query`, `limit?` |
+| `image_pull` | Pull an image by reference | medium | `image`, `mirrors?` |
+| `image_remove` | Remove a local image | high | `imageId`, `force?` |
+| `image_inspect` | Inspect a local image | low | `imageId` |
+| `image_tag` | Tag a local image | medium | `sourceImage`, `targetImage` |
+
+### 5.3 Filesystem Tools
 
 | Tool | Description | Risk Level | Parameters |
 |------|-------------|-----------|------------|
@@ -861,13 +872,13 @@ export const containerListTool: AgentTool<typeof ContainerListParams, ContainerL
 | `file_write` | Write content to a file in a container | medium | `containerId`, `path`, `content` |
 | `file_list` | List files/directories in a container path | low | `containerId`, `path?` |
 
-### 5.3 Shell Tools
+### 5.4 Shell Tools
 
 | Tool | Description | Risk Level | Parameters |
 |------|-------------|-----------|------------|
 | `shell_exec` | Execute a shell command in a container | medium | `containerId`, `command`, `timeout?` |
 
-### 5.4 MCP Tools
+### 5.5 MCP Tools
 
 | Tool | Description | Risk Level | Parameters |
 |------|-------------|-----------|------------|
@@ -876,7 +887,7 @@ export const containerListTool: AgentTool<typeof ContainerListParams, ContainerL
 
 *Risk level for `mcp_call_tool` depends on the target tool. Destructive MCP tools are detected by keyword matching (see §9).
 
-### 5.5 System Tools
+### 5.6 System Tools
 
 | Tool | Description | Risk Level | Parameters |
 |------|-------------|-----------|------------|
@@ -889,6 +900,7 @@ export const containerListTool: AgentTool<typeof ContainerListParams, ContainerL
 | Category | Prefix | Description |
 |----------|--------|-------------|
 | Container | `container_` | Container lifecycle and interaction |
+| Image | `image_` | Image management (list, search, pull, remove, inspect, tag) |
 | Filesystem | `file_` | File read/write within containers |
 | Shell | `shell_` | Command execution in containers |
 | MCP | `mcp_` | MCP server tool forwarding |

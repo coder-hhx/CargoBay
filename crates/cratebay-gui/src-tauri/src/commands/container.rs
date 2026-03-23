@@ -6,8 +6,8 @@ use crate::state::AppState;
 use cratebay_core::error::AppError;
 use cratebay_core::models::AuditAction;
 use cratebay_core::models::{
-    ContainerCreateRequest, ContainerDetail, ContainerInfo, ContainerListFilters, DockerImageInfo,
-    ExecResult, LogEntry, LogOptions,
+    ContainerCreateRequest, ContainerDetail, ContainerInfo, ContainerListFilters, ContainerStats,
+    ExecResult, ImageInspectInfo, ImageSearchResult, LocalImageInfo, LogEntry, LogOptions,
 };
 use cratebay_core::MutexExt;
 use cratebay_core::{audit, container, storage, validation};
@@ -136,6 +136,16 @@ pub async fn container_inspect(
     container::inspect(&docker, &id).await
 }
 
+/// Get real-time resource usage snapshot for a container.
+#[tauri::command]
+pub async fn container_stats(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ContainerStats, AppError> {
+    let docker = state.require_docker()?;
+    container::stats(&docker, &id).await
+}
+
 /// Execute a command with streaming output via Tauri Events.
 ///
 /// Output is emitted as events on `exec:stream:{channel_id}`.
@@ -167,9 +177,52 @@ pub async fn container_exec_stream(
 
 /// List local Docker images.
 #[tauri::command]
-pub async fn image_list(state: State<'_, AppState>) -> Result<Vec<DockerImageInfo>, AppError> {
+pub async fn image_list(state: State<'_, AppState>) -> Result<Vec<LocalImageInfo>, AppError> {
     let docker = state.require_docker()?;
     container::image_list(&docker).await
+}
+
+/// Search images from registry (Docker Hub via Docker API).
+#[tauri::command]
+pub async fn image_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<ImageSearchResult>, AppError> {
+    let docker = state.require_docker()?;
+    container::image_search(&docker, &query, limit.map(u64::from)).await
+}
+
+/// Inspect a local image by id or reference.
+#[tauri::command]
+pub async fn image_inspect(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ImageInspectInfo, AppError> {
+    let docker = state.require_docker()?;
+    container::image_inspect(&docker, &id).await
+}
+
+/// Remove a local image.
+#[tauri::command]
+pub async fn image_remove(
+    state: State<'_, AppState>,
+    id: String,
+    force: Option<bool>,
+) -> Result<(), AppError> {
+    let docker = state.require_docker()?;
+    container::image_remove(&docker, &id, force.unwrap_or(false)).await
+}
+
+/// Tag a local image with a new `repo:tag`.
+#[tauri::command]
+pub async fn image_tag(
+    state: State<'_, AppState>,
+    source: String,
+    target: String,
+) -> Result<(), AppError> {
+    let docker = state.require_docker()?;
+    container::image_tag(&docker, &source, &target).await
 }
 
 /// Pull a Docker image (non-blocking).

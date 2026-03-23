@@ -129,6 +129,20 @@ pub struct LogEntry {
     pub timestamp: Option<String>,
 }
 
+/// Real-time container resource usage snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerStats {
+    pub id: String,
+    pub name: String,
+    pub read_at: String,
+    pub cpu_percent: f64,
+    pub cpu_cores_used: f64,
+    pub memory_used_mb: f64,
+    pub memory_limit_mb: f64,
+    pub memory_percent: f64,
+}
+
 /// Docker image information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +151,45 @@ pub struct DockerImageInfo {
     pub repo_tags: Vec<String>,
     pub size: i64,
     pub created: i64,
+}
+
+/// Docker local image info for the Images page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalImageInfo {
+    pub id: String,
+    pub repo_tags: Vec<String>,
+    /// Compatibility field used by existing container dropdown UI.
+    pub size: i64,
+    pub size_bytes: u64,
+    pub size_human: String,
+    pub created: i64,
+}
+
+/// Docker registry search result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageSearchResult {
+    pub source: String,
+    pub reference: String,
+    pub description: String,
+    pub stars: Option<u64>,
+    pub pulls: Option<u64>,
+    pub official: bool,
+}
+
+/// Docker image inspection info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInspectInfo {
+    pub id: String,
+    pub repo_tags: Vec<String>,
+    pub size_bytes: u64,
+    pub created: String,
+    pub architecture: String,
+    pub os: String,
+    pub docker_version: String,
+    pub layers: u32,
 }
 
 /// Container lifecycle status.
@@ -183,12 +236,20 @@ impl ApiFormat {
     }
 
     /// Parse from a database-stored string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_db(s: &str) -> Option<Self> {
+        s.parse::<ApiFormat>().ok()
+    }
+}
+
+impl std::str::FromStr for ApiFormat {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "anthropic" => Some(ApiFormat::Anthropic),
-            "openai_responses" => Some(ApiFormat::OpenAiResponses),
-            "openai_completions" => Some(ApiFormat::OpenAiCompletions),
-            _ => None,
+            "anthropic" => Ok(ApiFormat::Anthropic),
+            "openai_responses" => Ok(ApiFormat::OpenAiResponses),
+            "openai_completions" => Ok(ApiFormat::OpenAiCompletions),
+            _ => Err(()),
         }
     }
 }

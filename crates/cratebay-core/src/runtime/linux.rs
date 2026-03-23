@@ -54,6 +54,16 @@ const STOP_GRACE_PERIOD: Duration = Duration::from_secs(5);
 /// Timeout for Docker to become responsive after QEMU starts.
 const DOCKER_READY_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// Number of ping attempts performed in each health check cycle.
+const HEALTH_PING_ATTEMPTS: usize = 3;
+
+/// Delay between ping retry attempts in a health check cycle.
+const HEALTH_PING_RETRY_DELAY: Duration = Duration::from_millis(400);
+
+/// Consecutive failed health-check cycles required before degrading
+/// from `Ready` to `Starting`.
+const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 2;
+
 // ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
@@ -378,6 +388,8 @@ pub struct LinuxRuntime {
     state: Arc<Mutex<RuntimeState>>,
     /// Timestamp (seconds since epoch) when QEMU was started.
     started_at: Arc<Mutex<Option<i64>>>,
+    /// Number of consecutive health-check cycles with failed Docker ping.
+    consecutive_health_failures: Arc<Mutex<u8>>,
 }
 
 impl LinuxRuntime {
@@ -387,7 +399,30 @@ impl LinuxRuntime {
             config: RuntimeConfig::default(),
             state: Arc::new(Mutex::new(RuntimeState::None)),
             started_at: Arc::new(Mutex::new(None)),
+            consecutive_health_failures: Arc::new(Mutex::new(0)),
         }
+    }
+
+    /// Ping Docker with retries to smooth transient networking hiccups.
+    async fn docker_ping_with_retry(host: &str) -> bool {
+        for attempt in 0..HEALTH_PING_ATTEMPTS {
+            let host_check = host.to_string();
+            let responsive = tokio::task::spawn_blocking(move || {
+                common::docker_http_ping_host(&host_check).is_ok()
+            })
+            .await
+            .unwrap_or(false);
+
+            if responsive {
+                return true;
+            }
+
+            if attempt + 1 < HEALTH_PING_ATTEMPTS {
+                tokio::time::sleep(HEALTH_PING_RETRY_DELAY).await;
+            }
+        }
+
+        false
     }
 
     /// Read the current QEMU PID from the PID file.
@@ -967,13 +1002,7 @@ impl RuntimeManager for LinuxRuntime {
         let host = linux_docker_host();
 
         let (docker_responsive, _) = if vm_running {
-            let host_check = host.clone();
-            let responsive = tokio::task::spawn_blocking(move || {
-                common::docker_http_ping_host(&host_check).is_ok()
-            })
-            .await
-            .unwrap_or(false);
-            (responsive, None::<String>)
+            (Self::docker_ping_with_retry(&host).await, None::<String>)
         } else {
             (false, None)
         };
@@ -990,18 +1019,38 @@ impl RuntimeManager for LinuxRuntime {
         };
 
         // Determine runtime state.
+        let current_state = {
+            let state = self.state.lock().await;
+            state.clone()
+        };
+
         let runtime_state = if docker_responsive {
+            let mut failures = self.consecutive_health_failures.lock().await;
+            *failures = 0;
             RuntimeState::Ready
         } else if vm_running {
-            RuntimeState::Starting
+            let mut failures = self.consecutive_health_failures.lock().await;
+            *failures = failures.saturating_add(1);
+
+            if matches!(current_state, RuntimeState::Ready)
+                && *failures < READY_DOWNGRADE_FAILURE_THRESHOLD
+            {
+                RuntimeState::Ready
+            } else {
+                RuntimeState::Starting
+            }
         } else {
+            {
+                let mut failures = self.consecutive_health_failures.lock().await;
+                *failures = 0;
+            }
+
             // Check if we had a tracked PID that exited.
             let pid = Self::current_pid();
             if pid.is_some() {
                 RuntimeState::Error("QEMU process exited unexpectedly".into())
             } else {
-                let current = self.state.lock().await;
-                current.clone()
+                current_state
             }
         };
 

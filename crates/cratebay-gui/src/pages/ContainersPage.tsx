@@ -100,7 +100,9 @@ export function ContainersPage() {
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
             {t("common", "refresh")}
           </Button>
-          <ContainerCreate />
+          <div data-testid="create-container">
+            <ContainerCreate />
+          </div>
         </div>
       </div>
 
@@ -109,6 +111,7 @@ export function ContainersPage() {
         <div className="relative w-56">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
+            data-testid="search-input"
             value={filter.search}
             onChange={(e) => setFilter({ search: e.target.value })}
             placeholder={t("containers", "searchPlaceholder")}
@@ -116,7 +119,7 @@ export function ContainersPage() {
           />
         </div>
         <div className="h-4 w-px bg-border" />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" data-testid="status-filter">
           {(["all", "running", "stopped", "creating"] as FilterStatus[]).map((f) => (
             <button
               key={f}
@@ -162,7 +165,7 @@ export function ContainersPage() {
       </div>
 
       {/* Container content area */}
-      <div className="flex-1 overflow-auto px-6 py-4">
+      <div className="flex-1 overflow-auto px-6 py-4" data-testid="container-list">
         {viewMode === "table" ? (
           <ContainerList />
         ) : loading && filteredContainers.length === 0 ? (

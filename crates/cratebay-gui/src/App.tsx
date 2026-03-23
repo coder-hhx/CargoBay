@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useChatStore } from "@/stores/chatStore";
@@ -45,6 +45,8 @@ interface RuntimeHealthPayload {
   last_check: string;
 }
 
+const RUNTIME_HEALTH_DOWNGRADE_GRACE_MS = 90_000;
+
 /**
  * Map backend runtime state to the AppState runtimeStatus union.
  *
@@ -67,6 +69,16 @@ function mapRuntimeState(state: string | Record<string, string>): "starting" | "
   return "stopped";
 }
 
+function setEngineState(
+  runtimeStatus: "starting" | "running" | "stopped" | "error",
+  dockerConnected: boolean,
+) {
+  useAppStore.setState({
+    runtimeStatus,
+    dockerConnected,
+  });
+}
+
 /**
  * Query Docker and Runtime status on startup.
  * Updates appStore with initial values.
@@ -87,10 +99,8 @@ async function initRuntimeStatus() {
       ),
     ]);
     dockerOk = dockerStatus.connected;
-    useAppStore.getState().setDockerConnected(dockerOk);
   } catch {
-    // Docker status check failed or timed out — default to disconnected
-    useAppStore.getState().setDockerConnected(false);
+    dockerOk = false;
   }
 
   // 5-second timeout for runtime_status
@@ -108,19 +118,17 @@ async function initRuntimeStatus() {
     // If Docker is connected and responsive, force status to "running"
     // regardless of what runtime_status thinks (avoids "starting" flicker)
     if (dockerOk || rtStatus.docker_responsive) {
-      useAppStore.getState().setRuntimeStatus("running");
-      useAppStore.getState().setDockerConnected(true);
+      setEngineState("running", true);
     } else {
-      useAppStore.getState().setRuntimeStatus(mapRuntimeState(rtStatus.state));
-      useAppStore.getState().setDockerConnected(rtStatus.docker_responsive);
+      setEngineState(mapRuntimeState(rtStatus.state), rtStatus.docker_responsive);
     }
   } catch {
     // Runtime status check failed or timed out
     // If Docker was already confirmed connected, set running anyway
     if (dockerOk) {
-      useAppStore.getState().setRuntimeStatus("running");
+      setEngineState("running", true);
     } else {
-      useAppStore.getState().setRuntimeStatus("stopped");
+      setEngineState("stopped", false);
     }
   }
 }
@@ -128,11 +136,18 @@ async function initRuntimeStatus() {
 function App() {
   const currentPage = useAppStore((s) => s.currentPage);
   const theme = useSettingsStore((s) => s.settings.theme);
+  const lastHealthyAtRef = useRef(0);
+
+  const markHealthy = () => {
+    lastHealthyAtRef.current = Date.now();
+  };
 
   // Initialize app state on mount
   useEffect(() => {
     // Load persisted settings (language, theme, etc.)
     void useSettingsStore.getState().fetchSettings();
+    // Load LLM providers + stored models for chat selector
+    void useSettingsStore.getState().fetchProviders();
     // Load persisted sessions
     void useChatStore.getState().loadSessions();
     // Load MCP servers
@@ -149,8 +164,29 @@ function App() {
     void listen<RuntimeHealthPayload>(
       "runtime:health",
       (payload) => {
-        useAppStore.getState().setRuntimeStatus(mapRuntimeState(payload.runtime_state));
-        useAppStore.getState().setDockerConnected(payload.docker_responsive);
+        const nextRuntimeStatus = mapRuntimeState(payload.runtime_state);
+        const nextDockerConnected = payload.docker_responsive;
+        const current = useAppStore.getState();
+
+        // Any confirmed Docker responsiveness means engine is effectively ready.
+        if (nextDockerConnected) {
+          setEngineState("running", true);
+          markHealthy();
+          return;
+        }
+
+        const isTransientDowngrade =
+          current.runtimeStatus === "running" &&
+          current.dockerConnected &&
+          nextRuntimeStatus === "starting" &&
+          Date.now() - lastHealthyAtRef.current < RUNTIME_HEALTH_DOWNGRADE_GRACE_MS;
+
+        // Ignore one-off ping misses right after a healthy state.
+        if (isTransientDowngrade) {
+          return;
+        }
+
+        setEngineState(nextRuntimeStatus, nextDockerConnected);
       },
     ).then((unsub) => {
       unlisten = unsub;
@@ -169,6 +205,7 @@ function App() {
       "docker:connected",
       () => {
         // Runtime just started Docker — refresh status
+        markHealthy();
         void initRuntimeStatus();
       },
     ).then((unsub) => {
@@ -178,6 +215,13 @@ function App() {
     return () => {
       unlisten?.();
     };
+  }, []);
+
+  useEffect(() => {
+    const state = useAppStore.getState();
+    if (state.runtimeStatus === "running" && state.dockerConnected) {
+      markHealthy();
+    }
   }, []);
 
   // Sync theme with DOM whenever settings.theme changes

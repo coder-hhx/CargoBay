@@ -56,6 +56,16 @@ export interface LlmModelInfo {
 }
 
 /**
+ * Result from testing provider connectivity.
+ */
+export interface ProviderTestResult {
+  success: boolean;
+  latencyMs: number;
+  model: string;
+  error: string | null;
+}
+
+/**
  * Application settings.
  */
 export interface AppSettings {
@@ -68,6 +78,11 @@ export interface AppSettings {
   confirmDestructiveOps: boolean;
   reasoningEffort: "low" | "medium" | "high"; // Global reasoning effort preference
   registryMirrors: string[]; // Docker registry mirror URLs
+  runtimeHttpProxy: string;
+  runtimeHttpProxyBridge: boolean;
+  runtimeHttpProxyBindHost: string;
+  runtimeHttpProxyBindPort: number;
+  runtimeHttpProxyGuestHost: string;
 }
 
 /**

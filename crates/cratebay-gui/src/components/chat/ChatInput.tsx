@@ -48,6 +48,7 @@ export function ChatInput({ onSend, onStop, disabled, placeholder }: ChatInputPr
   const setMentionQuery = useChatStore((s) => s.setMentionQuery);
   const sendOnEnter = useSettingsStore((s) => s.settings.sendOnEnter);
   const activeModelId = useSettingsStore((s) => s.activeModelId);
+  const setActiveProvider = useSettingsStore((s) => s.setActiveProvider);
   const setActiveModel = useSettingsStore((s) => s.setActiveModel);
   const enabledModels = useSettingsStore((s) => s.enabledModels);
 
@@ -290,6 +291,7 @@ export function ChatInput({ onSend, onStop, disabled, placeholder }: ChatInputPr
           {/* Textarea */}
           <textarea
             ref={textareaRef}
+            data-testid="chat-input"
             value={inputDraft}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
@@ -361,6 +363,7 @@ export function ChatInput({ onSend, onStop, disabled, placeholder }: ChatInputPr
                         )}
                         onClick={(e) => {
                           e.stopPropagation();
+                          setActiveProvider(model.providerId);
                           setActiveModel(model.id);
                           setModelDropdownOpen(false);
                         }}
@@ -378,6 +381,7 @@ export function ChatInput({ onSend, onStop, disabled, placeholder }: ChatInputPr
             <Button
               size="icon-sm"
               variant={canSend ? "default" : "ghost"}
+              data-testid="send-button"
               onClick={isStreaming ? (onStop ?? (() => setStreaming(false))) : handleSend}
               disabled={!canSend && !isStreaming}
               aria-label={isStreaming ? t("chat", "stopButton") : t("chat", "sendButton")}

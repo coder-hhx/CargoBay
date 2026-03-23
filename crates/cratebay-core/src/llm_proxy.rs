@@ -206,7 +206,7 @@ fn build_anthropic_request(
     let anthropic_messages: Vec<serde_json::Value> = messages
         .iter()
         .filter(|m| m.role != "system")
-        .map(|m| anthropic_message(m))
+        .map(anthropic_message)
         .collect();
 
     let max_tokens = options.as_ref().and_then(|o| o.max_tokens).unwrap_or(4096);
@@ -233,7 +233,7 @@ fn build_anthropic_request(
     if let Some(ref opts) = options {
         if let Some(ref tools) = opts.tools {
             let anthropic_tools: Vec<serde_json::Value> =
-                tools.iter().map(|t| anthropic_tool(t)).collect();
+                tools.iter().map(anthropic_tool).collect();
             body["tools"] = serde_json::json!(anthropic_tools);
         }
     }
@@ -253,7 +253,7 @@ fn build_openai_responses_request(
 ) -> Result<(String, serde_json::Value), AppError> {
     let url = format!("{}/v1/responses", provider.api_base.trim_end_matches('/'));
 
-    let input: Vec<serde_json::Value> = messages.iter().map(|m| openai_message(m)).collect();
+    let input: Vec<serde_json::Value> = messages.iter().map(openai_message).collect();
 
     let mut body = serde_json::json!({
         "model": model_id,
@@ -280,7 +280,7 @@ fn build_openai_responses_request(
         // Tools
         if let Some(ref tools) = opts.tools {
             let openai_tools: Vec<serde_json::Value> =
-                tools.iter().map(|t| openai_responses_tool(t)).collect();
+                tools.iter().map(openai_responses_tool).collect();
             body["tools"] = serde_json::json!(openai_tools);
         }
     }
@@ -302,8 +302,7 @@ fn build_openai_completions_request(
         provider.api_base.trim_end_matches('/')
     );
 
-    let openai_messages: Vec<serde_json::Value> =
-        messages.iter().map(|m| openai_message(m)).collect();
+    let openai_messages: Vec<serde_json::Value> = messages.iter().map(openai_message).collect();
 
     let mut body = serde_json::json!({
         "model": model_id,
@@ -325,7 +324,7 @@ fn build_openai_completions_request(
         // Tools in OpenAI Completions format
         if let Some(ref tools) = opts.tools {
             let completions_tools: Vec<serde_json::Value> =
-                tools.iter().map(|t| openai_completions_tool(t)).collect();
+                tools.iter().map(openai_completions_tool).collect();
             body["tools"] = serde_json::json!(completions_tools);
         }
     }

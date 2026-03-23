@@ -20,13 +20,16 @@ const makeContainer = (overrides: Partial<ContainerInfo> = {}): ContainerInfo =>
   id: "c-1",
   shortId: "c-1",
   name: "node-01",
-  templateId: "node-dev",
   image: "node:20-slim",
   status: "running",
+  state: "running",
   createdAt: new Date().toISOString(),
   cpuCores: 2,
   memoryMb: 2048,
   ports: [],
+  labels: {
+    "com.cratebay.template_id": "node-dev",
+  },
   ...overrides,
 });
 
@@ -95,15 +98,37 @@ describe("useContainerActions", () => {
 
   it("create creates a container and returns it", async () => {
     const newContainer = makeContainer({ id: "c-new", name: "new-one" });
-    mockInvoke.mockResolvedValueOnce(newContainer);
+    mockInvoke
+      .mockResolvedValueOnce([
+        {
+          id: "img-1",
+          repoTags: ["node:20-slim"],
+          sizeBytes: 123,
+          sizeHuman: "123 B",
+          created: 111,
+        },
+      ])
+      .mockResolvedValueOnce(newContainer);
 
     const { result } = renderHook(() => useContainerActions());
 
     let created: ContainerInfo | undefined;
     await act(async () => {
-      created = await result.current.create({ templateId: "node-dev", name: "new-one" });
+      created = await result.current.create({
+        templateId: "node-dev",
+        name: "new-one",
+        image: "node:20-slim",
+      });
     });
 
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, "image_list");
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, "container_create", {
+      request: {
+        templateId: "node-dev",
+        name: "new-one",
+        image: "node:20-slim",
+      },
+    });
     expect(created?.id).toBe("c-new");
     expect(useContainerStore.getState().containers).toHaveLength(1);
   });
@@ -112,7 +137,9 @@ describe("useContainerActions", () => {
     useContainerStore.setState({
       containers: [makeContainer({ id: "c-1", status: "stopped" })],
     });
-    mockInvoke.mockResolvedValueOnce(undefined);
+    mockInvoke
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce([makeContainer({ id: "c-1", status: "running", state: "running" })]);
 
     const { result } = renderHook(() => useContainerActions());
 
@@ -127,7 +154,9 @@ describe("useContainerActions", () => {
     useContainerStore.setState({
       containers: [makeContainer({ id: "c-1", status: "running" })],
     });
-    mockInvoke.mockResolvedValueOnce(undefined);
+    mockInvoke
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce([makeContainer({ id: "c-1", status: "stopped", state: "exited" })]);
 
     const { result } = renderHook(() => useContainerActions());
 

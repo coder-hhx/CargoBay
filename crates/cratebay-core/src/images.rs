@@ -188,8 +188,7 @@ pub fn save_image_status(image_id: &str, status: &ImageStatus) -> Result<(), std
     let meta = Meta {
         status: status.clone(),
     };
-    let bytes = serde_json::to_vec_pretty(&meta)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let bytes = serde_json::to_vec_pretty(&meta).map_err(std::io::Error::other)?;
     storage::write_atomic(&status_file(image_id), &bytes)
 }
 

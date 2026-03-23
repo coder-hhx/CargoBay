@@ -251,7 +251,7 @@ pub fn list_providers(conn: &Connection) -> Result<Vec<LlmProvider>, AppError> {
             id: row.get(0)?,
             name: row.get(1)?,
             api_base: row.get(2)?,
-            api_format: ApiFormat::from_str(&format_str).unwrap_or(ApiFormat::OpenAiCompletions),
+            api_format: ApiFormat::parse_db(&format_str).unwrap_or(ApiFormat::OpenAiCompletions),
             enabled: row.get::<_, i32>(4)? != 0,
             notes: row.get(5)?,
             created_at: row.get(6)?,
@@ -284,7 +284,7 @@ pub fn get_provider(conn: &Connection, id: &str) -> Result<LlmProvider, AppError
                     id: row.get(0)?,
                     name: row.get(1)?,
                     api_base: row.get(2)?,
-                    api_format: ApiFormat::from_str(&format_str)
+                    api_format: ApiFormat::parse_db(&format_str)
                         .unwrap_or(ApiFormat::OpenAiCompletions),
                     enabled: row.get::<_, i32>(4)? != 0,
                     notes: row.get(5)?,
@@ -567,6 +567,7 @@ pub fn get_conversation(conn: &Connection, id: &str) -> Result<ConversationDetai
 }
 
 /// Save a message to a conversation.
+#[allow(clippy::too_many_arguments)]
 pub fn save_message(
     conn: &Connection,
     id: &str,

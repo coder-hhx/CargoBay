@@ -25,6 +25,11 @@ describe("ReasoningEffort", () => {
         confirmDestructiveOps: true,
         reasoningEffort: "medium",
         registryMirrors: [],
+        runtimeHttpProxy: "",
+        runtimeHttpProxyBridge: false,
+        runtimeHttpProxyBindHost: "0.0.0.0",
+        runtimeHttpProxyBindPort: 3128,
+        runtimeHttpProxyGuestHost: "192.168.64.1",
       },
     });
   });

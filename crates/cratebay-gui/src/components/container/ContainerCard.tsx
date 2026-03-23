@@ -12,10 +12,6 @@ import {
   ScrollText,
 } from "lucide-react";
 
-// Fixed colors that work in both light and dark mode
-const CPU_COLOR = "#7c3aed"; // purple-600
-const MEM_COLOR = "#0891b2"; // cyan-600
-
 interface ContainerCardProps {
   container: ContainerInfo;
 }
@@ -31,13 +27,16 @@ export function ContainerCard({ container }: ContainerCardProps) {
   const stopContainer = useContainerStore((s) => s.stopContainer);
   const deleteContainer = useContainerStore((s) => s.deleteContainer);
   const selectContainer = useContainerStore((s) => s.selectContainer);
-  const isRunning = container.status === "running";
-  const isStopped = container.status === "stopped" || container.status === "exited";
-  const isCreating = container.status === "creating";
-
-  // Resource percentages
-  const cpuPercent = isRunning ? Math.min(Math.round(((container.cpuCores ?? 0) / 8) * 100), 100) : 0;
-  const memPercent = isRunning ? Math.min(Math.round(((container.memoryMb ?? 0) / 8192) * 100), 100) : 0;
+  const isRunning = container.status === "running" || container.status === "paused";
+  const isStopped =
+    container.status === "stopped" ||
+    container.status === "exited" ||
+    container.status === "created";
+  const isCreating =
+    container.status === "creating" ||
+    container.status === "restarting" ||
+    container.status === "removing";
+  const isError = container.status === "dead";
 
   const handleCardClick = () => {
     selectContainer(container.id);
@@ -52,13 +51,14 @@ export function ContainerCard({ container }: ContainerCardProps) {
   return (
     <div
       onClick={isCreating ? undefined : handleCardClick}
+      data-testid="container-card"
       className={cn(
         "group rounded-xl border border-transparent bg-card p-4 transition-all duration-200",
         // Glow shadow based on status
         isRunning && "cursor-pointer shadow-[0_0_0_1px_rgba(52,211,153,0.2),0_2px_12px_rgba(52,211,153,0.08)] hover:shadow-[0_0_0_1px_rgba(52,211,153,0.4),0_4px_20px_rgba(52,211,153,0.15)]",
         isStopped && "cursor-pointer shadow-[0_0_0_1px_rgba(148,163,184,0.15),0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_0_0_1px_rgba(124,58,237,0.3),0_4px_20px_rgba(124,58,237,0.1)]",
         isCreating && "animate-pulse shadow-[0_0_0_1px_rgba(124,58,237,0.3),0_2px_12px_rgba(124,58,237,0.12)]",
-        container.status === "error" && "cursor-pointer shadow-[0_0_0_1px_rgba(248,113,113,0.2),0_2px_12px_rgba(248,113,113,0.08)] hover:shadow-[0_0_0_1px_rgba(248,113,113,0.4),0_4px_20px_rgba(248,113,113,0.15)]",
+        isError && "cursor-pointer shadow-[0_0_0_1px_rgba(248,113,113,0.2),0_2px_12px_rgba(248,113,113,0.08)] hover:shadow-[0_0_0_1px_rgba(248,113,113,0.4),0_4px_20px_rgba(248,113,113,0.15)]",
         // Hover lift (not for creating)
         !isCreating && "hover:-translate-y-0.5",
       )}
@@ -90,36 +90,21 @@ export function ContainerCard({ container }: ContainerCardProps) {
         </div>
       )}
 
-      {/* Resource stats: simplified — just percentage + progress bar */}
-      {isRunning && (
-        <div className="mb-3 grid grid-cols-2 gap-4">
-          {/* CPU */}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">CPU</span>
-              <span className="text-xs font-semibold tabular-nums text-foreground">{cpuPercent}%</span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${cpuPercent}%`, backgroundColor: CPU_COLOR }}
-              />
-            </div>
-          </div>
-
-          {/* Memory */}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">MEM</span>
-              <span className="text-xs font-semibold tabular-nums text-foreground">{memPercent}%</span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${memPercent}%`, backgroundColor: MEM_COLOR }}
-              />
-            </div>
-          </div>
+      {/* Specs (limits) */}
+      {(container.cpuCores !== undefined || container.memoryMb !== undefined) && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {container.cpuCores !== undefined && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-[10px] uppercase tracking-wider">CPU</span>
+              <span className="font-mono">{container.cpuCores} cores</span>
+            </span>
+          )}
+          {container.memoryMb !== undefined && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-[10px] uppercase tracking-wider">MEM</span>
+              <span className="font-mono">{container.memoryMb} MB</span>
+            </span>
+          )}
         </div>
       )}
 
@@ -132,6 +117,7 @@ export function ContainerCard({ container }: ContainerCardProps) {
               size="sm"
               className="h-7 gap-1 px-2 text-xs"
               onClick={stop}
+              data-testid="container-stop"
             >
               <Square className="h-3.5 w-3.5" />
               {t("containers", "stop")}
@@ -161,6 +147,7 @@ export function ContainerCard({ container }: ContainerCardProps) {
             size="sm"
             className="h-7 gap-1 px-2 text-xs"
             onClick={start}
+            data-testid="container-start"
           >
             <Play className="h-3.5 w-3.5" />
             {t("containers", "start")}
@@ -176,6 +163,7 @@ export function ContainerCard({ container }: ContainerCardProps) {
           size="sm"
           className="ml-auto h-7 px-2 text-xs text-destructive hover:text-destructive"
           onClick={remove}
+          data-testid="container-delete"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>

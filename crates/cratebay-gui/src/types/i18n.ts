@@ -119,6 +119,8 @@ export interface Translations {
     actions: string;
     template: string;
     viewDetails: string;
+    overview: string;
+    ports: string;
     terminal: string;
     logs: string;
     error: string;
@@ -184,6 +186,7 @@ export interface Translations {
     official: string;
     pull: string;
     searchError: string;
+    searchProxyHint: string;
   };
   settings: {
     title: string;
@@ -239,6 +242,17 @@ export interface Translations {
     runtimeError: string;
     runtimeControl: string;
     runtimeControlDesc: string;
+    runtimeRestart: string;
+    runtimeHttpProxy: string;
+    runtimeHttpProxyDesc: string;
+    runtimeHttpProxyBridge: string;
+    runtimeHttpProxyBridgeDesc: string;
+    runtimeHttpProxyBindHost: string;
+    runtimeHttpProxyBindPort: string;
+    runtimeHttpProxyGuestHost: string;
+    runtimeProxySave: string;
+    runtimeProxySaveSuccess: string;
+    runtimeProxyRestartHint: string;
     english: string;
     simplifiedChinese: string;
   };

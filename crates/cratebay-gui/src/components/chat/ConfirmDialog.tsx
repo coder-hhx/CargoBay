@@ -40,7 +40,7 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[425px]" data-testid="confirm-dialog">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <riskConfig.Icon className={cn("h-5 w-5", riskConfig.iconClass)} />
@@ -90,13 +90,14 @@ export function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogPro
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onCancel}>
+          <Button variant="outline" onClick={onCancel} data-testid="confirm-cancel">
             {t("common", "cancel")}
           </Button>
           <Button
             variant={riskConfig.buttonVariant}
             onClick={onConfirm}
             disabled={!canConfirm}
+            data-testid="confirm-accept"
           >
             {t("common", "confirm")}
           </Button>

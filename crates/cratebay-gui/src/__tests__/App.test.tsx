@@ -62,6 +62,7 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByText("Containers")).toBeInTheDocument();
     expect(screen.getByText("MCP")).toBeInTheDocument();
-    expect(screen.getByText("Settings")).toBeInTheDocument();
+    const settingsElements = screen.getAllByText("Settings");
+    expect(settingsElements.length).toBeGreaterThanOrEqual(1);
   });
 });

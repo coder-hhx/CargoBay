@@ -76,11 +76,11 @@ export function ContainerCreate() {
 
   // Flatten all image tags into a flat list and filter by search
   const imageOptions = useMemo(() => {
-    const allTags: { tag: string; size: number }[] = [];
+    const allTags: { tag: string; sizeBytes: number }[] = [];
     for (const img of images) {
       for (const tag of img.repoTags) {
         if (tag && tag !== "<none>:<none>") {
-          allTags.push({ tag, size: img.size });
+          allTags.push({ tag, sizeBytes: img.sizeBytes });
         }
       }
     }
@@ -234,7 +234,7 @@ export function ContainerCreate() {
                     >
                       <span className="truncate font-mono text-xs">{item.tag}</span>
                       <span className="ml-2 flex-shrink-0 text-xs text-muted-foreground">
-                        {formatSize(item.size)}
+                        {formatSize(item.sizeBytes)}
                       </span>
                     </button>
                   ))}

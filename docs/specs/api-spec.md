@@ -1,6 +1,6 @@
 # Tauri Commands API Specification
 
-> Version: 1.3.0 | Last Updated: 2026-03-21 | Author: architect
+> Version: 1.5.1 | Last Updated: 2026-03-23 | Author: architect
 
 ---
 
@@ -447,16 +447,16 @@ pub async fn container_logs(
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct LogOptions {
     pub tail: Option<u32>,        // Number of lines from end (default: 100)
-    pub since: Option<String>,    // RFC3339 timestamp
-    pub until: Option<String>,    // RFC3339 timestamp
+    pub since: Option<String>,    // RFC3339 timestamp or unix seconds
+    pub until: Option<String>,    // RFC3339 timestamp or unix seconds
     pub timestamps: Option<bool>, // Include timestamps (default: false)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct LogEntry {
     pub stream: String,    // "stdout" or "stderr"
-    pub message: String,
-    pub timestamp: Option<String>,
+    pub message: String,   // timestamp prefix stripped when `timestamps=true`
+    pub timestamp: Option<String>, // RFC3339 when available
 }
 ```
 
@@ -510,6 +510,223 @@ pub struct ContainerState {
 ```
 
 **Errors:** `AppError::Docker`, `AppError::NotFound`
+
+---
+
+#### `container_stats`
+
+Get a real-time resource usage snapshot for a container.
+
+```rust
+#[tauri::command]
+pub async fn container_stats(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ContainerStats, AppError>
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | `String` | Yes | Container ID or name |
+
+**Returns:**
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerStats {
+    pub id: String,
+    pub name: String,
+    pub read_at: String,       // daemon stats timestamp
+    pub cpu_percent: f64,      // 0-100 * cores
+    pub cpu_cores_used: f64,   // normalized cores used
+    pub memory_used_mb: f64,
+    pub memory_limit_mb: f64,
+    pub memory_percent: f64,
+}
+```
+
+**Errors:** `AppError::Docker`, `AppError::NotFound`, `AppError::Runtime`
+
+---
+
+#### `image_list`
+
+List local Docker images.
+
+```rust
+#[tauri::command]
+pub async fn image_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalImageInfo>, AppError>
+```
+
+**Parameters:** None
+
+**Returns:**
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalImageInfo {
+    pub id: String,            // e.g. "sha256:..."
+    pub repo_tags: Vec<String>,
+    pub size_bytes: u64,
+    pub size_human: String,
+    pub created: i64,          // unix timestamp (seconds)
+}
+```
+
+---
+
+#### `image_search`
+
+Search images from registry (Docker Hub via Docker Engine search API).
+
+```rust
+#[tauri::command]
+pub async fn image_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<ImageSearchResult>, AppError>
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | `String` | Yes | Search term |
+| `limit` | `u32` | No | Max results (implementation may cap) |
+
+**Returns:**
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageSearchResult {
+    pub source: String,        // "dockerhub"
+    pub reference: String,     // e.g. "library/alpine"
+    pub description: String,
+    pub stars: Option<u64>,
+    pub pulls: Option<u64>,    // May be None (Docker API doesn't provide)
+    pub official: bool,
+}
+```
+
+---
+
+#### `image_inspect`
+
+Inspect a local image by id or reference.
+
+```rust
+#[tauri::command]
+pub async fn image_inspect(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ImageInspectInfo, AppError>
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | `String` | Yes | Image id (sha256) or `repo:tag` |
+
+**Returns:**
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageInspectInfo {
+    pub id: String,
+    pub repo_tags: Vec<String>,
+    pub size_bytes: u64,
+    pub created: String,       // RFC3339
+    pub architecture: String,
+    pub os: String,
+    pub docker_version: String,
+    pub layers: u32,
+}
+```
+
+---
+
+#### `image_remove`
+
+Remove a local image.
+
+```rust
+#[tauri::command]
+pub async fn image_remove(
+    state: State<'_, AppState>,
+    id: String,
+    force: Option<bool>,
+) -> Result<(), AppError>
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | `String` | Yes | Image id or `repo:tag` |
+| `force` | `bool` | No | Force removal (default: false) |
+
+**Returns:** `()` (void)
+
+---
+
+#### `image_tag`
+
+Tag a local image with a new `repo:tag`.
+
+```rust
+#[tauri::command]
+pub async fn image_tag(
+    state: State<'_, AppState>,
+    source: String,
+    target: String,
+) -> Result<(), AppError>
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `source` | `String` | Yes | Source image id or `repo:tag` |
+| `target` | `String` | Yes | Target `repo:tag` |
+
+**Returns:** `()` (void)
+
+---
+
+#### `image_pull`
+
+Pull a Docker image (non-blocking).
+
+Progress and completion are reported via `image:pull:{channel_id}` events.
+
+```rust
+#[tauri::command]
+pub async fn image_pull(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    image: String,
+    mirrors: Option<Vec<String>>,
+    channel_id: Option<String>,
+) -> Result<String, AppError>
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `image` | `String` | Yes | Image reference, e.g. `"alpine:3.20"` |
+| `mirrors` | `Vec<String>` | No | Registry mirrors (optional) |
+| `channel_id` | `String` | No | If omitted, backend generates one |
+
+**Returns:** `String` — the `channel_id` to listen on.
+
+**Events emitted:** `image:pull:{channel_id}` — See [Streaming Events](#4-streaming-events).
 
 ---
 
@@ -1112,11 +1329,18 @@ pub async fn settings_update(
 | Key | Type | Description |
 |-----|------|-------------|
 | `theme` | `"light" \| "dark" \| "system"` | UI theme |
-| `language` | `"en" \| "zh"` | Interface language |
+| `language` | `"en" \| "zh-CN"` | Interface language |
 | `default_provider` | `String` | Default LLM provider ID |
+| `default_model` | `String` | Default LLM model ID |
+| `registryMirrors` | `String` (JSON array) | Docker registry mirrors as JSON-encoded `string[]` |
 | `runtime.auto_start` | `"true" \| "false"` | Auto-start runtime on launch |
 | `runtime.cpu_cores` | `String` (number) | VM CPU cores |
 | `runtime.memory_mb` | `String` (number) | VM memory in MB |
+| `runtimeHttpProxy` | `String` | Runtime HTTP proxy endpoint (`host:port` or URL) |
+| `runtimeHttpProxyBridge` | `"true" \| "false"` | Enable macOS host proxy bridge mode |
+| `runtimeHttpProxyBindHost` | `String` | Bridge bind host (default `0.0.0.0`) |
+| `runtimeHttpProxyBindPort` | `String` (number) | Bridge bind port (default `3128`) |
+| `runtimeHttpProxyGuestHost` | `String` | Guest-visible host IP (default `192.168.64.1`) |
 
 ---
 
@@ -1435,11 +1659,18 @@ pub async fn runtime_start(
 - `"Runtime started but Docker not yet responsive"` — VM started but Docker didn't respond within the 45-second timeout.
 
 **Behavior:**
-1. Detects the current runtime state via `runtime.detect()`.
-2. If state is `None`, provisions the runtime (downloads VM image) with logging callbacks.
-3. Starts the runtime VM via `runtime.start()`.
-4. Polls the Docker socket for up to 45 seconds.
-5. On successful Docker connection, updates `AppState.docker` with the new client.
+1. Loads persisted Runtime HTTP Proxy settings from the `settings` table.
+2. Applies proxy settings to process environment variables:
+   - `CRATEBAY_RUNTIME_HTTP_PROXY`
+   - `CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE`
+   - `CRATEBAY_RUNTIME_HTTP_PROXY_BIND_HOST`
+   - `CRATEBAY_RUNTIME_HTTP_PROXY_BIND_PORT`
+   - `CRATEBAY_RUNTIME_HTTP_PROXY_GUEST_HOST`
+3. Detects the current runtime state via `runtime.detect()`.
+4. If state is `None`, provisions the runtime (downloads VM image) with logging callbacks.
+5. Starts the runtime VM via `runtime.start()`.
+6. Polls the Docker socket for up to 45 seconds.
+7. On successful Docker connection, updates `AppState.docker` with the new client.
 
 **Errors:** `AppError::Runtime`
 
@@ -1513,6 +1744,7 @@ pub struct SystemInfo {
 |---------------|-------------|
 | `llm:stream:{channel_id}` | LLM token streaming |
 | `exec:stream:{channel_id}` | Container exec output streaming |
+| `image:pull:{channel_id}` | Image pull progress streaming |
 | `runtime:health` | Runtime health check updates (no channel, global) |
 | `runtime:provision` | Runtime provisioning progress (no channel, global) |
 
@@ -1621,6 +1853,22 @@ pub enum ExecStreamEvent {
 // Payload: ProvisionProgress (see runtime-spec.md)
 ```
 
+### 4.5 Image Pull Events
+
+**Event name:** `image:pull:{channel_id}`
+
+```rust
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct ImagePullProgress {
+    pub current_layer: u32,
+    pub total_layers: u32,
+    pub progress_percent: u32,
+    pub status: String,
+    pub complete: bool,
+    pub error: Option<String>,
+}
+```
+
 ---
 
 ## 5. Error Response Format
@@ -1696,6 +1944,13 @@ const containers = await safeInvoke(() => containerList());
 | `container_exec_stream` | POST | `id, cmd, channel_id` | `void` | Yes |
 | `container_logs` | GET | `id, options?` | `LogEntry[]` | No |
 | `container_inspect` | GET | `id` | `ContainerDetail` | No |
+| `container_stats` | GET | `id` | `ContainerStats` | No |
+| `image_list` | GET | — | `LocalImageInfo[]` | No |
+| `image_search` | GET | `query, limit?` | `ImageSearchResult[]` | No |
+| `image_inspect` | GET | `id` | `ImageInspectInfo` | No |
+| `image_remove` | DELETE | `id, force?` | `void` | No |
+| `image_tag` | POST | `source, target` | `void` | No |
+| `image_pull` | POST | `image, mirrors?, channel_id?` | `String` | Yes |
 | `llm_proxy_stream` | POST | `channel_id, provider_id, model_id, messages, options?` | `void` | Yes |
 | `llm_proxy_cancel` | POST | `channel_id` | `void` | No |
 | `llm_provider_list` | GET | — | `LlmProvider[]` | No |

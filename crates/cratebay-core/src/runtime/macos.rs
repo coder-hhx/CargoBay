@@ -53,8 +53,27 @@ const RUNNER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Timeout for Docker to become responsive after the VM starts.
 const DOCKER_READY_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// Number of ping attempts performed in each health check cycle.
+const HEALTH_PING_ATTEMPTS: usize = 3;
+
+/// Delay between ping retry attempts in a health check cycle.
+const HEALTH_PING_RETRY_DELAY: Duration = Duration::from_millis(400);
+
+/// Bollard connection timeout for health-check pings.
+const HEALTH_PING_CONNECT_TIMEOUT_SECS: u64 = 8;
+
+/// Consecutive failed health-check cycles required before degrading
+/// from `Ready` to `Starting`.
+const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 2;
+
 /// Grace period for SIGTERM before escalating to SIGKILL.
 const STOP_GRACE_PERIOD: Duration = Duration::from_secs(15);
+
+#[derive(Debug, Clone)]
+struct RuntimeHttpProxyConfig {
+    guest_proxy_endpoint: String,
+    host_tcp_forward_spec: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -431,6 +450,8 @@ pub struct MacOSRuntime {
     runner_pid: Arc<Mutex<Option<u32>>>,
     /// Timestamp when the runner was started (for uptime calculation).
     started_at: Arc<Mutex<Option<Instant>>>,
+    /// Number of consecutive health-check cycles with failed Docker ping.
+    consecutive_health_failures: Arc<Mutex<u8>>,
 }
 
 impl MacOSRuntime {
@@ -442,6 +463,7 @@ impl MacOSRuntime {
             runner: Arc::new(Mutex::new(None)),
             runner_pid: Arc::new(Mutex::new(None)),
             started_at: Arc::new(Mutex::new(None)),
+            consecutive_health_failures: Arc::new(Mutex::new(0)),
         };
 
         // Try to recover state from a previous session's PID file
@@ -470,6 +492,7 @@ impl MacOSRuntime {
             runner: Arc::new(Mutex::new(None)),
             runner_pid: Arc::new(Mutex::new(None)),
             started_at: Arc::new(Mutex::new(None)),
+            consecutive_health_failures: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -538,12 +561,23 @@ impl MacOSRuntime {
         }
     }
 
-    /// Build kernel cmdline with DNS servers and host epoch.
-    fn build_cmdline(&self) -> String {
+    /// Build kernel cmdline with DNS servers, host epoch and optional HTTP proxy.
+    fn build_cmdline(&self, runtime_http_proxy: Option<&RuntimeHttpProxyConfig>) -> String {
         let image_id = common::runtime_os_image_id();
         let mut cmdline = crate::images::find_image(image_id)
             .map(|e| e.default_cmdline)
             .unwrap_or_else(|| "console=hvc0".to_string());
+
+        // Inject runtime HTTP proxy for guest-side dockerd/apk egress
+        if !cmdline
+            .split_whitespace()
+            .any(|arg| arg.starts_with("cratebay_http_proxy="))
+        {
+            if let Some(proxy) = runtime_http_proxy {
+                cmdline.push_str(" cratebay_http_proxy=");
+                cmdline.push_str(&proxy.guest_proxy_endpoint);
+            }
+        }
 
         // Inject DNS servers from macOS resolver
         if !cmdline
@@ -569,6 +603,123 @@ impl MacOSRuntime {
         }
 
         cmdline
+    }
+
+    fn first_non_empty_env(names: &[&str]) -> Option<String> {
+        names.iter().find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+    }
+
+    fn parse_http_proxy_target(raw: &str) -> Option<(String, u16)> {
+        let input = raw.trim();
+        if input.is_empty() {
+            return None;
+        }
+
+        let (scheme, mut endpoint) = if let Some(rest) = input.strip_prefix("https://") {
+            ("https", rest)
+        } else if let Some(rest) = input.strip_prefix("http://") {
+            ("http", rest)
+        } else {
+            ("http", input)
+        };
+
+        endpoint = endpoint.split('/').next().unwrap_or(endpoint).trim();
+        endpoint = endpoint.rsplit('@').next().unwrap_or(endpoint).trim();
+        if endpoint.is_empty() {
+            return None;
+        }
+
+        let default_port = if scheme.eq_ignore_ascii_case("https") {
+            443
+        } else {
+            80
+        };
+
+        if let Some(stripped) = endpoint.strip_prefix('[') {
+            let end = stripped.find(']')?;
+            let host = stripped[..end].trim();
+            if host.is_empty() {
+                return None;
+            }
+            let rest = stripped[end + 1..].trim();
+            let port = if rest.is_empty() {
+                default_port
+            } else {
+                rest.strip_prefix(':')?.parse::<u16>().ok()?
+            };
+            return Some((host.to_string(), port));
+        }
+
+        if let Some((host, port_raw)) = endpoint.rsplit_once(':') {
+            if !host.is_empty() && !port_raw.is_empty() {
+                if let Ok(port) = port_raw.parse::<u16>() {
+                    return Some((host.to_string(), port));
+                }
+            }
+        }
+
+        Some((endpoint.to_string(), default_port))
+    }
+
+    fn format_host_port(host: &str, port: u16) -> String {
+        if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
+            format!("[{}]:{}", host, port)
+        } else {
+            format!("{}:{}", host, port)
+        }
+    }
+
+    fn resolve_runtime_http_proxy_config() -> Option<RuntimeHttpProxyConfig> {
+        let explicit_proxy = Self::first_non_empty_env(&["CRATEBAY_RUNTIME_HTTP_PROXY"]);
+        let bridge_enabled = common::env_flag_enabled("CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE");
+
+        if bridge_enabled {
+            let target_proxy = explicit_proxy.or_else(|| {
+                Self::first_non_empty_env(&[
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "HTTP_PROXY",
+                    "http_proxy",
+                ])
+            });
+
+            let target_proxy = target_proxy?;
+            let (target_host, target_port) = Self::parse_http_proxy_target(&target_proxy)?;
+
+            let bind_host = Self::first_non_empty_env(&["CRATEBAY_RUNTIME_HTTP_PROXY_BIND_HOST"])
+                .unwrap_or_else(|| "0.0.0.0".to_string());
+            let bind_port = Self::first_non_empty_env(&["CRATEBAY_RUNTIME_HTTP_PROXY_BIND_PORT"])
+                .and_then(|raw| raw.parse::<u16>().ok())
+                .filter(|port| *port > 0)
+                .unwrap_or(3128);
+
+            let guest_host = Self::first_non_empty_env(&["CRATEBAY_RUNTIME_HTTP_PROXY_GUEST_HOST"])
+                .unwrap_or_else(|| "192.168.64.1".to_string());
+            let guest_proxy_endpoint = Self::format_host_port(&guest_host, bind_port);
+            let host_tcp_forward_spec = format!(
+                "{}={}",
+                Self::format_host_port(&bind_host, bind_port),
+                Self::format_host_port(&target_host, target_port)
+            );
+
+            return Some(RuntimeHttpProxyConfig {
+                guest_proxy_endpoint,
+                host_tcp_forward_spec: Some(host_tcp_forward_spec),
+            });
+        }
+
+        explicit_proxy
+            .as_deref()
+            .and_then(Self::parse_http_proxy_target)
+            .map(|(host, port)| RuntimeHttpProxyConfig {
+                guest_proxy_endpoint: Self::format_host_port(&host, port),
+                host_tcp_forward_spec: None,
+            })
     }
 
     /// Query macOS DNS configuration via `scutil --dns`.
@@ -678,7 +829,8 @@ impl MacOSRuntime {
             })?;
         let console_err = console_file.try_clone()?;
 
-        let cmdline = self.build_cmdline();
+        let runtime_http_proxy = Self::resolve_runtime_http_proxy_config();
+        let cmdline = self.build_cmdline(runtime_http_proxy.as_ref());
 
         let mut cmd = Command::new(&runner_path);
         cmd.arg("--kernel")
@@ -726,6 +878,22 @@ impl MacOSRuntime {
             }
             _ => {
                 cmd.arg("--tcp-forward").arg(&forward_spec);
+            }
+        }
+
+        if let Some(proxy_config) = runtime_http_proxy.as_ref() {
+            if let Some(host_forward_spec) = proxy_config.host_tcp_forward_spec.as_ref() {
+                cmd.arg("--host-tcp-forward").arg(host_forward_spec);
+                tracing::info!(
+                    "Enabled runtime HTTP proxy bridge (guest proxy {}, host forward {})",
+                    proxy_config.guest_proxy_endpoint,
+                    host_forward_spec
+                );
+            } else {
+                tracing::info!(
+                    "Enabled runtime HTTP proxy passthrough (guest proxy {})",
+                    proxy_config.guest_proxy_endpoint
+                );
             }
         }
 
@@ -820,6 +988,28 @@ impl MacOSRuntime {
     fn get_state(&self) -> Result<RuntimeState, AppError> {
         let state = self.state.lock_or_recover()?;
         Ok(state.clone())
+    }
+
+    /// Ping Docker via Unix socket with retries.
+    async fn docker_health_with_retry(&self, socket_path: &Path) -> (bool, Option<String>) {
+        for attempt in 0..HEALTH_PING_ATTEMPTS {
+            if let Ok(docker) = bollard::Docker::connect_with_unix(
+                socket_path.to_str().unwrap_or_default(),
+                HEALTH_PING_CONNECT_TIMEOUT_SECS,
+                bollard::API_DEFAULT_VERSION,
+            ) {
+                if docker.ping().await.is_ok() {
+                    let docker_version = docker.version().await.ok().and_then(|v| v.version);
+                    return (true, docker_version);
+                }
+            }
+
+            if attempt + 1 < HEALTH_PING_ATTEMPTS {
+                tokio::time::sleep(HEALTH_PING_RETRY_DELAY).await;
+            }
+        }
+
+        (false, None)
     }
 
     /// Check if runtime images are installed and ready.
@@ -1072,6 +1262,7 @@ impl RuntimeManager for MacOSRuntime {
                 runner: Arc::clone(&self.runner),
                 runner_pid: Arc::clone(&self.runner_pid),
                 started_at: Arc::clone(&self.started_at),
+                consecutive_health_failures: Arc::clone(&self.consecutive_health_failures),
             };
             move || rt.spawn_runner()
         })
@@ -1242,34 +1433,39 @@ impl RuntimeManager for MacOSRuntime {
         let socket_path = self.docker_socket_path();
         let socket_exists = socket_path.exists();
 
-        let mut docker_responsive = false;
-        let mut docker_version = None;
+        let (docker_responsive, docker_version) = if socket_exists {
+            self.docker_health_with_retry(&socket_path).await
+        } else {
+            (false, None)
+        };
 
-        if socket_exists {
-            if let Ok(docker) = bollard::Docker::connect_with_unix(
-                socket_path.to_str().unwrap_or_default(),
-                5,
-                bollard::API_DEFAULT_VERSION,
-            ) {
-                if docker.ping().await.is_ok() {
-                    docker_responsive = true;
-                    if let Ok(version) = docker.version().await {
-                        docker_version = version.version;
-                    }
-                }
-            }
-        }
-
+        let current_state = self.get_state()?;
         let runtime_state = if docker_responsive {
+            let mut failures = self.consecutive_health_failures.lock_or_recover()?;
+            *failures = 0;
             RuntimeState::Ready
         } else if runner_alive {
-            RuntimeState::Starting
+            let mut failures = self.consecutive_health_failures.lock_or_recover()?;
+            *failures = failures.saturating_add(1);
+
+            if matches!(current_state, RuntimeState::Ready)
+                && *failures < READY_DOWNGRADE_FAILURE_THRESHOLD
+            {
+                RuntimeState::Ready
+            } else {
+                RuntimeState::Starting
+            }
         } else if self.images_ready() {
-            match self.get_state()? {
+            let mut failures = self.consecutive_health_failures.lock_or_recover()?;
+            *failures = 0;
+
+            match current_state {
                 RuntimeState::Stopping => RuntimeState::Stopped,
                 other => other,
             }
         } else {
+            let mut failures = self.consecutive_health_failures.lock_or_recover()?;
+            *failures = 0;
             RuntimeState::None
         };
 
@@ -1297,7 +1493,7 @@ impl RuntimeManager for MacOSRuntime {
 
     /// Get the Docker socket path managed by the runtime.
     ///
-    /// Returns the canonical `~/.cratebay/run/docker.sock` path which
+    /// Returns the canonical `~/.cratebay/runtime/docker.sock` path which
     /// is a symlink to the per-VM actual socket.
     fn docker_socket_path(&self) -> PathBuf {
         common::host_docker_socket_path().to_path_buf()
@@ -1349,6 +1545,42 @@ impl RuntimeManager for MacOSRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        _lock_guard: std::sync::MutexGuard<'static, ()>,
+        old_data_dir: Option<std::ffi::OsString>,
+        _temp: tempfile::TempDir,
+    }
+
+    impl EnvGuard {
+        fn with_temp_data_dir() -> Self {
+            let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+            let lock_guard = lock.lock().expect("ENV_LOCK poisoned");
+
+            let old_data_dir = std::env::var_os("CRATEBAY_DATA_DIR");
+            let temp = tempfile::tempdir().expect("create tempdir");
+            std::env::set_var("CRATEBAY_DATA_DIR", temp.path());
+
+            Self {
+                _lock_guard: lock_guard,
+                old_data_dir,
+                _temp: temp,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(old) = self.old_data_dir.clone() {
+                std::env::set_var("CRATEBAY_DATA_DIR", old);
+            } else {
+                std::env::remove_var("CRATEBAY_DATA_DIR");
+            }
+        }
+    }
 
     fn test_runtime() -> MacOSRuntime {
         MacOSRuntime {
@@ -1357,6 +1589,7 @@ mod tests {
             runner: Arc::new(Mutex::new(None)),
             runner_pid: Arc::new(Mutex::new(None)),
             started_at: Arc::new(Mutex::new(None)),
+            consecutive_health_failures: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -1404,6 +1637,7 @@ mod tests {
 
     #[test]
     fn current_runner_pid_none_when_no_runner() {
+        let _guard = EnvGuard::with_temp_data_dir();
         let rt = test_runtime();
         assert!(rt.current_runner_pid().is_none());
     }
@@ -1451,7 +1685,7 @@ mod tests {
     #[test]
     fn build_cmdline_contains_console() {
         let rt = test_runtime();
-        let cmdline = rt.build_cmdline();
+        let cmdline = rt.build_cmdline(None);
         assert!(
             cmdline.contains("console="),
             "cmdline should contain console=: {}",
@@ -1462,12 +1696,24 @@ mod tests {
     #[test]
     fn build_cmdline_contains_epoch() {
         let rt = test_runtime();
-        let cmdline = rt.build_cmdline();
+        let cmdline = rt.build_cmdline(None);
         assert!(
             cmdline.contains("cratebay_host_epoch="),
             "cmdline should contain host epoch: {}",
             cmdline
         );
+    }
+
+    #[test]
+    fn parse_http_proxy_target_supports_http_url() {
+        let parsed = MacOSRuntime::parse_http_proxy_target("http://127.0.0.1:7890");
+        assert_eq!(parsed, Some(("127.0.0.1".to_string(), 7890)));
+    }
+
+    #[test]
+    fn parse_http_proxy_target_supports_bare_host_port() {
+        let parsed = MacOSRuntime::parse_http_proxy_target("proxy.example.com:3128");
+        assert_eq!(parsed, Some(("proxy.example.com".to_string(), 3128)));
     }
 
     #[test]

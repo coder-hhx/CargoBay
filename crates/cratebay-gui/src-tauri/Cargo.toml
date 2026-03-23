@@ -23,6 +23,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 rusqlite = { workspace = true }
+chrono = { workspace = true }
 
 [features]
 default = ["custom-protocol"]

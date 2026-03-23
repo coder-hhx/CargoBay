@@ -265,7 +265,7 @@ pub async fn dispatch_tool_call(
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    let tool_result = match result {
+    match result {
         Ok(text) => {
             let entry = audit::create_entry(
                 tool_name,
@@ -289,9 +289,7 @@ pub async fn dispatch_tool_call(
             audit::write_audit_entry(&entry);
             ToolCallResult::error(error_msg)
         }
-    };
-
-    tool_result
+    }
 }
 
 /// Truncate result text for audit logging.

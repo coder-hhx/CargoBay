@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { AppLayoutPage, ChatPageObject } from "./pages";
+import { installTauriMock } from "./tauri-mock";
 
 /**
  * Navigation E2E Tests
@@ -13,6 +14,8 @@ test.describe("Navigation", () => {
     appLayout = new AppLayoutPage(page);
     chatPage = new ChatPageObject(page);
 
+    await installTauriMock(page);
+
     // 导航到应用首页
     await appLayout.goto("/");
     await appLayout.verifyAppLoaded();
@@ -20,15 +23,15 @@ test.describe("Navigation", () => {
 
   test("应用加载并显示标题", async ({ page }) => {
     // 验证应用标题存在
-    await expect(page.locator("text=CrateBay")).toBeVisible();
+    await expect(page.locator('[data-testid="app-title"]')).toBeVisible();
   });
 
   test("侧边栏显示所有导航选项", async ({ page }) => {
     // 验证所有导航项存在
-    await expect(page.locator("text=Chat")).toBeVisible();
-    await expect(page.locator("text=Containers")).toBeVisible();
-    await expect(page.locator("text=MCP")).toBeVisible();
-    await expect(page.locator("text=Settings")).toBeVisible();
+    await expect(page.locator('[data-testid="nav-chat"]')).toBeVisible();
+    await expect(page.locator('[data-testid="nav-containers"]')).toBeVisible();
+    await expect(page.locator('[data-testid="nav-mcp"]')).toBeVisible();
+    await expect(page.locator('[data-testid="nav-settings"]')).toBeVisible();
   });
 
   test("能够从 Chat 导航到 Containers 页面", async ({ page }) => {
@@ -66,7 +69,7 @@ test.describe("Navigation", () => {
     await appLayout.navigateToSettings();
 
     // 验证 Settings 页面加载
-    const generalTab = page.locator("text=General").or(page.locator("text=Language"));
+    const generalTab = page.locator('[data-testid="settings-tab-general"]');
     await expect(generalTab).toBeVisible({ timeout: 10000 });
   });
 
@@ -146,7 +149,7 @@ test.describe("Navigation", () => {
         name: "Settings",
         navigate: () => appLayout.navigateToSettings(),
         verify: async () => {
-          await expect(page.locator("text=General").or(page.locator("text=Language"))).toBeVisible({
+          await expect(page.locator('[data-testid="settings-tab-general"]')).toBeVisible({
             timeout: 10000,
           });
         },

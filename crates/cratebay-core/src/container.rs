@@ -4,10 +4,10 @@
 
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
-    RemoveContainerOptions, StopContainerOptions,
+    RemoveContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::image::ListImagesOptions;
+use bollard::image::{ListImagesOptions, RemoveImageOptions, SearchImagesOptions, TagImageOptions};
 use bollard::Docker;
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use crate::error::AppError;
 use crate::models::{
     ContainerCreateRequest, ContainerDetail, ContainerInfo, ContainerListFilters, ContainerState,
-    ContainerStatus, DockerImageInfo, ExecResult, ExecStreamChunk, LogEntry, LogOptions,
-    PortMapping,
+    ContainerStats, ContainerStatus, ExecResult, ExecStreamChunk, ImageInspectInfo,
+    ImageSearchResult, LocalImageInfo, LogEntry, LogOptions, PortMapping,
 };
 
 /// List all containers, optionally filtered.
@@ -84,8 +84,8 @@ pub async fn list(
                 .into_iter()
                 .filter_map(|p| {
                     Some(PortMapping {
-                        host_port: p.public_port? as u16,
-                        container_port: p.private_port as u16,
+                        host_port: p.public_port?,
+                        container_port: p.private_port,
                         protocol: p
                             .typ
                             .map(|t| t.to_string())
@@ -152,6 +152,9 @@ pub async fn create(
     }
     if let Some(mem) = request.memory_mb {
         labels.insert("com.cratebay.memory_mb".to_string(), mem.to_string());
+    }
+    if let Some(ref template_id) = request.template_id {
+        labels.insert("com.cratebay.template_id".to_string(), template_id.clone());
     }
 
     let host_config = bollard::models::HostConfig {
@@ -326,6 +329,70 @@ pub async fn inspect(docker: &Docker, id: &str) -> Result<ContainerDetail, AppEr
     })
 }
 
+/// Get real-time resource usage for a container.
+pub async fn stats(docker: &Docker, id: &str) -> Result<ContainerStats, AppError> {
+    let mut stream = docker.stats(
+        id,
+        Some(StatsOptions {
+            stream: false,
+            one_shot: true,
+        }),
+    );
+
+    let stats =
+        stream.next().await.transpose()?.ok_or_else(|| {
+            AppError::Runtime(format!("No stats returned for container '{}'", id))
+        })?;
+
+    let cpu_total = stats.cpu_stats.cpu_usage.total_usage as f64;
+    let cpu_prev_total = stats.precpu_stats.cpu_usage.total_usage as f64;
+    let cpu_delta = cpu_total - cpu_prev_total;
+
+    let system_total = stats.cpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+    let system_prev_total = stats.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+    let system_delta = system_total - system_prev_total;
+
+    let online_cpus = stats
+        .cpu_stats
+        .online_cpus
+        .or_else(|| {
+            stats
+                .cpu_stats
+                .cpu_usage
+                .percpu_usage
+                .as_ref()
+                .map(|cpu| cpu.len() as u64)
+        })
+        .unwrap_or(1) as f64;
+
+    let cpu_percent = if cpu_delta > 0.0 && system_delta > 0.0 {
+        (cpu_delta / system_delta) * online_cpus * 100.0
+    } else {
+        0.0
+    };
+
+    let cpu_cores_used = cpu_percent / 100.0;
+
+    let memory_used_bytes = stats.memory_stats.usage.unwrap_or(0) as f64;
+    let memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0) as f64;
+    let memory_percent = if memory_limit_bytes > 0.0 {
+        (memory_used_bytes / memory_limit_bytes) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(ContainerStats {
+        id: stats.id,
+        name: stats.name.trim_start_matches('/').to_string(),
+        read_at: stats.read.to_string(),
+        cpu_percent,
+        cpu_cores_used,
+        memory_used_mb: memory_used_bytes / 1024.0 / 1024.0,
+        memory_limit_mb: memory_limit_bytes / 1024.0 / 1024.0,
+        memory_percent,
+    })
+}
+
 /// Execute a command inside a running container and return the complete result.
 pub async fn exec(
     docker: &Docker,
@@ -432,6 +499,9 @@ pub async fn logs(
     options: Option<LogOptions>,
 ) -> Result<Vec<LogEntry>, AppError> {
     let opts = options.unwrap_or_default();
+    let since = parse_log_time_filter(opts.since.as_deref())?;
+    let until = parse_log_time_filter(opts.until.as_deref())?;
+    let with_timestamps = opts.timestamps.unwrap_or(false);
     let tail = opts
         .tail
         .map(|t| t.to_string())
@@ -440,8 +510,10 @@ pub async fn logs(
     let log_options = LogsOptions::<String> {
         stdout: true,
         stderr: true,
-        tail: tail,
-        timestamps: opts.timestamps.unwrap_or(false),
+        since,
+        until,
+        tail,
+        timestamps: with_timestamps,
         ..Default::default()
     };
 
@@ -451,17 +523,21 @@ pub async fn logs(
     while let Some(chunk) = stream.next().await {
         match chunk? {
             bollard::container::LogOutput::StdOut { message } => {
+                let (timestamp, parsed_message) =
+                    split_log_timestamp(&String::from_utf8_lossy(&message), with_timestamps);
                 entries.push(LogEntry {
                     stream: "stdout".to_string(),
-                    message: String::from_utf8_lossy(&message).to_string(),
-                    timestamp: None,
+                    message: parsed_message,
+                    timestamp,
                 });
             }
             bollard::container::LogOutput::StdErr { message } => {
+                let (timestamp, parsed_message) =
+                    split_log_timestamp(&String::from_utf8_lossy(&message), with_timestamps);
                 entries.push(LogEntry {
                     stream: "stderr".to_string(),
-                    message: String::from_utf8_lossy(&message).to_string(),
-                    timestamp: None,
+                    message: parsed_message,
+                    timestamp,
                 });
             }
             _ => {}
@@ -471,12 +547,51 @@ pub async fn logs(
     Ok(entries)
 }
 
+fn split_log_timestamp(raw: &str, with_timestamps: bool) -> (Option<String>, String) {
+    if !with_timestamps {
+        return (None, raw.to_string());
+    }
+
+    let trimmed = raw.trim_start();
+    if let Some((prefix, remainder)) = trimmed.split_once(' ') {
+        if chrono::DateTime::parse_from_rfc3339(prefix).is_ok() {
+            return (Some(prefix.to_string()), remainder.to_string());
+        }
+    }
+
+    (None, raw.to_string())
+}
+
+fn parse_log_time_filter(value: Option<&str>) -> Result<i64, AppError> {
+    let Some(raw) = value else {
+        return Ok(0);
+    };
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+
+    if let Ok(unix_seconds) = trimmed.parse::<i64>() {
+        return Ok(unix_seconds);
+    }
+
+    chrono::DateTime::parse_from_rfc3339(trimmed)
+        .map(|dt| dt.timestamp())
+        .map_err(|e| {
+            AppError::Validation(format!(
+                "Invalid timestamp '{}': expected UNIX seconds or RFC3339 ({})",
+                trimmed, e
+            ))
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Docker Image operations
 // ---------------------------------------------------------------------------
 
 /// List local Docker images.
-pub async fn image_list(docker: &Docker) -> Result<Vec<DockerImageInfo>, AppError> {
+pub async fn image_list(docker: &Docker) -> Result<Vec<LocalImageInfo>, AppError> {
     let options = ListImagesOptions::<String> {
         all: false,
         ..Default::default()
@@ -487,23 +602,122 @@ pub async fn image_list(docker: &Docker) -> Result<Vec<DockerImageInfo>, AppErro
     let results = images
         .into_iter()
         .map(|img| {
-            let id = img.id.clone();
-            let short_id = id
-                .strip_prefix("sha256:")
-                .unwrap_or(&id)
-                .chars()
-                .take(12)
-                .collect::<String>();
-            DockerImageInfo {
-                id: short_id,
-                repo_tags: img.repo_tags,
-                size: img.size,
+            let sanitized_size = img.size.max(0);
+            let size_bytes = sanitized_size as u64;
+            let repo_tags = img
+                .repo_tags
+                .into_iter()
+                .filter(|tag| tag != "<none>:<none>")
+                .collect::<Vec<_>>();
+            LocalImageInfo {
+                id: img.id,
+                repo_tags,
+                size: sanitized_size,
+                size_bytes,
+                size_human: format_bytes_human(size_bytes),
                 created: img.created,
             }
         })
         .collect();
 
     Ok(results)
+}
+
+/// Search images from registry via Docker API.
+pub async fn image_search(
+    docker: &Docker,
+    query: &str,
+    limit: Option<u64>,
+) -> Result<Vec<ImageSearchResult>, AppError> {
+    let term = query.trim();
+    if term.is_empty() {
+        return Err(AppError::Validation(
+            "Image search query cannot be empty".to_string(),
+        ));
+    }
+
+    let options = SearchImagesOptions {
+        term: term.to_string(),
+        limit,
+        filters: HashMap::new(),
+    };
+
+    let results = docker.search_images(options).await?;
+    let mapped = results
+        .into_iter()
+        .filter_map(|item| {
+            let reference = item.name?;
+            Some(ImageSearchResult {
+                source: "dockerhub".to_string(),
+                reference,
+                description: item.description.unwrap_or_default(),
+                stars: item.star_count.and_then(|value| u64::try_from(value).ok()),
+                pulls: None,
+                official: item.is_official.unwrap_or(false),
+            })
+        })
+        .collect();
+
+    Ok(mapped)
+}
+
+/// Inspect a local image by id/tag.
+pub async fn image_inspect(docker: &Docker, id: &str) -> Result<ImageInspectInfo, AppError> {
+    let inspected = docker.inspect_image(id).await?;
+    let size_bytes = inspected.size.unwrap_or(0).max(0) as u64;
+    let layers = inspected
+        .root_fs
+        .and_then(|root| root.layers)
+        .map(|layers| layers.len() as u32)
+        .unwrap_or(0);
+
+    Ok(ImageInspectInfo {
+        id: inspected.id.unwrap_or_else(|| id.to_string()),
+        repo_tags: inspected.repo_tags.unwrap_or_default(),
+        size_bytes,
+        created: inspected
+            .created
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        architecture: inspected
+            .architecture
+            .unwrap_or_else(|| "unknown".to_string()),
+        os: inspected.os.unwrap_or_else(|| "unknown".to_string()),
+        docker_version: inspected.docker_version.unwrap_or_default(),
+        layers,
+    })
+}
+
+/// Remove a local image.
+pub async fn image_remove(docker: &Docker, id: &str, force: bool) -> Result<(), AppError> {
+    let options = Some(RemoveImageOptions {
+        force,
+        noprune: false,
+    });
+    let _ = docker.remove_image(id, options, None).await?;
+    Ok(())
+}
+
+/// Tag an existing local image with a new repository:tag reference.
+pub async fn image_tag(docker: &Docker, source: &str, target: &str) -> Result<(), AppError> {
+    let source = source.trim();
+    let target = target.trim();
+
+    if source.is_empty() || target.is_empty() {
+        return Err(AppError::Validation(
+            "Image source and target must not be empty".to_string(),
+        ));
+    }
+    if target.contains('@') {
+        return Err(AppError::Validation(
+            "Digest targets are not supported for image_tag".to_string(),
+        ));
+    }
+
+    let (repo, tag) = split_repo_and_tag(target);
+    let options = Some(TagImageOptions { repo, tag });
+    docker.tag_image(source, options).await?;
+    Ok(())
 }
 
 /// Progress callback for image pull operations.
@@ -679,6 +893,33 @@ fn rewrite_image_for_mirror(image: &str, mirror: &str) -> String {
     } else {
         // Simple image name like "node:20-alpine" — add "library/" prefix
         format!("{}/library/{}", mirror, image)
+    }
+}
+
+fn split_repo_and_tag(reference: &str) -> (String, String) {
+    if let Some((repo, tag)) = reference.rsplit_once(':') {
+        // Keep `registry:port/repo` valid; only treat as tag if suffix is after last `/`.
+        if !tag.contains('/') {
+            return (repo.to_string(), tag.to_string());
+        }
+    }
+    (reference.to_string(), "latest".to_string())
+}
+
+fn format_bytes_human(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let value = bytes as f64;
+    if value < KB {
+        format!("{} B", bytes)
+    } else if value < MB {
+        format!("{:.1} KB", value / KB)
+    } else if value < GB {
+        format!("{:.1} MB", value / MB)
+    } else {
+        format!("{:.2} GB", value / GB)
     }
 }
 

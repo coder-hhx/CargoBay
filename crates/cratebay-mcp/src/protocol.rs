@@ -474,7 +474,7 @@ mod tests {
         for _ in 0..200 {
             json.push_str(r#"{"a":"#);
         }
-        json.push_str("1");
+        json.push('1');
         for _ in 0..200 {
             json.push('}');
         }

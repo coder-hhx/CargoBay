@@ -9,9 +9,10 @@ import type {
   ContainerFilter,
   DockerImageInfo,
 } from "@/types/container";
+import type { LocalImageInfo } from "@/types/image";
 
 // Re-export types for backward compatibility
-export type { ContainerInfo, ContainerCreateRequest, ContainerTemplate, DockerImageInfo };
+export type { ContainerInfo, ContainerCreateRequest, ContainerTemplate, DockerImageInfo, LocalImageInfo };
 
 interface ContainerState {
   // Container list
@@ -22,7 +23,7 @@ interface ContainerState {
   _fetchAbortController: AbortController | null;
 
   // Docker images
-  images: DockerImageInfo[];
+  images: LocalImageInfo[];
   imagesLoading: boolean;
   fetchImages: () => Promise<void>;
 
@@ -97,7 +98,7 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
   fetchImages: async () => {
     set({ imagesLoading: true });
     try {
-      const images = await invoke<DockerImageInfo[]>("image_list");
+      const images = await invoke<LocalImageInfo[]>("image_list");
       set({ images, imagesLoading: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -142,7 +143,7 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
       // Step 1: Check if image exists locally
       let needsPull = false;
       try {
-        const images = await invoke<DockerImageInfo[]>("image_list");
+        const images = await invoke<LocalImageInfo[]>("image_list");
         const imageTag = req.image;
         needsPull = !images.some((img) =>
           img.repoTags.some((tag) => tag === imageTag),

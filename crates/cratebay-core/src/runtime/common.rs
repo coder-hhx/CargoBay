@@ -115,9 +115,7 @@ pub fn docker_proxy_port() -> u32 {
 
 /// The host-side Docker-compatible Unix socket path exposed by CrateBay.
 ///
-/// Defaults to `$HOME/.cratebay/run/docker.sock` to avoid spaces in paths
-/// (e.g. `~/Library/Application Support/...` which breaks URL parsing in
-/// tooling that consumes `DOCKER_HOST=unix://...`).
+/// Defaults to `$HOME/.cratebay/runtime/docker.sock`.
 ///
 /// Override via `CRATEBAY_DOCKER_SOCKET_PATH`.
 pub fn host_docker_socket_path() -> &'static Path {
@@ -132,11 +130,13 @@ pub fn host_docker_socket_path() -> &'static Path {
             if let Ok(home) = std::env::var("HOME") {
                 return PathBuf::from(home)
                     .join(".cratebay")
-                    .join("run")
+                    .join("runtime")
                     .join("docker.sock");
             }
 
-            crate::storage::data_dir().join("run").join("docker.sock")
+            crate::storage::data_dir()
+                .join("runtime")
+                .join("docker.sock")
         })
         .as_path()
 }
@@ -149,7 +149,7 @@ pub fn runtime_host_docker_socket_path(vm_id: &str) -> PathBuf {
     let base = host_docker_socket_path()
         .parent()
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| crate::storage::data_dir().join("run"));
+        .unwrap_or_else(|| crate::storage::data_dir().join("runtime"));
     base.join(format!("docker-{}.sock", vm_id))
 }
 

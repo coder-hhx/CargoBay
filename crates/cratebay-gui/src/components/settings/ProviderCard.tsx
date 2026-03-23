@@ -4,6 +4,7 @@ import {
   type LlmProviderInfo,
   type LlmProviderUpdateRequest,
   type ApiFormat,
+  type ProviderTestResult,
 } from "@/stores/settingsStore";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,7 +62,7 @@ export function ProviderCard({ provider }: ProviderCardProps) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<boolean | null>(null);
+  const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
 
   const handleTest = useCallback(async () => {
     setTesting(true);
@@ -69,18 +70,46 @@ export function ProviderCard({ provider }: ProviderCardProps) {
     try {
       const result = await testProvider(provider.id);
       setTestResult(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTestResult({
+        success: false,
+        latencyMs: 0,
+        model: "",
+        error: message,
+      });
     } finally {
       setTesting(false);
     }
   }, [testProvider, provider.id]);
 
   const handleDelete = useCallback(async () => {
-    await deleteProvider(provider.id);
-    setDeleteConfirmOpen(false);
+    try {
+      await deleteProvider(provider.id);
+      setDeleteConfirmOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTestResult({
+        success: false,
+        latencyMs: 0,
+        model: "",
+        error: message,
+      });
+    }
   }, [deleteProvider, provider.id]);
 
   const handleFetchModels = useCallback(async () => {
-    await fetchModels(provider.id);
+    try {
+      await fetchModels(provider.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTestResult({
+        success: false,
+        latencyMs: 0,
+        model: "",
+        error: message,
+      });
+    }
   }, [fetchModels, provider.id]);
 
   return (
@@ -135,15 +164,20 @@ export function ProviderCard({ provider }: ProviderCardProps) {
             </Button>
             {testResult !== null && (
               <span className="flex items-center gap-1 text-xs">
-                {testResult ? (
+                {testResult.success ? (
                   <>
                     <CheckCircle className="h-3.5 w-3.5 text-success" />
-                    <span className="text-success">Connected</span>
+                    <span className="text-success">
+                      Connected
+                      {testResult.latencyMs > 0 && ` · ${testResult.latencyMs}ms`}
+                    </span>
                   </>
                 ) : (
                   <>
                     <XCircle className="h-3.5 w-3.5 text-destructive" />
-                    <span className="text-destructive">Failed</span>
+                    <span className="max-w-[280px] truncate text-destructive" title={testResult.error ?? "Failed"}>
+                      {testResult.error ?? "Failed"}
+                    </span>
                   </>
                 )}
               </span>

@@ -207,6 +207,7 @@ function ChatTopBarContent() {
               variant="ghost"
               size="icon-sm"
               onClick={handleNewChat}
+              data-testid="new-session"
               aria-label={t("common", "newChat")}
             >
               <Plus className="h-4 w-4" />
@@ -224,6 +225,7 @@ function ChatTopBarContent() {
               variant="ghost"
               size="icon-sm"
               onClick={() => setCurrentPage("settings")}
+              data-testid="settings-shortcut"
               aria-label={t("topbar", "settings")}
             >
               <Settings className="h-4 w-4" />

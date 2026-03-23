@@ -105,14 +105,14 @@ export function McpPage() {
         <p className="text-xs text-muted-foreground">
           {servers.length} {t("mcp", "serversCount")} &middot; {connectedCount} {t("mcp", "connected").toLowerCase()} &middot; {totalTools} {t("mcp", "toolsAvailable")}
         </p>
-        <Button size="sm" onClick={handleAddServer}>
+        <Button size="sm" onClick={handleAddServer} data-testid="add-mcp-server">
           <Plus className="mr-1 h-4 w-4" />
           {t("mcp", "addServer")}
         </Button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto px-6 py-4">
+      <div className="flex-1 overflow-auto px-6 py-4" data-testid="mcp-server-list">
         {loading ? (
           <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
             {t("mcp", "loadingServers")}
@@ -177,6 +177,7 @@ function McpServerCard({
 
   return (
     <div
+      data-testid="mcp-server-card"
       className={cn(
         "rounded-xl border bg-card transition-all",
         expanded && "border-primary/50",
@@ -225,6 +226,7 @@ function McpServerCard({
               size="icon"
               className="h-7 w-7"
               onClick={() => void stopServer(server.id)}
+              data-testid="mcp-disconnect"
             >
               <Square className="h-3.5 w-3.5" />
             </Button>
@@ -235,6 +237,7 @@ function McpServerCard({
               className="h-7 w-7"
               onClick={() => void startServer(server.id)}
               disabled={isStarting}
+              data-testid="mcp-connect"
             >
               <Play className="h-3.5 w-3.5" />
             </Button>
@@ -244,6 +247,7 @@ function McpServerCard({
             size="icon"
             className="h-7 w-7 text-destructive hover:text-destructive"
             onClick={() => void removeServer(server.id)}
+            data-testid="mcp-delete"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -260,7 +264,7 @@ function McpServerCard({
 
       {/* Expanded content — tool list */}
       {expanded && (
-        <div className="border-t border-border px-4 pb-3 pt-2">
+        <div className="border-t border-border px-4 pb-3 pt-2" data-testid="mcp-tool-list">
           {/* Server command info */}
           <p className="mb-2 truncate font-mono text-[11px] text-muted-foreground">
             {server.command} {server.args.join(" ")}
@@ -275,6 +279,7 @@ function McpServerCard({
               {tools.map((tool) => (
                 <div
                   key={`${tool.serverId}-${tool.name}`}
+                  data-testid="mcp-tool-item"
                   className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50"
                 >
                   <div className="min-w-0 flex-1">

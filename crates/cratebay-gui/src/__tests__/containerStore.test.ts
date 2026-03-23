@@ -18,13 +18,16 @@ const makeContainer = (overrides: Partial<ContainerInfo> = {}): ContainerInfo =>
   id: "c-1",
   shortId: "c-1",
   name: "node-01",
-  templateId: "node-dev",
   image: "node:20-slim",
   status: "running",
+  state: "running",
   createdAt: new Date().toISOString(),
   cpuCores: 2,
   memoryMb: 2048,
   ports: [],
+  labels: {
+    "com.cratebay.template_id": "node-dev",
+  },
   ...overrides,
 });
 
@@ -89,33 +92,55 @@ describe("containerStore", () => {
   // createContainer
   // -------------------------------------------------------------------------
   describe("createContainer", () => {
-    it("invokes container_create and appends result to containers", async () => {
+    it("invokes container_create with request and appends result", async () => {
       const newContainer = makeContainer({ id: "c-new", name: "new-box" });
-      mockInvoke.mockResolvedValueOnce(newContainer);
+      mockInvoke
+        .mockResolvedValueOnce([
+          {
+            id: "img-1",
+            repoTags: ["node:20-slim"],
+            sizeBytes: 123,
+            sizeHuman: "123 B",
+            created: 111,
+          },
+        ])
+        .mockResolvedValueOnce(newContainer);
 
       const result = await useContainerStore.getState().createContainer({
         templateId: "node-dev",
         name: "new-box",
+        image: "node:20-slim",
       });
 
-      expect(mockInvoke).toHaveBeenCalledWith("container_create", {
-        req: { templateId: "node-dev", name: "new-box" },
+      expect(mockInvoke).toHaveBeenNthCalledWith(1, "image_list");
+      expect(mockInvoke).toHaveBeenNthCalledWith(2, "container_create", {
+        request: { templateId: "node-dev", name: "new-box", image: "node:20-slim" },
       });
       expect(result.id).toBe("c-new");
       expect(useContainerStore.getState().containers).toHaveLength(1);
     });
 
-    it("creates mock container when invoke fails", async () => {
-      mockInvoke.mockRejectedValueOnce(new Error("no Tauri"));
+    it("throws and removes placeholder when create fails", async () => {
+      mockInvoke
+        .mockResolvedValueOnce([
+          {
+            id: "img-1",
+            repoTags: ["node:20-slim"],
+            sizeBytes: 123,
+            sizeHuman: "123 B",
+            created: 111,
+          },
+        ])
+        .mockRejectedValueOnce(new Error("create failed"));
 
-      const result = await useContainerStore.getState().createContainer({
-        templateId: "node-dev",
-        name: "fallback-box",
-      });
-
-      expect(result.name).toBe("fallback-box");
-      expect(result.templateId).toBe("node-dev");
-      expect(useContainerStore.getState().containers).toHaveLength(1);
+      await expect(
+        useContainerStore.getState().createContainer({
+          templateId: "node-dev",
+          name: "fallback-box",
+          image: "node:20-slim",
+        }),
+      ).rejects.toThrow("create failed");
+      expect(useContainerStore.getState().containers).toHaveLength(0);
     });
   });
 
@@ -123,25 +148,33 @@ describe("containerStore", () => {
   // startContainer / stopContainer
   // -------------------------------------------------------------------------
   describe("startContainer", () => {
-    it("updates container status to running", async () => {
+    it("refreshes list and updates container status to running", async () => {
       const c = makeContainer({ id: "c-1", status: "stopped" });
       useContainerStore.setState({ containers: [c] });
-      mockInvoke.mockResolvedValueOnce(undefined);
+      mockInvoke
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce([makeContainer({ id: "c-1", status: "running", state: "running" })]);
 
       await useContainerStore.getState().startContainer("c-1");
 
+      expect(mockInvoke).toHaveBeenNthCalledWith(1, "container_start", { id: "c-1" });
+      expect(mockInvoke).toHaveBeenNthCalledWith(2, "container_list");
       expect(useContainerStore.getState().containers[0].status).toBe("running");
     });
   });
 
   describe("stopContainer", () => {
-    it("updates container status to stopped", async () => {
+    it("refreshes list and updates container status to stopped", async () => {
       const c = makeContainer({ id: "c-1", status: "running" });
       useContainerStore.setState({ containers: [c] });
-      mockInvoke.mockResolvedValueOnce(undefined);
+      mockInvoke
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce([makeContainer({ id: "c-1", status: "stopped", state: "exited" })]);
 
       await useContainerStore.getState().stopContainer("c-1");
 
+      expect(mockInvoke).toHaveBeenNthCalledWith(1, "container_stop", { id: "c-1" });
+      expect(mockInvoke).toHaveBeenNthCalledWith(2, "container_list");
       expect(useContainerStore.getState().containers[0].status).toBe("stopped");
     });
   });
@@ -234,9 +267,27 @@ describe("containerStore", () => {
   // -------------------------------------------------------------------------
   describe("filteredContainers", () => {
     const containers = [
-      makeContainer({ id: "c-1", name: "node-01", image: "node:20-slim", status: "running", templateId: "node-dev" }),
-      makeContainer({ id: "c-2", name: "py-dev", image: "python:3.12-slim", status: "stopped", templateId: "python-dev" }),
-      makeContainer({ id: "c-3", name: "rust-box", image: "rust:1.75-slim", status: "running", templateId: "rust-dev" }),
+      makeContainer({
+        id: "c-1",
+        name: "node-01",
+        image: "node:20-slim",
+        status: "running",
+        labels: { "com.cratebay.template_id": "node-dev" },
+      }),
+      makeContainer({
+        id: "c-2",
+        name: "py-dev",
+        image: "python:3.12-slim",
+        status: "stopped",
+        labels: { "com.cratebay.template_id": "python-dev" },
+      }),
+      makeContainer({
+        id: "c-3",
+        name: "rust-box",
+        image: "rust:1.75-slim",
+        status: "running",
+        labels: { "com.cratebay.template_id": "rust-dev" },
+      }),
     ];
 
     beforeEach(() => {

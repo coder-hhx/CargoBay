@@ -6,6 +6,8 @@ import { TopBar } from "@/components/layout/TopBar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAppStore } from "@/stores/appStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useChatStore } from "@/stores/chatStore";
 
 // Mock @tauri-apps/api to avoid native module errors
 vi.mock("@tauri-apps/api/core", () => ({
@@ -23,11 +25,25 @@ function WithTooltip({ children }: { children: React.ReactNode }) {
   return <TooltipProvider>{children}</TooltipProvider>;
 }
 
+function resetLocaleAndChat() {
+  useSettingsStore.setState((state) => ({
+    settings: {
+      ...state.settings,
+      language: "en",
+    },
+  }));
+  useChatStore.setState({
+    sessions: [],
+    activeSessionId: null,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // AppLayout (already wraps children with TooltipProvider)
 // ---------------------------------------------------------------------------
 describe("AppLayout", () => {
   beforeEach(() => {
+    resetLocaleAndChat();
     useAppStore.setState({
       currentPage: "chat",
       sidebarOpen: true,
@@ -67,8 +83,8 @@ describe("AppLayout", () => {
     expect(chatElements.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Containers")).toBeInTheDocument();
     expect(screen.getByText("MCP")).toBeInTheDocument();
-    // "Settings" only in Sidebar nav (TopBar shows "Chat" since currentPage=chat)
-    expect(screen.getByText("Settings")).toBeInTheDocument();
+    const settingsElements = screen.getAllByText("Settings");
+    expect(settingsElements.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -77,6 +93,7 @@ describe("AppLayout", () => {
 // ---------------------------------------------------------------------------
 describe("Sidebar", () => {
   beforeEach(() => {
+    resetLocaleAndChat();
     useAppStore.setState({
       currentPage: "chat",
       sidebarOpen: true,
@@ -120,20 +137,23 @@ describe("Sidebar", () => {
 // ---------------------------------------------------------------------------
 describe("TopBar", () => {
   beforeEach(() => {
+    resetLocaleAndChat();
     useAppStore.setState({
       currentPage: "chat",
       sidebarOpen: true,
     });
   });
 
-  it("displays current page label in breadcrumb", () => {
+  it("shows chat session title on chat page", () => {
     render(<TopBar />);
-    expect(screen.getByText("Chat")).toBeInTheDocument();
+    const newChatElements = screen.getAllByText("New Chat");
+    expect(newChatElements.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("updates breadcrumb when page changes", () => {
+  it("updates header content when page changes", () => {
     const { rerender } = render(<TopBar />);
-    expect(screen.getByText("Chat")).toBeInTheDocument();
+    const newChatElements = screen.getAllByText("New Chat");
+    expect(newChatElements.length).toBeGreaterThanOrEqual(1);
 
     useAppStore.setState({ currentPage: "settings" });
     rerender(<TopBar />);
@@ -155,27 +175,28 @@ describe("TopBar", () => {
 // ---------------------------------------------------------------------------
 describe("StatusBar", () => {
   beforeEach(() => {
+    resetLocaleAndChat();
     useAppStore.setState({
       dockerConnected: false,
       runtimeStatus: "stopped",
     });
   });
 
-  it("shows Docker Disconnected by default", () => {
+  it("shows stopped status by default", () => {
     render(<StatusBar />);
-    expect(screen.getByText("Docker Disconnected")).toBeInTheDocument();
+    expect(screen.getByText("未启动")).toBeInTheDocument();
   });
 
-  it("shows Docker Connected when connected", () => {
-    useAppStore.setState({ dockerConnected: true });
+  it("shows engine ready when runtime running and docker connected", () => {
+    useAppStore.setState({ dockerConnected: true, runtimeStatus: "running" });
     render(<StatusBar />);
-    expect(screen.getByText("Docker Connected")).toBeInTheDocument();
+    expect(screen.getByText("引擎就绪")).toBeInTheDocument();
   });
 
-  it("shows runtime status", () => {
+  it("shows connecting when runtime running but docker disconnected", () => {
     useAppStore.setState({ runtimeStatus: "running" });
     render(<StatusBar />);
-    expect(screen.getByText(/Runtime: Running/)).toBeInTheDocument();
+    expect(screen.getByText("连接中…")).toBeInTheDocument();
   });
 
   it("shows version number", () => {

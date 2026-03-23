@@ -2,7 +2,7 @@
 
 ## 当前状态
 - **阶段**: 开发阶段 (Phase 2) — GUI 改进 + Docker 集成优化
-- **日期**: 2026-03-22
+- **日期**: 2026-03-23
 - **团队模式**: 开发阶段 6 人团队（见 agent-team-workflow.md §1.1）
 - **Git HEAD**: `rewrite/v2` 分支
 
@@ -117,12 +117,32 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - ✅ 语言下拉修复：SelectValue 显示"简体中文"/"English"而非 value
 - ✅ auto_start 优雅回退：容器创建成功但启动失败时返回容器信息，显示 warning 而非 error
 - ✅ health_check 状态回退修复：后端+前端双重保护，防止 Docker ping 偶尔超时导致"运行中"→"启动中"
+- ✅ 状态栏稳定性：health monitor 复用 AppState Docker client + 重试/阈值；`runtime_status` reconcile；前端 90s 降级宽限
+
+### GUI 可用性修复（2026-03-23）
+
+**用户阻塞问题修复：**
+- ✅ Images 搜索不可用：新增 Settings > Runtime 的 HTTP Proxy 配置 + 重启提示；`runtime_start` 与 runtime auto-start 都会读取持久化设置并应用 `CRATEBAY_RUNTIME_HTTP_PROXY*` 环境变量
+- ✅ 容器日志/终端为 mock：ContainerDetail 改为真实 `container_logs` + `container_exec_stream`（可输入命令并实时输出）
+- ✅ 容器 CPU/MEM 展示语义纠正：列表卡片展示规格（CPU cores / Memory MB）；详情面板展示监控（`container_stats`，按分配规格计算占用百分比）
+- ✅ 语言下拉显示修复：SelectValue 支持展示 label（简体中文/English）而非 raw value（zh-CN/en）
+- ✅ LLM Providers / Chat 模型选择可用：修复 invoke 参数命名（snake_case），Providers/Models 在启动时加载；默认 provider/model 通过 settings key 持久化（`default_provider`/`default_model`）
+- ✅ Agent 内置镜像工具：补齐 `image_*` AgentTools 并注册到工具表
+
+**回归验证：**
+- ✅ `cargo test --workspace`
+- ✅ `pnpm -C crates/cratebay-gui typecheck`
+- ✅ `pnpm -C crates/cratebay-gui test`
+- ✅ `pnpm -C crates/cratebay-gui test:e2e`
+- ✅ `pnpm -C crates/cratebay-gui build`
+- ✅ macOS runtime HTTP 代理支持：`CRATEBAY_RUNTIME_HTTP_PROXY` + 可选 `CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE=1`
+- ✅ Images API 补齐：image_list/search/inspect/remove/tag/pull + GUI commands 注册
+- ✅ E2E 稳定性：统一浏览器模式 Tauri mock（`__MOCK_TAURI_INVOKE__` + `listen()` fallback）+ 补全 data-testid
+- ✅ TypeScript typecheck：容器状态 badge 映射全覆盖 + i18n 增加 overview/ports
+- ✅ 全量验证通过：`cargo test --workspace` / `pnpm test` / `pnpm test:e2e` / `pnpm typecheck` / `pnpm build`
 
 **待处理的问题：**
-1. ⚠️ **状态栏仍然不稳定** — runtime 状态偶尔从"运行中"变回"启动中"（已修复后端 health_check 保持 Ready + 前端防降级，但可能还有其他触发路径需要排查）
-2. ⚠️ **容器创建端到端流程未完整验证** — VM 内 Docker 网络问题导致无法拉取真实镜像（mirrors 和直连都超时）；本地只有 `minitest:latest`（空镜像，无文件系统），虽然 `container_create` 不再报错，但容器无法真正运行
-3. ⚠️ **需要有效的测试镜像** — 要验证完整的容器创建 + 启动 + 运行流程，需要一个包含 `/bin/sh` 的有效本地镜像。VM 网络不通导致无法 `docker pull`，`docker import` 创建的空镜像没有文件系统
-4. ⚠️ **health monitor 每次创建新的 Docker 连接** — `health_check()` 每 30 秒调用 `bollard::Docker::connect_with_unix()` 创建新连接实例来 ping，而不是复用 AppState 中已有的连接，可能造成资源浪费和额外延迟
+1. ⚠️ **容器端到端真实运行仍需环境验证** — 若 VM 无法直连拉取，可配置 `CRATEBAY_RUNTIME_HTTP_PROXY`（必要时启用 `CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE=1`）或使用可用的 registry mirrors；需要一个包含 `/bin/sh` 的有效镜像来验证 create→start→exec→stop→delete 全流程
 
 **关键代码变更文件：**
 - `crates/cratebay-core/src/container.rs` — PullProgress/PullProgressCallback, image_pull 超时+mirrors+callback, auto_start 优雅回退
@@ -137,9 +157,12 @@ pnpm run test               → ✅ 4 passed (Vitest)
 ## 待开始 📋
 
 ### 任务 E: Spec 文档对齐更新 🔴 优先
-- 更新 api-spec.md: 添加 runtime_start, runtime_stop 命令定义
-- 更新 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段 + ImagesPage（待确认）
-- 更新 backend-spec.md: AppState.docker 新类型 + 命令分组补充
+- ✅ api-spec.md: 补齐 runtime_start/runtime_stop + Images API（已更新至 v1.4.0）
+- ✅ runtime-spec.md: socket 路径 + HTTP proxy + 健康检查稳定性（已更新至 v1.2.0）
+- ✅ frontend-spec.md: runtime 健康降级宽限 + containerStore 类型对齐（已更新至 v1.2.2）
+- 🔴 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段（待补充/确认）
+- 🔴 backend-spec.md: AppState.docker 新类型 + 命令分组补充（待补充）
+- 🔴 ImagesPage: 是否保留？（代码存在但 spec 未定义，需人工决定）
 
 ### 任务 F: 自研 Runtime 移植实施 🔴 优先
 - Phase 1: 基础设施（images.rs, fsutil.rs, store 兼容层）~900 行
@@ -170,10 +193,10 @@ pnpm run test               → ✅ 4 passed (Vitest)
 |------|------|------|
 | architecture.md | **1.1.0** | docs/specs/architecture.md |
 | backend-spec.md | **1.2.0** | docs/specs/backend-spec.md |
-| runtime-spec.md | **1.0.0** | docs/specs/runtime-spec.md |
-| api-spec.md | **1.2.0** | docs/specs/api-spec.md |
+| runtime-spec.md | **1.2.0** | docs/specs/runtime-spec.md |
+| api-spec.md | **1.4.0** | docs/specs/api-spec.md |
 | database-spec.md | **1.1.0** | docs/specs/database-spec.md |
-| frontend-spec.md | **1.1.0** | docs/specs/frontend-spec.md |
+| frontend-spec.md | **1.2.2** | docs/specs/frontend-spec.md |
 | agent-spec.md | **1.2.0** | docs/specs/agent-spec.md |
 | mcp-spec.md | **1.1.0** | docs/specs/mcp-spec.md |
 | testing-spec.md | **1.1.0** | docs/specs/testing-spec.md |

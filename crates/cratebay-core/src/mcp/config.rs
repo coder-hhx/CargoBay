@@ -53,21 +53,16 @@ pub struct McpServerConfigEntry {
 }
 
 /// Transport type for MCP servers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum McpTransportType {
+    #[default]
     Stdio,
     Sse,
 }
 
-impl Default for McpTransportType {
-    fn default() -> Self {
-        McpTransportType::Stdio
-    }
-}
-
 fn default_transport() -> McpTransportType {
-    McpTransportType::Stdio
+    McpTransportType::default()
 }
 
 fn default_true() -> bool {

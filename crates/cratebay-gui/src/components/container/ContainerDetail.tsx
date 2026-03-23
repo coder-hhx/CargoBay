@@ -3,14 +3,16 @@ import { useI18n } from "@/lib/i18n";
 import { SlidePanel } from "@/components/common/SlidePanel";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ContainerLogs } from "./ContainerLogs";
+import { ContainerMonitoring } from "./ContainerMonitoring";
+import { TerminalView } from "./TerminalView";
 
 /**
  * Container detail slide panel — opens from the right side.
- * Shows: overview info, ports, mock logs, mock terminal.
+ * Shows: overview info, ports, logs, terminal.
  * Matches the reference project's SlidePanel pattern.
  */
 export function ContainerDetail() {
-  const { t } = useI18n();
   const selectedContainerId = useContainerStore((s) => s.selectedContainerId);
   const containers = useContainerStore((s) => s.containers);
   const selectContainer = useContainerStore((s) => s.selectContainer);
@@ -30,7 +32,7 @@ export function ContainerDetail() {
 
 function DetailContent({ container }: { container: ContainerInfo }) {
   const { t } = useI18n();
-  const isRunning = container.status === "running";
+  const isRunning = container.status === "running" || container.status === "paused";
 
   return (
     <div className="flex flex-col gap-6 p-5">
@@ -47,13 +49,31 @@ function DetailContent({ container }: { container: ContainerInfo }) {
             {formatRelativeTime(container.createdAt)}
           </DetailField>
           <DetailField label={t("containers", "template")}>{container.labels?.["com.cratebay.template_id"] || "—"}</DetailField>
-          {isRunning && (
-            <>
-              <DetailField label={t("containers", "cpu")}>{container.cpuCores} cores</DetailField>
-              <DetailField label={t("containers", "memory")}>{container.memoryMb} MB</DetailField>
-            </>
-          )}
         </div>
+      </section>
+
+      {/* Specs section (limits) */}
+      <section>
+        <SectionTitle>Specs</SectionTitle>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+          <DetailField label={t("containers", "cpuCores")}>
+            {container.cpuCores !== undefined ? `${container.cpuCores} cores` : "—"}
+          </DetailField>
+          <DetailField label={t("containers", "memoryMb")}>
+            {container.memoryMb !== undefined ? `${container.memoryMb} MB` : "—"}
+          </DetailField>
+        </div>
+      </section>
+
+      {/* Monitoring section (usage) */}
+      <section>
+        <SectionTitle>Monitoring</SectionTitle>
+        <ContainerMonitoring
+          containerId={container.id}
+          cpuCores={container.cpuCores}
+          memoryMb={container.memoryMb}
+          enabled={isRunning}
+        />
       </section>
 
       {/* Ports section */}
@@ -76,16 +96,18 @@ function DetailContent({ container }: { container: ContainerInfo }) {
       {/* Logs section */}
       <section>
         <SectionTitle>{t("containers", "logs") ?? "日志"}</SectionTitle>
-        <LogViewer containerId={container.id} isRunning={isRunning} />
+        <ContainerLogs containerId={container.id} />
       </section>
 
       {/* Terminal section */}
-      {isRunning && (
-        <section>
-          <SectionTitle>{t("containers", "terminal") ?? "终端"}</SectionTitle>
-          <TerminalPreview />
-        </section>
-      )}
+      <section>
+        <SectionTitle>{t("containers", "terminal") ?? "终端"}</SectionTitle>
+        {isRunning ? (
+          <TerminalView containerId={container.id} />
+        ) : (
+          <div className="text-sm text-muted-foreground">Container is not running.</div>
+        )}
+      </section>
     </div>
   );
 }
@@ -109,7 +131,29 @@ function DetailField({ label, children }: { label: string; children: React.React
 
 function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
   const { t } = useI18n();
-  const variants: Record<typeof status, { labelKey: "running" | "stopped" | "creating" | "error"; dotClass: string; badgeClass: string }> = {
+  type DisplayStatus = "running" | "stopped" | "creating" | "error";
+
+  const displayStatus: DisplayStatus = (() => {
+    switch (status) {
+      case "running":
+      case "paused":
+        return "running";
+      case "creating":
+      case "restarting":
+      case "removing":
+        return "creating";
+      case "dead":
+        return "error";
+      case "stopped":
+      case "created":
+      case "exited":
+        return "stopped";
+      default:
+        return "error";
+    }
+  })();
+
+  const variants: Record<DisplayStatus, { labelKey: DisplayStatus; dotClass: string; badgeClass: string }> = {
     running: {
       labelKey: "running",
       dotClass: "bg-emerald-400",
@@ -132,7 +176,7 @@ function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
     },
   };
 
-  const variant = variants[status];
+  const variant = variants[displayStatus];
 
   return (
     <Badge
@@ -145,82 +189,6 @@ function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
       <span className={cn("inline-block h-2 w-2 rounded-full", variant.dotClass)} />
       {t("containers", variant.labelKey)}
     </Badge>
-  );
-}
-
-/**
- * Mock log viewer — shows simulated container logs.
- * In production, this would stream real logs from `container_logs` command.
- */
-function LogViewer({ containerId: _containerId, isRunning }: { containerId: string; isRunning: boolean }) {
-  const mockLogs = isRunning
-    ? [
-        { time: "16:05:32", level: "INFO", text: "Server started on 0.0.0.0:8000" },
-        { time: "16:05:33", level: "INFO", text: "Application startup complete." },
-        { time: "16:06:12", level: "INFO", text: "GET /api/health 200 OK 2ms" },
-        { time: "16:06:15", level: "INFO", text: "GET /api/todos 200 OK 5ms" },
-        { time: "16:07:01", level: "WARN", text: "Slow query detected: 250ms" },
-        { time: "16:07:22", level: "INFO", text: "POST /api/todos 201 Created 12ms" },
-        { time: "16:08:05", level: "INFO", text: "GET /api/todos/1 200 OK 3ms" },
-        { time: "16:08:30", level: "ERROR", text: "Connection pool exhausted, retrying..." },
-        { time: "16:08:31", level: "INFO", text: "Connection pool recovered." },
-      ]
-    : [
-        { time: "—", level: "INFO", text: "Container is stopped. No logs available." },
-      ];
-
-  const levelColors: Record<string, string> = {
-    INFO: "text-cyan-500",
-    WARN: "text-yellow-500",
-    ERROR: "text-red-500",
-    DEBUG: "text-zinc-400",
-  };
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-zinc-950 p-3">
-      <div className="max-h-64 overflow-y-auto font-mono text-xs leading-5">
-        {mockLogs.map((log, i) => (
-          <div key={i} className="flex gap-2 whitespace-nowrap">
-            <span className="text-zinc-500">{log.time}</span>
-            <span className={cn("font-semibold", levelColors[log.level] ?? "text-zinc-400")}>
-              [{log.level}]
-            </span>
-            <span className="text-zinc-300">{log.text}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Mock terminal preview — shows a simulated terminal prompt.
- * In production, this would connect to `container_exec_stream`.
- */
-function TerminalPreview() {
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-zinc-950 p-4">
-      <div className="min-h-[120px] font-mono text-xs leading-6">
-        <div>
-          <span className="text-emerald-400">root@container</span>
-          <span className="text-zinc-400">:</span>
-          <span className="text-blue-400">~</span>
-          <span className="text-zinc-400">$ </span>
-          <span className="text-zinc-300">ls -la</span>
-        </div>
-        <div className="text-zinc-500">total 32</div>
-        <div className="text-zinc-500">drwxr-xr-x  4 root root 4096 Mar 22 08:00 .</div>
-        <div className="text-zinc-500">drwxr-xr-x  1 root root 4096 Mar 22 08:00 ..</div>
-        <div className="text-zinc-500">-rw-r--r--  1 root root  220 Mar 22 08:00 .bash_logout</div>
-        <div className="mt-1">
-          <span className="text-emerald-400">root@container</span>
-          <span className="text-zinc-400">:</span>
-          <span className="text-blue-400">~</span>
-          <span className="text-zinc-400">$ </span>
-          <span className="animate-pulse text-zinc-300">_</span>
-        </div>
-      </div>
-    </div>
   );
 }
 

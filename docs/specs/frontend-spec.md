@@ -1,6 +1,6 @@
 # Frontend Specification
 
-> Version: 1.2.0 | Last Updated: 2026-03-21 | Author: frontend-architect
+> Version: 1.2.4 | Last Updated: 2026-03-23 | Author: frontend-architect
 
 ---
 
@@ -126,6 +126,8 @@ crates/cratebay-gui/src/
 │   │   ├── ContainerList.tsx   # Container table/grid
 │   │   ├── ContainerCard.tsx   # Single container status card
 │   │   ├── ContainerDetail.tsx # Container inspect view
+│   │   ├── ContainerLogs.tsx   # Container stdout/stderr log viewer
+│   │   ├── ContainerMonitoring.tsx # Container CPU/MEM stats panel
 │   │   └── TerminalView.tsx    # Container exec terminal
 │   └── mcp/
 │       ├── McpServerList.tsx   # MCP server list with status
@@ -311,6 +313,12 @@ interface Notification {
 }
 ```
 
+**Runtime status handling**
+
+- Initial values come from `docker_status` + `runtime_status` on app startup.
+- Ongoing updates come from the global `runtime:health` event (every ~30s).
+- To avoid transient UI flicker (e.g., brief ping misses), the UI applies a downgrade grace window (`RUNTIME_HEALTH_DOWNGRADE_GRACE_MS`, default 90s) before showing `running → starting`.
+
 ### 4.2 chatStore
 
 Manages chat sessions, messages, and streaming state.
@@ -415,24 +423,36 @@ interface ContainerInfo {
   id: string;
   shortId: string;
   name: string;
-  templateId: string;
   image: string;
-  status: "running" | "stopped" | "creating" | "error";
+  // Backend statuses (Docker) + frontend placeholder.
+  // `creating` is frontend-only for optimistic UI placeholders.
+  status:
+    | "running"
+    | "stopped"
+    | "created"
+    | "restarting"
+    | "removing"
+    | "paused"
+    | "exited"
+    | "dead"
+    | "creating";
+  state: string;
   createdAt: string;
-  cpuCores: number;
-  memoryMb: number;
   ports: PortMapping[];
+  labels: Record<string, string>;
+  cpuCores?: number;
+  memoryMb?: number;
 }
 
 interface ContainerCreateRequest {
-  templateId: string;
-  name?: string;
-  image?: string;
+  name: string;
+  image: string;
+  templateId?: string;
   command?: string;
-  env?: Record<string, string>;
+  env?: string[]; // ["KEY=VALUE", ...]
   cpuCores?: number;
   memoryMb?: number;
-  ttlHours?: number;
+  autoStart?: boolean;
 }
 
 interface ContainerTemplate {
@@ -447,7 +467,7 @@ interface ContainerTemplate {
 }
 
 interface ContainerFilter {
-  status: "all" | "running" | "stopped";
+  status: "all" | "running" | "stopped" | "creating";
   search: string;
   templateId: string | null;
 }
@@ -535,7 +555,7 @@ interface SettingsState {
   createProvider: (request: LlmProviderCreateRequest) => Promise<LlmProviderInfo>;
   updateProvider: (id: string, request: LlmProviderUpdateRequest) => Promise<LlmProviderInfo>;
   deleteProvider: (id: string) => Promise<void>;
-  testProvider: (id: string) => Promise<boolean>;
+  testProvider: (id: string) => Promise<ProviderTestResult>;
 
   // Models
   models: Record<string, LlmModelInfo[]>;  // providerId → models[]
@@ -593,6 +613,13 @@ interface LlmModelInfo {
   supportsReasoning: boolean; // Whether model supports reasoning effort
 }
 
+interface ProviderTestResult {
+  success: boolean;
+  latencyMs: number;
+  model: string;
+  error: string | null;
+}
+
 interface AppSettings {
   language: "en" | "zh-CN";
   theme: "dark" | "light" | "system";
@@ -602,6 +629,12 @@ interface AppSettings {
   containerDefaultTtlHours: number;
   confirmDestructiveOps: boolean;
   reasoningEffort: "low" | "medium" | "high"; // Global reasoning effort preference
+  registryMirrors: string[];
+  runtimeHttpProxy: string;
+  runtimeHttpProxyBridge: boolean;
+  runtimeHttpProxyBindHost: string;
+  runtimeHttpProxyBindPort: number;
+  runtimeHttpProxyGuestHost: string;
 }
 ```
 
@@ -907,8 +940,10 @@ Application configuration with 6 tabs: General, Providers, Appearance, Runtime, 
 │  Runtime:                                                    │
 │  - VM Status (running/starting/stopped/error indicator)      │
 │  - Docker Connection status indicator                        │
-│  - Runtime Control: Start / Stop buttons                     │
+│  - Runtime Control: Start / Stop / Restart buttons           │
 │    (calls runtime_start / runtime_stop Tauri commands)        │
+│  - Runtime HTTP Proxy settings + bridge options              │
+│    (persisted via settings_get/settings_update)              │
 │  - CPU Cores slider (1-16)                                   │
 │  - Memory Allocation slider (2-32 GB)                        │
 │                                                              │

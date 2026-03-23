@@ -56,6 +56,11 @@ describe("API Key Security", () => {
         confirmDestructiveOps: true,
         reasoningEffort: "medium",
         registryMirrors: [],
+        runtimeHttpProxy: "",
+        runtimeHttpProxyBridge: false,
+        runtimeHttpProxyBindHost: "0.0.0.0",
+        runtimeHttpProxyBindPort: 3128,
+        runtimeHttpProxyGuestHost: "192.168.64.1",
       },
     });
   });
@@ -154,8 +159,8 @@ describe("API Key Security", () => {
 
     // The invoke should have been called with the key (sent to backend)
     expect(mockInvoke).toHaveBeenCalledWith("api_key_save", {
-      providerId: "provider-1",
-      apiKey: "sk-secret-value-99999",
+      provider_id: "provider-1",
+      api_key: "sk-secret-value-99999",
     });
 
     // The key value must NOT be stored in the Zustand state
@@ -186,7 +191,7 @@ describe("API Key Security", () => {
     await useSettingsStore.getState().deleteApiKey("provider-1");
 
     expect(mockInvoke).toHaveBeenCalledWith("api_key_delete", {
-      providerId: "provider-1",
+      provider_id: "provider-1",
     });
 
     const provider = useSettingsStore.getState().providers.find((p) => p.id === "provider-1");

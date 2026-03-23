@@ -49,7 +49,7 @@ export function McpServerList({
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" data-testid="mcp-server-list">
       {servers.map((server) => (
         <McpServerRow
           key={server.id}
@@ -83,6 +83,7 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
     <div
       role="button"
       tabIndex={0}
+      data-testid="mcp-server-card"
       onClick={onSelect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") onSelect();
@@ -126,9 +127,9 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-xs" onClick={onEdit} aria-label={t("mcp", "editServer")}>
-                <Settings className="h-3.5 w-3.5" />
-              </Button>
+                <Button variant="ghost" size="icon-xs" onClick={onEdit} aria-label={t("mcp", "editServer")}>
+                  <Settings className="h-3.5 w-3.5" />
+                </Button>
             </TooltipTrigger>
             <TooltipContent>{t("common", "edit")}</TooltipContent>
           </Tooltip>
@@ -140,6 +141,7 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
                   variant="ghost"
                   size="icon-xs"
                   onClick={() => void stopServer(server.id)}
+                  data-testid="mcp-disconnect"
                   aria-label={t("mcp", "stopServer")}
                 >
                   <Square className="h-3.5 w-3.5" />
@@ -155,6 +157,7 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
                   size="icon-xs"
                   onClick={() => void startServer(server.id)}
                   disabled={isStarting}
+                  data-testid="mcp-connect"
                   aria-label={t("mcp", "startServer")}
                 >
                   <Play className="h-3.5 w-3.5" />
@@ -170,6 +173,7 @@ function McpServerRow({ server, isSelected, onSelect, onEdit }: McpServerRowProp
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => void removeServer(server.id)}
+                data-testid="mcp-delete"
                 aria-label={t("mcp", "removeServer")}
               >
                 <Trash2 className="h-3.5 w-3.5 text-destructive" />

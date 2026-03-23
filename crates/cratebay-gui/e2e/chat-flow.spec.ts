@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { ChatPageObject } from "./pages";
+import { installTauriMock } from "./tauri-mock";
 
 /**
  * Chat Flow E2E Tests
@@ -14,96 +15,44 @@ test.describe("Chat Flow", () => {
   test.beforeEach(async ({ page }) => {
     chatPage = new ChatPageObject(page);
 
-    // 初始化 mock Tauri invoke
-    await page.addInitScript(() => {
-      // 创建全局 mock 数据
-      (window as any).__MOCK_TAURI__ = {
-        containerList: [
-          {
-            id: "abc123",
-            shortId: "abc123",
-            name: "node-01",
-            status: "running",
-            templateId: "node-dev",
-            cpuCores: 2,
-            memoryMb: 2048,
-            ports: [],
-          },
-        ],
-      };
-
-      // Mock Tauri invoke
-      const originalInvoke = (window as any).__TAURI_API__.invoke;
-      (window as any).__TAURI_API__.invoke = async (
-        command: string,
-        args?: Record<string, unknown>
-      ) => {
-        console.log("[E2E Mock] invoke:", command, args);
-
-        switch (command) {
-          case "container_list":
-            return (window as any).__MOCK_TAURI__.containerList;
-
-          case "llm_proxy_stream": {
-            // 模拟流式 LLM 响应
-            const { sessionId } = args as { sessionId: string };
-            const tokens = [
-              "Here",
-              " ",
-              "are",
-              " ",
-              "your",
-              " ",
-              "containers",
-              ":",
-              " ",
-              "1",
-              ".",
-              " ",
-              "**",
-              "node-01",
-              "**",
-              " ",
-              "(",
-              "running",
-              ")",
-            ];
-
-            for (const token of tokens) {
-              // 触发 Tauri 事件来模拟流式传输
-              const event = new CustomEvent("tauri://event", {
-                detail: {
-                  payload: {
-                    sessionId,
-                    token,
-                    done: false,
-                  },
-                },
-              });
-              window.dispatchEvent(event);
-              await new Promise((r) => setTimeout(r, 50));
-            }
-
-            // 发送完成事件
-            const doneEvent = new CustomEvent("tauri://event", {
-              detail: {
-                payload: {
-                  sessionId,
-                  token: "",
-                  done: true,
-                },
-              },
-            });
-            window.dispatchEvent(doneEvent);
-
-            return null;
-          }
-
-          default:
-            console.warn("[E2E Mock] Unknown command:", command);
-            return null;
-        }
-      };
+    await installTauriMock(page, {
+      containerList: [
+        {
+          id: "abc123",
+          shortId: "abc123",
+          name: "node-01",
+          status: "running",
+          state: "running",
+          image: "node:latest",
+          templateId: "node-dev",
+          cpuCores: 2,
+          memoryMb: 2048,
+          ports: [],
+          createdAt: new Date().toISOString(),
+          labels: {},
+        },
+      ],
+      llmTokens: [
+        "Here",
+        " ",
+        "are",
+        " ",
+        "your",
+        " ",
+        "containers",
+        ":",
+        " ",
+        "1",
+        ".",
+        " ",
+        "**",
+        "node-01",
+        "**",
+        " ",
+        "(",
+        "running",
+        ")",
+      ],
     });
 
     // 导航到应用

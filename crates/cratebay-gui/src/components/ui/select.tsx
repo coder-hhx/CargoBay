@@ -18,6 +18,8 @@ interface SelectContextValue {
   onValueChange: (value: string) => void
   open: boolean
   setOpen: (open: boolean) => void
+  selectedLabel: React.ReactNode | null
+  setSelectedLabel: (label: React.ReactNode | null) => void
 }
 
 const SelectContext = React.createContext<SelectContextValue | null>(null)
@@ -42,6 +44,7 @@ function Select({
 } & Omit<React.ComponentProps<"div">, "defaultValue">) {
   const [internalValue, setInternalValue] = React.useState(defaultValue ?? "")
   const [open, setOpen] = React.useState(false)
+  const [selectedLabel, setSelectedLabel] = React.useState<React.ReactNode | null>(null)
   const currentValue = value ?? internalValue
 
   const handleValueChange = React.useCallback(
@@ -51,6 +54,11 @@ function Select({
     },
     [onValueChange],
   )
+
+  // If value is cleared externally, clear the selected label too.
+  React.useEffect(() => {
+    if (!currentValue) setSelectedLabel(null)
+  }, [currentValue])
 
   // Close on outside click
   const ref = React.useRef<HTMLDivElement>(null)
@@ -68,7 +76,16 @@ function Select({
   void props
 
   return (
-    <SelectContext.Provider value={{ value: currentValue, onValueChange: handleValueChange, open, setOpen }}>
+    <SelectContext.Provider
+      value={{
+        value: currentValue,
+        onValueChange: handleValueChange,
+        open,
+        setOpen,
+        selectedLabel,
+        setSelectedLabel,
+      }}
+    >
       <div ref={ref} data-slot="select" className="relative inline-block">
         {children}
       </div>
@@ -84,11 +101,16 @@ function SelectGroup({ children, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function SelectValue({ placeholder, ...props }: { placeholder?: string } & React.ComponentProps<"span">) {
-  const { value } = useSelectContext()
+function SelectValue({
+  placeholder,
+  children,
+  ...props
+}: { placeholder?: string } & React.ComponentProps<"span">) {
+  const { value, selectedLabel } = useSelectContext()
+  const content = children ?? (value ? selectedLabel ?? value : placeholder)
   return (
     <span data-slot="select-value" data-placeholder={!value ? "" : undefined} {...props}>
-      {value || placeholder}
+      {content}
     </span>
   )
 }
@@ -163,8 +185,14 @@ function SelectItem({
   value: itemValue,
   ...props
 }: React.ComponentProps<"div"> & { value: string }) {
-  const { value, onValueChange, setOpen } = useSelectContext()
+  const { value, onValueChange, setOpen, setSelectedLabel } = useSelectContext()
   const isSelected = value === itemValue
+
+  React.useEffect(() => {
+    if (isSelected) {
+      setSelectedLabel(children)
+    }
+  }, [isSelected, children, setSelectedLabel])
 
   return (
     <div
@@ -177,6 +205,7 @@ function SelectItem({
       )}
       onClick={() => {
         onValueChange(itemValue)
+        setSelectedLabel(children)
         setOpen(false)
       }}
       {...props}

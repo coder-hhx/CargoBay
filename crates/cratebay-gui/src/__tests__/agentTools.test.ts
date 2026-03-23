@@ -81,7 +81,7 @@ describe("containerTools — tool execution", () => {
     await containerListTool.execute("tc-1", { status: "running" });
 
     expect(mockInvoke).toHaveBeenCalledWith("container_list", {
-      filters: { status: ["Running"] },
+      filters: { status: ["running"] },
     });
   });
 
@@ -104,9 +104,9 @@ describe("containerTools — tool execution", () => {
       request: expect.objectContaining({
         name: "new-box",
         image: "node:20-slim",
-        cpu_cores: 2,
-        memory_mb: 2048,
-        auto_start: true,
+        cpuCores: 2,
+        memoryMb: 2048,
+        autoStart: true,
       }),
     });
 

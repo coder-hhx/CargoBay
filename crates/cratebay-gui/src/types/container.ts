@@ -3,6 +3,7 @@
  *
  * Matches frontend-spec.md §4.3 — containerStore types.
  */
+import type { LocalImageInfo } from "@/types/image";
 
 /**
  * Container information returned from the backend.
@@ -76,15 +77,7 @@ export interface ContainerStatusEvent {
   message?: string;
 }
 
-/**
- * Docker image information from local Docker daemon.
- */
-export interface DockerImageInfo {
-  id: string;
-  repoTags: string[];
-  size: number;
-  created: number;
-}
+export type DockerImageInfo = LocalImageInfo;
 
 /**
  * Container log line event from the backend.

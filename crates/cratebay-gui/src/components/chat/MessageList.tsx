@@ -118,17 +118,26 @@ export function MessageList() {
   );
 
   if (messages.length === 0) {
-    return <WelcomeScreen onSuggestionClick={handleSuggestionClick} />;
+    return (
+      <div className="flex flex-1" data-testid="message-list">
+        <WelcomeScreen onSuggestionClick={handleSuggestionClick} />
+      </div>
+    );
   }
 
   return (
     <ScrollArea className="flex-1">
       <div
         ref={containerRef}
+        data-testid="message-list"
         className="mx-auto flex max-w-[800px] flex-col gap-5 px-4 py-6"
       >
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <div key={message.id} data-testid="message" data-role={message.role}>
+            <div data-testid="message-bubble">
+              <MessageBubble message={message} />
+            </div>
+          </div>
         ))}
         <div ref={bottomRef} />
       </div>

@@ -22,6 +22,7 @@ export function AgentThinking({ content, isActive }: AgentThinkingProps) {
 
   return (
     <div
+      data-testid="agent-thinking"
       className={cn(
         "my-2 rounded-md border-l-2 bg-muted/40",
         isActive ? "border-l-primary" : "border-l-muted-foreground/40",

@@ -656,6 +656,7 @@ name = "cratebay-gui"
 version = "2.0.0-alpha.1"
 dependencies = [
  "bollard",
+ "chrono",
  "cratebay-core",
  "reqwest 0.12.28",
  "rusqlite",

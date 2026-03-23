@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { ContainersPageObject } from "./pages";
+import { installTauriMock } from "./tauri-mock";
 
 /**
  * Containers List E2E Tests
@@ -11,53 +12,42 @@ test.describe("Containers Management", () => {
   test.beforeEach(async ({ page }) => {
     containersPage = new ContainersPageObject(page);
 
-    // Mock Tauri 容器数据
-    await page.addInitScript(() => {
-      (window as any).__MOCK_TAURI__ = {
-        containerList: [
-          {
-            id: "abc123",
-            shortId: "abc123",
-            name: "node-01",
-            status: "running",
-            templateId: "node-dev",
-            cpuCores: 2,
-            memoryMb: 2048,
-            ports: [{ hostPort: 3000, containerPort: 3000, protocol: "tcp" }],
-          },
-          {
-            id: "def456",
-            shortId: "def456",
-            name: "python-dev",
-            status: "stopped",
-            templateId: "python-dev",
-            cpuCores: 1,
-            memoryMb: 1024,
-            ports: [],
-          },
-        ],
-        containerTemplates: [
-          { id: "node-dev", name: "Node.js", description: "Node.js development", image: "node:latest" },
-          { id: "python-dev", name: "Python", description: "Python development", image: "python:latest" },
-          { id: "rust-dev", name: "Rust", description: "Rust development", image: "rust:latest" },
-        ],
-      };
-
-      // Mock invoke
-      const originalInvoke = (window as any).__TAURI_API__.invoke;
-      (window as any).__TAURI_API__.invoke = async (
-        command: string,
-        args?: Record<string, unknown>
-      ) => {
-        switch (command) {
-          case "container_list":
-            return (window as any).__MOCK_TAURI__.containerList;
-          case "container_templates":
-            return (window as any).__MOCK_TAURI__.containerTemplates;
-          default:
-            return null;
-        }
-      };
+    await installTauriMock(page, {
+      containerList: [
+        {
+          id: "abc123",
+          shortId: "abc123",
+          name: "node-01",
+          status: "running",
+          state: "running",
+          image: "node:latest",
+          templateId: "node-dev",
+          cpuCores: 2,
+          memoryMb: 2048,
+          ports: [{ hostPort: 3000, containerPort: 3000, protocol: "tcp" }],
+          createdAt: new Date().toISOString(),
+          labels: {},
+        },
+        {
+          id: "def456",
+          shortId: "def456",
+          name: "python-dev",
+          status: "stopped",
+          state: "stopped",
+          image: "python:latest",
+          templateId: "python-dev",
+          cpuCores: 1,
+          memoryMb: 1024,
+          ports: [],
+          createdAt: new Date().toISOString(),
+          labels: {},
+        },
+      ],
+      containerTemplates: [
+        { id: "node-dev", name: "Node.js", description: "Node.js development", image: "node:latest" },
+        { id: "python-dev", name: "Python", description: "Python development", image: "python:latest" },
+        { id: "rust-dev", name: "Rust", description: "Rust development", image: "rust:latest" },
+      ],
     });
 
     // 导航到应用

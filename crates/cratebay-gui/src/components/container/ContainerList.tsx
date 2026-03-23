@@ -28,7 +28,7 @@ export function ContainerList() {
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" data-testid="container-list">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -56,10 +56,10 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
   const stopContainer = useContainerStore((s) => s.stopContainer);
   const deleteContainer = useContainerStore((s) => s.deleteContainer);
   const selectContainer = useContainerStore((s) => s.selectContainer);
-  const isRunning = container.status === "running";
+  const isRunning = container.status === "running" || container.status === "paused";
 
   return (
-    <tr className="border-b border-border transition-colors hover:bg-muted/30">
+    <tr className="border-b border-border transition-colors hover:bg-muted/30" data-testid="container-card">
       <td className="px-4 py-2.5">
         <span className="font-medium text-foreground">{container.name}</span>
         <span className="ml-2 text-xs text-muted-foreground">{container.shortId}</span>
@@ -87,6 +87,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
               variant="ghost"
               size="icon-xs"
               onClick={() => void stopContainer(container.id)}
+              data-testid="container-stop"
               aria-label={t("containers", "stop")}
             >
               <Square className="h-3.5 w-3.5" />
@@ -96,6 +97,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
               variant="ghost"
               size="icon-xs"
               onClick={() => void startContainer(container.id)}
+              data-testid="container-start"
               aria-label={t("containers", "start")}
             >
               <Play className="h-3.5 w-3.5" />
@@ -105,6 +107,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
             variant="ghost"
             size="icon-xs"
             onClick={() => void deleteContainer(container.id)}
+            data-testid="container-delete"
             aria-label={t("containers", "delete")}
           >
             <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -117,26 +120,36 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
 
 function StatusBadge({ status }: { status: ContainerInfo["status"] }) {
   const { t } = useI18n();
-  const variants: Record<typeof status, { labelKey: "running" | "stopped" | "creating" | "error"; className: string }> = {
-    running: {
-      labelKey: "running",
-      className: "border-success/30 bg-success/10 text-success",
-    },
-    stopped: {
-      labelKey: "stopped",
-      className: "border-muted bg-muted/50 text-muted-foreground",
-    },
-    creating: {
-      labelKey: "creating",
-      className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500",
-    },
-    error: {
-      labelKey: "error",
-      className: "border-destructive/30 bg-destructive/10 text-destructive",
-    },
+  type DisplayStatus = "running" | "stopped" | "creating" | "error";
+
+  const displayStatus: DisplayStatus = (() => {
+    switch (status) {
+      case "running":
+      case "paused":
+        return "running";
+      case "creating":
+      case "restarting":
+      case "removing":
+        return "creating";
+      case "dead":
+        return "error";
+      case "stopped":
+      case "created":
+      case "exited":
+        return "stopped";
+      default:
+        return "error";
+    }
+  })();
+
+  const variants: Record<DisplayStatus, { labelKey: DisplayStatus; className: string }> = {
+    running: { labelKey: "running", className: "border-success/30 bg-success/10 text-success" },
+    stopped: { labelKey: "stopped", className: "border-muted bg-muted/50 text-muted-foreground" },
+    creating: { labelKey: "creating", className: "border-yellow-600/30 bg-yellow-600/10 text-yellow-500" },
+    error: { labelKey: "error", className: "border-destructive/30 bg-destructive/10 text-destructive" },
   };
 
-  const variant = variants[status];
+  const variant = variants[displayStatus];
 
   return (
     <Badge variant="outline" className={cn("text-[10px]", variant.className)}>

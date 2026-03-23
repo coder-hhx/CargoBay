@@ -195,12 +195,10 @@ export function useAgent(options: UseAgentOptions): UseAgentReturn {
 
   const sendMessage = useCallback(
     async (text: string) => {
-      const agent = agentRef.current;
-      if (!agent || isRunningRef.current) return;
-
       const chat = chatStoreRef.current;
       const sessionId = chat.activeSessionId;
       if (!sessionId) return;
+      if (isRunningRef.current) return;
 
       // Add user message to store
       chat.addMessage(sessionId, {
@@ -211,6 +209,20 @@ export function useAgent(options: UseAgentOptions): UseAgentReturn {
         timestamp: new Date().toISOString(),
         status: "complete",
       });
+
+      const agent = agentRef.current;
+      if (!agent) {
+        chat.addMessage(sessionId, {
+          id: `msg-${Date.now()}-assistant`,
+          sessionId,
+          role: "assistant",
+          content:
+            "Please configure an LLM provider and model in Settings before sending messages.",
+          timestamp: new Date().toISOString(),
+          status: "complete",
+        });
+        return;
+      }
 
       isRunningRef.current = true;
 

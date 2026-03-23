@@ -381,6 +381,31 @@ function LocalImageRow({
 
 /* ========== Search Images Tab ========== */
 
+function isLikelyProxyOrNetworkBlocked(message: string): boolean {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("proxyconnect") ||
+    normalized.includes("tls handshake") ||
+    normalized.includes("temporary failure in name resolution") ||
+    normalized.includes("network is unreachable") ||
+    normalized.includes("no route to host")
+  ) {
+    return true;
+  }
+
+  const timedOut =
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("i/o timeout");
+  const registryRelated =
+    normalized.includes("registry") ||
+    normalized.includes("docker.io") ||
+    normalized.includes("index.docker.io") ||
+    normalized.includes("hub.docker.com");
+
+  return timedOut && registryRelated;
+}
+
 function SearchImagesTab() {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
@@ -400,9 +425,14 @@ function SearchImagesTab() {
       setResults(data);
     } catch (err) {
       setResults([]);
-      setSearchError(
-        typeof err === "string" ? err : t("images", "searchError")
-      );
+      const message = err instanceof Error ? err.message : String(err);
+      if (isLikelyProxyOrNetworkBlocked(message)) {
+        setSearchError(`${t("images", "searchProxyHint")} (${message})`);
+      } else if (message.length > 0 && message !== "[object Object]") {
+        setSearchError(message);
+      } else {
+        setSearchError(t("images", "searchError"));
+      }
     } finally {
       setSearching(false);
     }

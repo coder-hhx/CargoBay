@@ -18,6 +18,7 @@ vi.mock("@/lib/tauri", () => ({
 
 import { ContainerList } from "@/components/container/ContainerList";
 import { useContainerStore } from "@/stores/containerStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import type { ContainerInfo } from "@/types/container";
 
 // ---------------------------------------------------------------------------
@@ -27,13 +28,16 @@ const makeContainer = (overrides: Partial<ContainerInfo> = {}): ContainerInfo =>
   id: "c-1",
   shortId: "c-1abc",
   name: "node-01",
-  templateId: "node-dev",
   image: "node:20-slim",
   status: "running",
+  state: "running",
   createdAt: new Date().toISOString(),
   cpuCores: 2,
   memoryMb: 2048,
   ports: [],
+  labels: {
+    "com.cratebay.template_id": "node-dev",
+  },
   ...overrides,
 });
 
@@ -55,6 +59,12 @@ describe("ContainerList", () => {
   beforeEach(() => {
     resetStore();
     resetTauriMocks();
+    useSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        language: "en",
+      },
+    }));
   });
 
   it("shows loading state", () => {
@@ -68,7 +78,7 @@ describe("ContainerList", () => {
     render(<ContainerList />);
 
     expect(
-      screen.getByText("No containers found. Create one to get started."),
+      screen.getByText("No containers match the current filters. Create one to get started."),
     ).toBeInTheDocument();
   });
 
@@ -154,8 +164,8 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByLabelText("Stop container")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Start container")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Stop")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Start")).not.toBeInTheDocument();
   });
 
   it("shows start button for stopped containers", () => {
@@ -164,8 +174,8 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByLabelText("Start container")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Stop container")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Start")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Stop")).not.toBeInTheDocument();
   });
 
   it("always shows delete button", () => {
@@ -174,7 +184,7 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByLabelText("Delete container")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete")).toBeInTheDocument();
   });
 
   it("always shows view details button", () => {

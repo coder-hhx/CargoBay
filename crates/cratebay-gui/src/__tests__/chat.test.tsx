@@ -104,7 +104,7 @@ describe("ChatInput", () => {
 // MessageBubble
 // ---------------------------------------------------------------------------
 describe("MessageBubble", () => {
-  it("renders user message with correct role label", () => {
+  it("renders user message content", () => {
     render(
       <MessageBubble
         message={{
@@ -118,11 +118,10 @@ describe("MessageBubble", () => {
       />,
     );
 
-    expect(screen.getByText("user")).toBeInTheDocument();
     expect(screen.getByText("Hello there")).toBeInTheDocument();
   });
 
-  it("renders assistant message with correct role label", () => {
+  it("renders assistant message content", () => {
     render(
       <MessageBubble
         message={{
@@ -136,7 +135,6 @@ describe("MessageBubble", () => {
       />,
     );
 
-    expect(screen.getByText("assistant")).toBeInTheDocument();
     expect(screen.getByText("Hi, how can I help?")).toBeInTheDocument();
   });
 
@@ -173,8 +171,6 @@ describe("MessageBubble", () => {
 
     // The content should be rendered (Streamdown renders the text)
     expect(container.textContent).toContain("Thinking...");
-    // The role label should show "assistant"
-    expect(container.textContent).toContain("assistant");
   });
 
   it("does not show error indicator for complete messages", () => {

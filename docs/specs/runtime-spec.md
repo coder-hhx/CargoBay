@@ -1,6 +1,6 @@
 # Built-in Container Runtime Specification
 
-> Version: 1.1.0 | Last Updated: 2026-03-21 | Author: architect
+> Version: 1.2.0 | Last Updated: 2026-03-22 | Author: architect
 
 ---
 
@@ -387,6 +387,46 @@ pub async fn setup_port_forwards(
 ) -> Result<(), AppError> { /* ... */ }
 ```
 
+### 6.4 HTTP Proxy Bridge (Optional)
+
+Some networks block direct egress from the runtime VM (e.g., pulling images from Docker Hub).
+To support these environments, the runtime can be configured to use an HTTP proxy.
+
+**Guest-side configuration**
+
+The runtime VM reads a kernel cmdline parameter:
+
+```
+cratebay_http_proxy=<host:port>
+```
+
+When present, the guest configures HTTP(S) egress (dockerd / containerd / package manager) to use the proxy.
+
+**Host-side bridge (macOS VZ)**
+
+On macOS, host-local proxies are often bound to `127.0.0.1` (e.g., Clash/V2Ray).
+The VM cannot reach host loopback directly, so CrateBay can bridge the proxy by:
+
+- Binding a host TCP listener (default `0.0.0.0:3128`)
+- Forwarding it to the target proxy (e.g., `127.0.0.1:7897`)
+- Pointing the guest proxy to the host bridge IP (default `192.168.64.1:3128`)
+
+This is implemented via the `cratebay-vz` runner argument:
+
+```
+--host-tcp-forward 0.0.0.0:<bind_port>=<target_host>:<target_port>
+```
+
+**Configuration (environment variables)**
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `CRATEBAY_RUNTIME_HTTP_PROXY` | Proxy endpoint. In passthrough mode: guest-reachable `<host:port>`. In bridge mode: host proxy target (falls back to `HTTPS_PROXY/HTTP_PROXY`). | — |
+| `CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE` | Enable host proxy bridge mode (macOS). | `0` |
+| `CRATEBAY_RUNTIME_HTTP_PROXY_BIND_HOST` | Host bind address for the bridge listener. | `0.0.0.0` |
+| `CRATEBAY_RUNTIME_HTTP_PROXY_BIND_PORT` | Host bind port for the bridge listener. | `3128` |
+| `CRATEBAY_RUNTIME_HTTP_PROXY_GUEST_HOST` | Guest-visible host IP for the bridge (VZ shared network). | `192.168.64.1` |
+
 ---
 
 ## 7. Resource Management
@@ -555,6 +595,13 @@ pub async fn health_check(&self) -> Result<HealthStatus, AppError> {
     })
 }
 ```
+
+**Stability requirements**
+
+- `last_check` MUST always be a valid RFC3339 timestamp (including when emitting an error status).
+- To avoid transient UI flicker (e.g., `Ready → Starting` due to brief socket jitter), implementations SHOULD:
+  - Retry Docker ping a small number of times (e.g., 3 attempts with short backoff), and
+  - Use a short failure threshold (e.g., 2–3 consecutive failed checks) before downgrading from `Ready`.
 
 ### 9.2 Periodic Health Monitoring
 
