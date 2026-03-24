@@ -10,7 +10,10 @@ use bollard::exec::{CreateExecOptions, StartExecResults};
 use bollard::image::{ListImagesOptions, RemoveImageOptions, SearchImagesOptions, TagImageOptions};
 use bollard::Docker;
 use futures_util::StreamExt;
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::error::Error as _;
+use std::time::Duration;
 
 use crate::error::AppError;
 use crate::models::{
@@ -18,6 +21,20 @@ use crate::models::{
     ContainerStats, ContainerStatus, ExecResult, ExecStreamChunk, ImageInspectInfo,
     ImageSearchResult, LocalImageInfo, LogEntry, LogOptions, PortMapping,
 };
+
+const DOCKER_LIST_TIMEOUT: Duration = Duration::from_secs(8);
+const DOCKER_CREATE_TIMEOUT: Duration = Duration::from_secs(15);
+const DOCKER_START_TIMEOUT: Duration = Duration::from_secs(15);
+const DOCKER_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+const DOCKER_DELETE_TIMEOUT: Duration = Duration::from_secs(15);
+const DOCKER_INSPECT_TIMEOUT: Duration = Duration::from_secs(8);
+const DOCKER_STATS_TIMEOUT: Duration = Duration::from_secs(8);
+const DOCKER_EXEC_SETUP_TIMEOUT: Duration = Duration::from_secs(12);
+const DOCKER_LOGS_TIMEOUT: Duration = Duration::from_secs(12);
+const DOCKER_IMAGE_LIST_TIMEOUT: Duration = Duration::from_secs(12);
+const DOCKER_IMAGE_INSPECT_TIMEOUT: Duration = Duration::from_secs(12);
+const DOCKER_IMAGE_REMOVE_TIMEOUT: Duration = Duration::from_secs(12);
+const DOCKER_IMAGE_TAG_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// List all containers, optionally filtered.
 pub async fn list(
@@ -54,7 +71,14 @@ pub async fn list(
         ..Default::default()
     });
 
-    let containers = docker.list_containers(options).await?;
+    let containers = tokio::time::timeout(DOCKER_LIST_TIMEOUT, docker.list_containers(options))
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker container list timed out after {:?}",
+                DOCKER_LIST_TIMEOUT
+            ))
+        })??;
 
     let mut results: Vec<ContainerInfo> = containers
         .into_iter()
@@ -163,15 +187,18 @@ pub async fn create(
         ..Default::default()
     };
 
+    // Respect the image's default command unless the caller overrides it.
+    //
+    // `request.command` is shell-form (single string). When present, run it
+    // through `/bin/sh -c` so users can pass `sleep infinity`, `bash`, etc.
+    let cmd = request
+        .command
+        .as_ref()
+        .map(|c| vec!["/bin/sh".to_string(), "-c".to_string(), c.to_string()]);
+
     let config = Config {
         image: Some(request.image.clone()),
-        cmd: Some(
-            request
-                .command
-                .as_ref()
-                .map(|c| vec!["/bin/sh".to_string(), "-c".to_string(), c.clone()])
-                .unwrap_or_else(|| vec!["/bin/sh".to_string()]),
-        ),
+        cmd,
         env: request.env.clone(),
         host_config: Some(host_config),
         labels: Some(labels),
@@ -186,14 +213,36 @@ pub async fn create(
         platform: None,
     };
 
-    let response = docker.create_container(Some(options), config).await?;
+    let response = tokio::time::timeout(
+        DOCKER_CREATE_TIMEOUT,
+        docker.create_container(Some(options), config),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker container create timed out after {:?}",
+            DOCKER_CREATE_TIMEOUT
+        ))
+    })??;
 
     // Auto-start if requested (default: true)
     // If start fails (e.g. OCI shim error for images without /bin/sh),
     // the container is still created — return it with "created" status
     // rather than failing the entire operation.
     if request.auto_start.unwrap_or(true) {
-        if let Err(e) = docker.start_container::<String>(&response.id, None).await {
+        let start_result = tokio::time::timeout(
+            DOCKER_START_TIMEOUT,
+            docker.start_container::<String>(&response.id, None),
+        )
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker container start timed out after {:?}",
+                DOCKER_START_TIMEOUT
+            ))
+        });
+
+        if let Err(e) = start_result.and_then(|r| r.map_err(AppError::Docker)) {
             tracing::warn!(
                 "Container {} created but auto-start failed: {}. Container remains in 'created' state.",
                 response.id,
@@ -209,8 +258,28 @@ pub async fn create(
 
 /// Start a stopped container.
 pub async fn start(docker: &Docker, id: &str) -> Result<(), AppError> {
-    docker.start_container::<String>(id, None).await?;
-    Ok(())
+    match tokio::time::timeout(
+        DOCKER_START_TIMEOUT,
+        docker.start_container::<String>(id, None),
+    )
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(AppError::Docker(e)),
+        Err(_) => {
+            // If the start request timed out, the daemon may still have started
+            // the container. Best-effort inspect to avoid false negatives.
+            if let Ok(detail) = inspect(docker, id).await {
+                if detail.state.running {
+                    return Ok(());
+                }
+            }
+            Err(AppError::Runtime(format!(
+                "Docker container start timed out after {:?}",
+                DOCKER_START_TIMEOUT
+            )))
+        }
+    }
 }
 
 /// Stop a running container.
@@ -218,8 +287,22 @@ pub async fn stop(docker: &Docker, id: &str, timeout: Option<u32>) -> Result<(),
     let options = Some(StopContainerOptions {
         t: timeout.unwrap_or(10) as i64,
     });
-    docker.stop_container(id, options).await?;
-    Ok(())
+    match tokio::time::timeout(DOCKER_STOP_TIMEOUT, docker.stop_container(id, options)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(AppError::Docker(e)),
+        Err(_) => {
+            // If stop timed out, inspect to see if it's already stopped.
+            if let Ok(detail) = inspect(docker, id).await {
+                if !detail.state.running {
+                    return Ok(());
+                }
+            }
+            Err(AppError::Runtime(format!(
+                "Docker container stop timed out after {:?}",
+                DOCKER_STOP_TIMEOUT
+            )))
+        }
+    }
 }
 
 /// Remove a container. Must be stopped first unless force=true.
@@ -228,15 +311,30 @@ pub async fn delete(docker: &Docker, id: &str, force: bool) -> Result<(), AppErr
         force,
         ..Default::default()
     });
-    docker.remove_container(id, options).await?;
+    tokio::time::timeout(DOCKER_DELETE_TIMEOUT, docker.remove_container(id, options))
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker container delete timed out after {:?}",
+                DOCKER_DELETE_TIMEOUT
+            ))
+        })??;
     Ok(())
 }
 
 /// Inspect a container for detailed information.
 pub async fn inspect(docker: &Docker, id: &str) -> Result<ContainerDetail, AppError> {
-    let data = docker
-        .inspect_container(id, Some(InspectContainerOptions { size: false }))
-        .await?;
+    let data = tokio::time::timeout(
+        DOCKER_INSPECT_TIMEOUT,
+        docker.inspect_container(id, Some(InspectContainerOptions { size: false })),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker container inspect timed out after {:?}",
+            DOCKER_INSPECT_TIMEOUT
+        ))
+    })??;
 
     let container_id = data.id.unwrap_or_default();
     let short_id = container_id.chars().take(12).collect();
@@ -339,10 +437,16 @@ pub async fn stats(docker: &Docker, id: &str) -> Result<ContainerStats, AppError
         }),
     );
 
-    let stats =
-        stream.next().await.transpose()?.ok_or_else(|| {
-            AppError::Runtime(format!("No stats returned for container '{}'", id))
-        })?;
+    let stats = tokio::time::timeout(DOCKER_STATS_TIMEOUT, stream.next())
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker container stats timed out after {:?}",
+                DOCKER_STATS_TIMEOUT
+            ))
+        })?
+        .transpose()?
+        .ok_or_else(|| AppError::Runtime(format!("No stats returned for container '{}'", id)))?;
 
     let cpu_total = stats.cpu_stats.cpu_usage.total_usage as f64;
     let cpu_prev_total = stats.precpu_stats.cpu_usage.total_usage as f64;
@@ -408,9 +512,29 @@ pub async fn exec(
         ..Default::default()
     };
 
-    let exec_instance = docker.create_exec(id, exec_options).await?;
+    let exec_instance = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.create_exec(id, exec_options),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec create timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
 
-    let start_result = docker.start_exec(&exec_instance.id, None).await?;
+    let start_result = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.start_exec(&exec_instance.id, None),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec start timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
 
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -430,7 +554,17 @@ pub async fn exec(
     }
 
     // Get exit code
-    let inspect_result = docker.inspect_exec(&exec_instance.id).await?;
+    let inspect_result = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.inspect_exec(&exec_instance.id),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec inspect timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
     let exit_code = inspect_result.exit_code.unwrap_or(-1);
 
     Ok(ExecResult {
@@ -456,9 +590,29 @@ pub async fn exec_stream(
         ..Default::default()
     };
 
-    let exec_instance = docker.create_exec(id, exec_options).await?;
+    let exec_instance = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.create_exec(id, exec_options),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec create timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
 
-    let start_result = docker.start_exec(&exec_instance.id, None).await?;
+    let start_result = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.start_exec(&exec_instance.id, None),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec start timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
 
     if let StartExecResults::Attached { mut output, .. } = start_result {
         while let Some(chunk) = output.next().await {
@@ -484,7 +638,17 @@ pub async fn exec_stream(
         }
     }
 
-    let inspect_result = docker.inspect_exec(&exec_instance.id).await?;
+    let inspect_result = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.inspect_exec(&exec_instance.id),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec inspect timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
     let exit_code = inspect_result.exit_code.unwrap_or(-1);
 
     on_output(ExecStreamChunk::Done { exit_code });
@@ -518,33 +682,65 @@ pub async fn logs(
     };
 
     let mut stream = docker.logs(id, Some(log_options));
-    let mut entries = Vec::new();
+    tokio::time::timeout(DOCKER_LOGS_TIMEOUT, async move {
+        let mut entries = Vec::new();
 
-    while let Some(chunk) = stream.next().await {
-        match chunk? {
-            bollard::container::LogOutput::StdOut { message } => {
-                let (timestamp, parsed_message) =
-                    split_log_timestamp(&String::from_utf8_lossy(&message), with_timestamps);
-                entries.push(LogEntry {
-                    stream: "stdout".to_string(),
-                    message: parsed_message,
-                    timestamp,
-                });
+        while let Some(chunk) = stream.next().await {
+            match chunk? {
+                bollard::container::LogOutput::StdOut { message } => {
+                    let (timestamp, parsed_message) =
+                        split_log_timestamp(&String::from_utf8_lossy(&message), with_timestamps);
+                    append_log_lines(&mut entries, "stdout", timestamp, parsed_message);
+                }
+                bollard::container::LogOutput::StdErr { message } => {
+                    let (timestamp, parsed_message) =
+                        split_log_timestamp(&String::from_utf8_lossy(&message), with_timestamps);
+                    append_log_lines(&mut entries, "stderr", timestamp, parsed_message);
+                }
+                _ => {}
             }
-            bollard::container::LogOutput::StdErr { message } => {
-                let (timestamp, parsed_message) =
-                    split_log_timestamp(&String::from_utf8_lossy(&message), with_timestamps);
-                entries.push(LogEntry {
-                    stream: "stderr".to_string(),
-                    message: parsed_message,
-                    timestamp,
-                });
-            }
-            _ => {}
         }
+
+        Ok::<_, AppError>(entries)
+    })
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker container logs timed out after {:?}",
+            DOCKER_LOGS_TIMEOUT
+        ))
+    })?
+}
+
+fn append_log_lines(
+    entries: &mut Vec<LogEntry>,
+    stream: &str,
+    timestamp: Option<String>,
+    message: String,
+) {
+    if message.is_empty() {
+        return;
     }
 
-    Ok(entries)
+    // Docker log chunks can contain multiple lines; split to keep UI alignment sane.
+    let mut pushed = false;
+    for line in message.lines() {
+        pushed = true;
+        entries.push(LogEntry {
+            stream: stream.to_string(),
+            message: line.to_string(),
+            timestamp: timestamp.clone(),
+        });
+    }
+
+    // If the chunk was a single empty line (unlikely), preserve it.
+    if !pushed {
+        entries.push(LogEntry {
+            stream: stream.to_string(),
+            message,
+            timestamp,
+        });
+    }
 }
 
 fn split_log_timestamp(raw: &str, with_timestamps: bool) -> (Option<String>, String) {
@@ -597,7 +793,14 @@ pub async fn image_list(docker: &Docker) -> Result<Vec<LocalImageInfo>, AppError
         ..Default::default()
     };
 
-    let images = docker.list_images(Some(options)).await?;
+    let images = tokio::time::timeout(DOCKER_IMAGE_LIST_TIMEOUT, docker.list_images(Some(options)))
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker image list timed out after {:?}",
+                DOCKER_IMAGE_LIST_TIMEOUT
+            ))
+        })??;
 
     let results = images
         .into_iter()
@@ -642,28 +845,202 @@ pub async fn image_search(
         filters: HashMap::new(),
     };
 
-    let results = docker.search_images(options).await?;
-    let mapped = results
-        .into_iter()
-        .filter_map(|item| {
-            let reference = item.name?;
-            Some(ImageSearchResult {
-                source: "dockerhub".to_string(),
-                reference,
-                description: item.description.unwrap_or_default(),
-                stars: item.star_count.and_then(|value| u64::try_from(value).ok()),
-                pulls: None,
-                official: item.is_official.unwrap_or(false),
+    // Primary: Docker Engine search API (Docker Hub index via dockerd).
+    // Fallback: Docker Hub HTTP API (host network), which is often more reliable
+    // in environments where `index.docker.io` is blocked.
+    let engine_results =
+        match tokio::time::timeout(Duration::from_secs(12), docker.search_images(options)).await {
+            Ok(Ok(results)) => Ok(results),
+            Ok(Err(e)) => Err(AppError::Docker(e)),
+            Err(_) => Err(AppError::Runtime(
+                "Image search timed out after 12s".to_string(),
+            )),
+        };
+
+    if let Ok(results) = engine_results {
+        let mapped = results
+            .into_iter()
+            .filter_map(|item| {
+                let reference = item.name?;
+                Some(ImageSearchResult {
+                    source: "dockerhub".to_string(),
+                    reference,
+                    description: item.description.unwrap_or_default(),
+                    stars: item.star_count.and_then(|value| u64::try_from(value).ok()),
+                    pulls: None,
+                    official: item.is_official.unwrap_or(false),
+                })
             })
-        })
-        .collect();
+            .collect();
+
+        return Ok(mapped);
+    }
+
+    let engine_err = engine_results.err().unwrap_or_else(|| {
+        AppError::Runtime("Docker Engine image search failed with unknown error".to_string())
+    });
+    tracing::warn!(
+        "Docker Engine image search failed, trying Docker Hub API fallback: {}",
+        engine_err
+    );
+
+    match dockerhub_search(term, limit).await {
+        Ok(results) => Ok(results),
+        Err(fallback_err) => Err(AppError::Runtime(format!(
+            "Image search failed. Docker Engine: {}; Docker Hub API fallback: {}",
+            engine_err, fallback_err
+        ))),
+    }
+}
+
+/// Search Docker Hub via HTTP API (does not require a Docker daemon).
+pub async fn image_search_dockerhub(
+    query: &str,
+    limit: Option<u64>,
+) -> Result<Vec<ImageSearchResult>, AppError> {
+    let term = query.trim();
+    if term.is_empty() {
+        return Err(AppError::Validation(
+            "Image search query cannot be empty".to_string(),
+        ));
+    }
+
+    dockerhub_search(term, limit).await
+}
+
+#[derive(Debug, Deserialize)]
+struct DockerHubSearchResponse {
+    results: Vec<DockerHubRepo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DockerHubRepo {
+    name: Option<String>,
+    namespace: Option<String>,
+    description: Option<String>,
+    star_count: Option<u64>,
+    pull_count: Option<u64>,
+    is_official: Option<bool>,
+}
+
+async fn dockerhub_search(
+    query: &str,
+    limit: Option<u64>,
+) -> Result<Vec<ImageSearchResult>, AppError> {
+    let page_size: u64 = limit.unwrap_or(25).clamp(1, 100);
+
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(8));
+    if let Ok(raw_proxy) = std::env::var("CRATEBAY_RUNTIME_HTTP_PROXY") {
+        let proxy = raw_proxy.trim();
+        if !proxy.is_empty() {
+            let proxy_url = if proxy.contains("://") {
+                proxy.to_string()
+            } else {
+                format!("http://{}", proxy)
+            };
+            builder = builder.proxy(reqwest::Proxy::all(&proxy_url).map_err(|e| {
+                AppError::Runtime(format!(
+                    "Invalid CRATEBAY_RUNTIME_HTTP_PROXY '{}': {}",
+                    proxy, e
+                ))
+            })?);
+        }
+    }
+
+    let client = builder
+        .build()
+        .map_err(|e| AppError::Runtime(format!("Failed to build HTTP client: {}", e)))?;
+
+    let resp = client
+        .get("https://hub.docker.com/v2/search/repositories/")
+        .query(&[
+            ("query", query),
+            ("page", "1"),
+            ("page_size", &page_size.to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| {
+            AppError::Runtime(format!(
+                "Docker Hub request failed: {}",
+                format_reqwest_error(&e)
+            ))
+        })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::Runtime(format!(
+            "Docker Hub search API returned {}: {}",
+            status, body
+        )));
+    }
+
+    let data: DockerHubSearchResponse = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Runtime(format!("Failed to parse Docker Hub response: {}", e)))?;
+
+    let mut mapped = Vec::new();
+    for repo in data.results {
+        let Some(name) = repo
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let namespace = repo
+            .namespace
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let reference = match namespace {
+            Some(ns) => format!("{}/{}", ns, name),
+            None => name.to_string(),
+        };
+
+        let official = repo.is_official.unwrap_or(false) || namespace == Some("library");
+
+        mapped.push(ImageSearchResult {
+            source: "dockerhub".to_string(),
+            reference,
+            description: repo.description.unwrap_or_default(),
+            stars: repo.star_count,
+            pulls: repo.pull_count,
+            official,
+        });
+    }
 
     Ok(mapped)
 }
 
+fn format_reqwest_error(err: &reqwest::Error) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(next) = source {
+        let next_msg = next.to_string();
+        if !next_msg.is_empty() && !message.contains(&next_msg) {
+            message.push_str(": ");
+            message.push_str(&next_msg);
+        }
+        source = next.source();
+    }
+    message
+}
+
 /// Inspect a local image by id/tag.
 pub async fn image_inspect(docker: &Docker, id: &str) -> Result<ImageInspectInfo, AppError> {
-    let inspected = docker.inspect_image(id).await?;
+    let inspected = tokio::time::timeout(DOCKER_IMAGE_INSPECT_TIMEOUT, docker.inspect_image(id))
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker image inspect timed out after {:?}",
+                DOCKER_IMAGE_INSPECT_TIMEOUT
+            ))
+        })??;
     let size_bytes = inspected.size.unwrap_or(0).max(0) as u64;
     let layers = inspected
         .root_fs
@@ -694,7 +1071,17 @@ pub async fn image_remove(docker: &Docker, id: &str, force: bool) -> Result<(), 
         force,
         noprune: false,
     });
-    let _ = docker.remove_image(id, options, None).await?;
+    let _ = tokio::time::timeout(
+        DOCKER_IMAGE_REMOVE_TIMEOUT,
+        docker.remove_image(id, options, None),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker image remove timed out after {:?}",
+            DOCKER_IMAGE_REMOVE_TIMEOUT
+        ))
+    })??;
     Ok(())
 }
 
@@ -716,7 +1103,14 @@ pub async fn image_tag(docker: &Docker, source: &str, target: &str) -> Result<()
 
     let (repo, tag) = split_repo_and_tag(target);
     let options = Some(TagImageOptions { repo, tag });
-    docker.tag_image(source, options).await?;
+    tokio::time::timeout(DOCKER_IMAGE_TAG_TIMEOUT, docker.tag_image(source, options))
+        .await
+        .map_err(|_| {
+            AppError::Runtime(format!(
+                "Docker image tag timed out after {:?}",
+                DOCKER_IMAGE_TAG_TIMEOUT
+            ))
+        })??;
     Ok(())
 }
 

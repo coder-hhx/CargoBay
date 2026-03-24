@@ -49,6 +49,23 @@ impl AppState {
         })
     }
 
+    /// Ensure Docker is available.
+    ///
+    /// If Docker is not currently connected, this will attempt to start the
+    /// built-in runtime and connect through its socket.
+    pub async fn ensure_docker(&self) -> Result<Arc<Docker>, AppError> {
+        if let Ok(docker) = self.require_docker() {
+            if cratebay_core::docker::is_available(&docker).await {
+                return Ok(docker);
+            }
+        }
+
+        let docker =
+            cratebay_core::engine::ensure_docker(self.runtime.as_ref(), Default::default()).await?;
+        self.set_docker(Some(docker.clone()));
+        Ok(docker)
+    }
+
     /// Update the Docker client (e.g., after runtime starts).
     pub fn set_docker(&self, docker: Option<Arc<Docker>>) {
         if let Ok(mut guard) = self.docker.lock() {

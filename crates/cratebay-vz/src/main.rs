@@ -671,6 +671,7 @@ fn start_tcp_forward(
     use std::net::TcpListener;
     use std::os::unix::net::UnixListener;
     use std::time::Duration;
+    use std::time::Instant;
 
     let port = u16::try_from(guest_port)
         .map_err(|_| format!("Invalid tcp guest_port '{}': must be 1-65535", guest_port))?;
@@ -718,35 +719,48 @@ fn start_tcp_forward(
                         sock_path.display(),
                         addr
                     );
-                    let accepted = loop {
-                        if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
-                            break None;
-                        }
-                        match guest_listener.accept() {
-                            Ok((tcp, guest_addr)) => {
-                                tracing::debug!(
-                                    "tcp forward accepted guest reverse tcp {} for {}",
-                                    guest_addr,
-                                    sock_path.display()
-                                );
-                                break Some((tcp, guest_addr));
-                            }
-                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                                std::thread::sleep(Duration::from_millis(100));
-                            }
-                            Err(error) => {
-                                tracing::warn!(
-                                    "guest reverse tcp accept failed on {}: {}",
-                                    guest_bind_addr,
-                                    error
-                                );
+                    let accepted = {
+                        let deadline = Instant::now() + Duration::from_secs(5);
+                        loop {
+                            if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
                                 break None;
+                            }
+                            if Instant::now() >= deadline {
+                                break None;
+                            }
+                            match guest_listener.accept() {
+                                Ok((tcp, guest_addr)) => {
+                                    tracing::debug!(
+                                        "tcp forward accepted guest reverse tcp {} for {}",
+                                        guest_addr,
+                                        sock_path.display()
+                                    );
+                                    break Some((tcp, guest_addr));
+                                }
+                                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                                    std::thread::sleep(Duration::from_millis(100));
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        "guest reverse tcp accept failed on {}: {}",
+                                        guest_bind_addr,
+                                        error
+                                    );
+                                    break None;
+                                }
                             }
                         }
                     };
 
                     let Some((mut tcp, guest_addr)) = accepted else {
-                        break;
+                        tracing::warn!(
+                            "tcp forward timed out waiting for guest connection on {} (closing client {})",
+                            guest_bind_addr,
+                            sock_path.display()
+                        );
+                        // Drop the unix client stream so the docker client fails fast instead
+                        // of hanging forever. Keep the forward thread alive for future requests.
+                        continue;
                     };
 
                     let sock_path = sock_path.clone();

@@ -110,10 +110,15 @@ export const imageSearchTool: AgentTool<typeof ImageSearchParams> = {
   description: "Search Docker registries for images by keyword.",
   parameters: ImageSearchParams,
   execute: async (_toolCallId, params) => {
-    const results = await invoke<ImageSearchResult[]>("image_search", {
-      query: params.query,
-      limit: params.limit ?? 10,
-    });
+    const results = await Promise.race([
+      invoke<ImageSearchResult[]>("image_search", {
+        query: params.query,
+        limit: params.limit ?? 10,
+      }),
+      new Promise<ImageSearchResult[]>((_, reject) =>
+        window.setTimeout(() => reject(new Error("Image search timeout (15s)")), 15000),
+      ),
+    ]);
 
     if (!Array.isArray(results) || results.length === 0) {
       return textResult(`No image results found for "${params.query}".`);

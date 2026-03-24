@@ -867,17 +867,21 @@ impl MacOSRuntime {
             common::docker_proxy_port(),
             sock_path.to_string_lossy()
         );
-        // Default to TCP forwarding mode (more reliable than vsock)
+        // Default to TCP forwarding mode.
+        //
+        // The current CrateBay runtime image includes a guest agent that dials
+        // back to the host over TCP to proxy Docker. Vsock forwarding is kept
+        // as an opt-in path for future runtime images that support it.
         let forward_mode = std::env::var("CRATEBAY_RUNTIME_SOCKET_FORWARD")
             .ok()
             .map(|v| v.trim().to_ascii_lowercase())
             .unwrap_or_else(|| "tcp".to_string());
         match forward_mode.as_str() {
-            "vsock" => {
-                cmd.arg("--vsock-forward").arg(&forward_spec);
+            "tcp" => {
+                cmd.arg("--tcp-forward").arg(&forward_spec);
             }
             _ => {
-                cmd.arg("--tcp-forward").arg(&forward_spec);
+                cmd.arg("--vsock-forward").arg(&forward_spec);
             }
         }
 
@@ -957,7 +961,7 @@ impl MacOSRuntime {
                     bollard::API_DEFAULT_VERSION,
                 ) {
                     Ok(docker) => {
-                        if docker.ping().await.is_ok() {
+                        if crate::docker::is_available(&docker).await {
                             tracing::info!("Docker is responsive at {}", socket_path.display());
                             return Ok(());
                         }
@@ -998,8 +1002,13 @@ impl MacOSRuntime {
                 HEALTH_PING_CONNECT_TIMEOUT_SECS,
                 bollard::API_DEFAULT_VERSION,
             ) {
-                if docker.ping().await.is_ok() {
-                    let docker_version = docker.version().await.ok().and_then(|v| v.version);
+                if crate::docker::is_available(&docker).await {
+                    let docker_version =
+                        tokio::time::timeout(Duration::from_secs(5), docker.version())
+                            .await
+                            .ok()
+                            .and_then(|v| v.ok())
+                            .and_then(|v| v.version);
                     return (true, docker_version);
                 }
             }
@@ -1066,7 +1075,7 @@ impl RuntimeManager for MacOSRuntime {
                     5,
                     bollard::API_DEFAULT_VERSION,
                 ) {
-                    if docker.ping().await.is_ok() {
+                    if crate::docker::is_available(&docker).await {
                         self.set_state(RuntimeState::Ready)?;
                         return Ok(RuntimeState::Ready);
                     }
@@ -1213,134 +1222,174 @@ impl RuntimeManager for MacOSRuntime {
     /// 5. Wait for Docker to become responsive on the socket
     /// 6. Transition state to Ready
     async fn start(&self) -> Result<(), AppError> {
-        // Check if already running
-        if self.is_runner_alive() {
-            let socket_path = self.docker_socket_path();
-            if socket_path.exists() {
-                if let Ok(docker) = bollard::Docker::connect_with_unix(
-                    socket_path.to_str().unwrap_or_default(),
-                    5,
-                    bollard::API_DEFAULT_VERSION,
-                ) {
-                    if docker.ping().await.is_ok() {
+        // If Docker isn't responsive (stale proxy / old runner), restart once.
+        let mut restarted = false;
+        loop {
+            // Check if already running
+            if self.is_runner_alive() {
+                let socket_path = self.docker_socket_path();
+                if socket_path.exists() {
+                    if let Ok(docker) = bollard::Docker::connect_with_unix(
+                        socket_path.to_str().unwrap_or_default(),
+                        5,
+                        bollard::API_DEFAULT_VERSION,
+                    ) {
+                        if crate::docker::is_available(&docker).await {
+                            self.set_state(RuntimeState::Ready)?;
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Runner is alive but Docker isn't ready — wait for it.
+                self.set_state(RuntimeState::Starting)?;
+                match self.wait_for_docker(DOCKER_READY_TIMEOUT).await {
+                    Ok(()) => {
                         self.set_state(RuntimeState::Ready)?;
                         return Ok(());
                     }
+                    Err(e) if !restarted => {
+                        restarted = true;
+                        tracing::warn!(
+                            "Runner is alive but Docker is not responsive: {}. Restarting runtime once...",
+                            e
+                        );
+                        if let Err(stop_err) = self.stop().await {
+                            return Err(AppError::Runtime(format!(
+                                "Docker is not responsive and failed to restart runtime (stop failed): {}; original error: {}",
+                                stop_err, e
+                            )));
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        self.set_state(RuntimeState::Starting)?;
+                        return Err(e);
+                    }
                 }
             }
-            // Runner is alive but Docker isn't ready — wait for it
+
+            // Ensure images are provisioned
+            if !self.images_ready() {
+                return Err(AppError::Runtime(
+                    "Runtime not provisioned. Call provision() first.".into(),
+                ));
+            }
+
+            // Ensure disk exists
+            if !vm_disk_path().exists() {
+                return Err(AppError::Runtime(
+                    "VM disk image not found. Call provision() first.".into(),
+                ));
+            }
+
             self.set_state(RuntimeState::Starting)?;
-            self.wait_for_docker(DOCKER_READY_TIMEOUT).await?;
-            self.set_state(RuntimeState::Ready)?;
-            return Ok(());
-        }
 
-        // Ensure images are provisioned
-        if !self.images_ready() {
-            return Err(AppError::Runtime(
-                "Runtime not provisioned. Call provision() first.".into(),
-            ));
-        }
+            // Clean up any stray runner processes from previous sessions
+            cleanup_stray_runner_processes(None, "start preflight");
 
-        // Ensure disk exists
-        if !vm_disk_path().exists() {
-            return Err(AppError::Runtime(
-                "VM disk image not found. Call provision() first.".into(),
-            ));
-        }
+            // Spawn the VZ runner — blocking operation
+            let mut child = tokio::task::spawn_blocking({
+                let rt = MacOSRuntime {
+                    config: self.config.clone(),
+                    state: Arc::clone(&self.state),
+                    runner: Arc::clone(&self.runner),
+                    runner_pid: Arc::clone(&self.runner_pid),
+                    started_at: Arc::clone(&self.started_at),
+                    consecutive_health_failures: Arc::clone(&self.consecutive_health_failures),
+                };
+                move || rt.spawn_runner()
+            })
+            .await
+            .map_err(|e| AppError::Runtime(format!("Task join error: {}", e)))??;
 
-        self.set_state(RuntimeState::Starting)?;
+            let pid = child.id();
 
-        // Clean up any stray runner processes from previous sessions
-        cleanup_stray_runner_processes(None, "start preflight");
+            // Wait for the ready file (VZ runner writes this after the VM boots)
+            let ready_file = vm_runner_ready_path();
+            let deadline = Instant::now() + RUNNER_READY_TIMEOUT;
+            loop {
+                if ready_file.exists() {
+                    break;
+                }
 
-        // Spawn the VZ runner — blocking operation
-        let mut child = tokio::task::spawn_blocking({
-            let rt = MacOSRuntime {
-                config: self.config.clone(),
-                state: Arc::clone(&self.state),
-                runner: Arc::clone(&self.runner),
-                runner_pid: Arc::clone(&self.runner_pid),
-                started_at: Arc::clone(&self.started_at),
-                consecutive_health_failures: Arc::clone(&self.consecutive_health_failures),
-            };
-            move || rt.spawn_runner()
-        })
-        .await
-        .map_err(|e| AppError::Runtime(format!("Task join error: {}", e)))??;
+                // Check if runner exited prematurely
+                if let Ok(Some(status)) = child.try_wait() {
+                    self.set_state(RuntimeState::Error(format!(
+                        "VZ runner exited early: {}",
+                        status
+                    )))?;
+                    return Err(AppError::Runtime(format!(
+                        "cratebay-vz exited early with status: {}. \
+                         Check console log at {}",
+                        status,
+                        vm_console_log_path().display()
+                    )));
+                }
 
-        let pid = child.id();
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    self.set_state(RuntimeState::Error(
+                        "Timed out waiting for VM to start".into(),
+                    ))?;
+                    return Err(AppError::Runtime(format!(
+                        "VZ runner did not become ready within {:?}. \
+                         Check console log at {}",
+                        RUNNER_READY_TIMEOUT,
+                        vm_console_log_path().display()
+                    )));
+                }
 
-        // Wait for the ready file (VZ runner writes this after the VM boots)
-        let ready_file = vm_runner_ready_path();
-        let deadline = Instant::now() + RUNNER_READY_TIMEOUT;
-        loop {
-            if ready_file.exists() {
-                break;
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
 
-            // Check if runner exited prematurely
-            if let Ok(Some(status)) = child.try_wait() {
-                self.set_state(RuntimeState::Error(format!(
-                    "VZ runner exited early: {}",
-                    status
-                )))?;
-                return Err(AppError::Runtime(format!(
-                    "cratebay-vz exited early with status: {}. \
-                     Check console log at {}",
-                    status,
-                    vm_console_log_path().display()
-                )));
+            // Store runner state
+            {
+                let mut pid_guard = self.runner_pid.lock_or_recover()?;
+                *pid_guard = Some(pid);
+            }
+            {
+                let mut runner_guard = self.runner.lock_or_recover()?;
+                *runner_guard = Some(child);
+            }
+            {
+                let mut started_guard = self.started_at.lock_or_recover()?;
+                *started_guard = Some(Instant::now());
             }
 
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                self.set_state(RuntimeState::Error(
-                    "Timed out waiting for VM to start".into(),
-                ))?;
-                return Err(AppError::Runtime(format!(
-                    "VZ runner did not become ready within {:?}. \
-                     Check console log at {}",
-                    RUNNER_READY_TIMEOUT,
-                    vm_console_log_path().display()
-                )));
-            }
+            // Write PID file for recovery across sessions
+            let _ = std::fs::write(vm_runner_pid_path(), format!("{}\n", pid));
 
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-
-        // Store runner state
-        {
-            let mut pid_guard = self.runner_pid.lock_or_recover()?;
-            *pid_guard = Some(pid);
-        }
-        {
-            let mut runner_guard = self.runner.lock_or_recover()?;
-            *runner_guard = Some(child);
-        }
-        {
-            let mut started_guard = self.started_at.lock_or_recover()?;
-            *started_guard = Some(Instant::now());
-        }
-
-        // Write PID file for recovery across sessions
-        let _ = std::fs::write(vm_runner_pid_path(), format!("{}\n", pid));
-
-        // Wait for Docker to become responsive
-        match self.wait_for_docker(DOCKER_READY_TIMEOUT).await {
-            Ok(()) => {
-                self.set_state(RuntimeState::Ready)?;
-                tracing::info!("macOS VZ runtime started (PID {})", pid);
-                Ok(())
-            }
-            Err(e) => {
-                tracing::warn!("Docker not responsive after VM start: {}", e);
-                // VM is running but Docker isn't ready — don't kill the runner,
-                // it may still come up. Set Starting state so health checks
-                // can track it.
-                self.set_state(RuntimeState::Starting)?;
-                Err(e)
+            // Wait for Docker to become responsive
+            match self.wait_for_docker(DOCKER_READY_TIMEOUT).await {
+                Ok(()) => {
+                    self.set_state(RuntimeState::Ready)?;
+                    tracing::info!("macOS VZ runtime started (PID {})", pid);
+                    return Ok(());
+                }
+                Err(e) if !restarted => {
+                    restarted = true;
+                    tracing::warn!(
+                        "Docker not responsive after VM start: {}. Restarting runtime once...",
+                        e
+                    );
+                    if let Err(stop_err) = self.stop().await {
+                        return Err(AppError::Runtime(format!(
+                            "Docker is not responsive and failed to restart runtime (stop failed): {}; original error: {}",
+                            stop_err, e
+                        )));
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!("Docker not responsive after VM start: {}", e);
+                    // VM is running but Docker isn't ready — don't kill the runner,
+                    // it may still come up. Set Starting state so health checks
+                    // can track it.
+                    self.set_state(RuntimeState::Starting)?;
+                    return Err(e);
+                }
             }
         }
     }

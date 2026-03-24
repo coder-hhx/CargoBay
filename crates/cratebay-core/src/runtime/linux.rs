@@ -194,10 +194,10 @@ fn resolve_qemu_path() -> Result<PathBuf, AppError> {
     }
 
     // 2. Bundled binary inside runtime assets
-    if let Some(assets_dir) = common::bundled_runtime_assets_dir() {
+    if let Some(assets_dir) = common::bundled_linux_runtime_assets_dir() {
         let bundle_id = runtime_linux_bundle_id();
         let bundled = assets_dir.join(bundle_id).join(qemu_binary_name());
-        if bundled.is_file() {
+        if bundled.is_file() && !common::file_contains_placeholder_marker(&bundled) {
             return Ok(bundled);
         }
     }
@@ -209,7 +209,7 @@ fn resolve_qemu_path() -> Result<PathBuf, AppError> {
 
     Err(AppError::Runtime(format!(
         "Bundled Linux runtime helper '{}' was not found. \
-         Reinstall CrateBay or set CRATEBAY_RUNTIME_QEMU_PATH.",
+         Reinstall CrateBay (ensure runtime-linux assets are present) or set CRATEBAY_RUNTIME_QEMU_PATH.",
         qemu_binary_name()
     )))
 }

@@ -55,6 +55,14 @@ const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 2;
 // WindowsRuntime struct
 // ---------------------------------------------------------------------------
 
+/// Windows host Docker endpoint for the built-in runtime.
+///
+/// WSL2 supports localhost port forwarding by default, so we connect to the
+/// Docker TCP port as `tcp://127.0.0.1:<port>`.
+pub fn windows_docker_host() -> String {
+    format!("tcp://127.0.0.1:{}", wsl_docker_port())
+}
+
 /// Windows runtime manager using WSL2.
 ///
 /// Manages a custom WSL2 distro that contains Docker Engine. The distro is
@@ -345,17 +353,21 @@ impl RuntimeManager for WindowsRuntime {
         .map_err(|e| AppError::Runtime(format!("Join error: {}", e)))?
         .map_err(|e| AppError::Runtime(format!("Docker readiness wait failed: {}", e)))?;
 
-        // 4) Try direct guest connection, fall back to localhost relay
-        let docker_host =
-            tokio::task::spawn_blocking(move || resolve_reachable_docker_host(&guest_docker_host))
-                .await
-                .map_err(|e| AppError::Runtime(format!("Join error: {}", e)))?
-                .map_err(|e| AppError::Runtime(format!("Docker host resolution failed: {}", e)))?;
-
-        // Cache the results
-        if let Some((host, _port)) = common::docker_host_tcp_endpoint(&docker_host) {
+        // Cache guest IP for diagnostics (independent of host connectivity).
+        if let Some((host, _port)) = common::docker_host_tcp_endpoint(&guest_docker_host) {
             *self.guest_ip.lock().await = Some(host);
         }
+
+        // 4) Try direct guest connection, fall back to localhost relay
+        let guest_docker_host_c = guest_docker_host.clone();
+        let docker_host = tokio::task::spawn_blocking(move || {
+            resolve_reachable_docker_host(&guest_docker_host_c)
+        })
+        .await
+        .map_err(|e| AppError::Runtime(format!("Join error: {}", e)))?
+        .map_err(|e| AppError::Runtime(format!("Docker host resolution failed: {}", e)))?;
+
+        // Cache the results
         *self.docker_host.lock().await = Some(docker_host.clone());
 
         {
@@ -433,7 +445,20 @@ impl RuntimeManager for WindowsRuntime {
         // Check Docker via TCP ping if we have a cached docker_host
         let docker_host = self.docker_host.lock().await.clone();
         let (docker_responsive, docker_version) = if let Some(ref host) = docker_host {
-            let ping_ok = Self::ping_docker_host_with_retry(host).await;
+            let mut ping_ok = Self::ping_docker_host_with_retry(host).await;
+
+            // If the cached endpoint is stale/unreachable, prefer the canonical
+            // localhost-forwarded endpoint (used by `engine::ensure_docker()`).
+            if !ping_ok {
+                let fallback = windows_docker_host();
+                if host != &fallback {
+                    let fallback_ok = Self::ping_docker_host_with_retry(&fallback).await;
+                    if fallback_ok {
+                        ping_ok = true;
+                        *self.docker_host.lock().await = Some(fallback);
+                    }
+                }
+            }
 
             let version = if ping_ok {
                 let distro = self.distro_name.clone();
@@ -833,8 +858,14 @@ fn runtime_wsl_rootfs_tar_path() -> Result<PathBuf, String> {
     if let Ok(p) = std::env::var("CRATEBAY_WSL_ROOTFS_TAR") {
         if !p.trim().is_empty() {
             let path = PathBuf::from(&p);
-            if path.is_file() {
+            if path.is_file() && !common::file_contains_placeholder_marker(&path) {
                 return Ok(path);
+            }
+            if common::file_contains_placeholder_marker(&path) {
+                return Err(format!(
+                    "CRATEBAY_WSL_ROOTFS_TAR points to a placeholder or Git LFS pointer: {}",
+                    path.display()
+                ));
             }
             return Err(format!(
                 "CRATEBAY_WSL_ROOTFS_TAR points to '{}' which does not exist",
@@ -846,8 +877,14 @@ fn runtime_wsl_rootfs_tar_path() -> Result<PathBuf, String> {
     // 2. Search bundled assets
     if let Some(dir) = runtime_wsl_assets_dir() {
         let path = dir.join(runtime_wsl_image_id()).join("rootfs.tar");
-        if path.is_file() {
+        if path.is_file() && !common::file_contains_placeholder_marker(&path) {
             return Ok(path);
+        }
+        if common::file_contains_placeholder_marker(&path) {
+            return Err(format!(
+                "CrateBay WSL runtime asset is a placeholder or Git LFS pointer: {}",
+                path.display()
+            ));
         }
     }
 
@@ -1420,6 +1457,13 @@ fn wait_for_wsl_dockerd_ready_in_guest(distro: &str, port: u16) -> Result<String
 /// Try to reach Docker at the given TCP endpoint, then fall back to a
 /// localhost relay if direct connection fails.
 fn resolve_reachable_docker_host(guest_docker_host: &str) -> Result<String, String> {
+    // Prefer the localhost-forwarded endpoint, which is the most compatible
+    // across Windows networking configurations.
+    let local = windows_docker_host();
+    if common::wait_for_docker_tcp(&local, Duration::from_secs(5)).is_ok() {
+        return Ok(local);
+    }
+
     // Try direct connection first
     if common::wait_for_docker_tcp(guest_docker_host, Duration::from_secs(5)).is_ok() {
         return Ok(guest_docker_host.to_string());

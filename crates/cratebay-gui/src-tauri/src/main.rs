@@ -390,6 +390,12 @@ fn main() {
                 }
             }
 
+            // Apply persisted runtime HTTP proxy settings early so both:
+            // - runtime auto-start
+            // - host-side Docker Hub fallbacks (image search)
+            // can use the configured proxy without requiring a manual runtime restart.
+            apply_runtime_http_proxy_env(app.handle());
+
             // Start periodic health monitor (every 30s)
             let app_handle = app.handle().clone();
             let health_runtime = runtime.clone();
@@ -420,112 +426,58 @@ fn main() {
                         {
                             let state = auto_start_handle.state::<AppState>();
                             if state.has_docker() {
-                                tracing::info!("Docker already connected, skipping runtime auto-start");
+                                tracing::info!(
+                                    "Docker already connected, skipping runtime auto-start"
+                                );
                                 return;
                             }
                         }
 
-                        tracing::info!("Starting built-in runtime auto-start sequence...");
+                        tracing::info!("Starting container engine auto-start sequence...");
 
                         // Apply persisted runtime HTTP proxy settings so the VM can reach registries
                         // when started automatically (without the user clicking "Start Runtime").
                         apply_runtime_http_proxy_env(&auto_start_handle);
 
-                        // Step 1: Detect current state
-                        let current_state = match auto_start_runtime.detect().await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!("Runtime detect failed: {}", e);
-                                try_reconnect_docker(&auto_start_handle).await;
-                                return;
-                            }
+                        // Provision progress callback that emits Tauri events
+                        let handle_clone = auto_start_handle.clone();
+                        let progress_cb: Box<
+                            dyn Fn(cratebay_core::runtime::ProvisionProgress) + Send,
+                        > = Box::new(move |progress| {
+                            tracing::info!(
+                                "Provision progress: {} - {:.1}% - {}",
+                                progress.stage,
+                                progress.percent,
+                                progress.message
+                            );
+                            let _ = handle_clone.emit(events::event_names::RUNTIME_PROVISION, &progress);
+                            // Backward-compatible alias (deprecated)
+                            let _ = handle_clone.emit("runtime:provision-progress", &progress);
+                        });
+
+                        let options = cratebay_core::engine::EnsureOptions {
+                            on_provision_progress: Some(progress_cb),
+                            ..Default::default()
                         };
-                        tracing::info!("Runtime detected state: {:?}", current_state);
 
-                        // Step 2: Provision if needed, then start
-                        match &current_state {
-                            cratebay_core::runtime::RuntimeState::None => {
-                                tracing::info!("Runtime needs provisioning, starting provision...");
-                                let handle_clone = auto_start_handle.clone();
-                                if let Err(e) = auto_start_runtime.provision(
-                                    Box::new(move |progress| {
-                                        tracing::info!(
-                                            "Provision progress: {} - {:.1}% - {}",
-                                            progress.stage,
-                                            progress.percent,
-                                            progress.message
-                                        );
-                                        let _ = handle_clone.emit(
-                                            events::event_names::RUNTIME_PROVISION,
-                                            &progress,
-                                        );
-                                        // Backward-compatible alias (deprecated)
-                                        let _ = handle_clone.emit("runtime:provision-progress", &progress);
-                                    }),
-                                ).await {
-                                    tracing::warn!("Runtime provisioning failed: {}", e);
-                                    tracing::info!("Falling back to external Docker detection");
-                                    try_reconnect_docker(&auto_start_handle).await;
-                                    return;
-                                }
-                                tracing::info!("Runtime provisioning complete");
+                        match cratebay_core::engine::ensure_docker(
+                            auto_start_runtime.as_ref(),
+                            options,
+                        )
+                        .await
+                        {
+                            Ok(docker) => {
+                                tracing::info!("Docker connected via ensured container engine");
+                                let state = auto_start_handle.state::<AppState>();
+                                state.set_docker(Some(docker));
+                                let _ = auto_start_handle.emit("docker:connected", true);
                             }
-                            cratebay_core::runtime::RuntimeState::Ready => {
-                                tracing::info!("Runtime already ready, reconnecting Docker...");
+                            Err(e) => {
+                                tracing::warn!("Engine auto-start failed: {}", e);
+                                // Final fallback: try external Docker
                                 try_reconnect_docker(&auto_start_handle).await;
-                                return;
-                            }
-                            cratebay_core::runtime::RuntimeState::Error(msg) => {
-                                tracing::warn!("Runtime in error state: {}", msg);
-                                try_reconnect_docker(&auto_start_handle).await;
-                                return;
-                            }
-                            _ => {
-                                // Provisioned, Starting, Stopping, Stopped — try to start
                             }
                         }
-
-                        // Step 3: Start the runtime
-                        tracing::info!("Starting built-in runtime...");
-                        if let Err(e) = auto_start_runtime.start().await {
-                            tracing::warn!("Runtime start failed: {}", e);
-                            tracing::info!("Falling back to external Docker detection");
-                            try_reconnect_docker(&auto_start_handle).await;
-                            return;
-                        }
-                        tracing::info!("Built-in runtime started successfully");
-
-                        // Step 4: Wait for Docker to become responsive via runtime socket
-                        let socket_path = auto_start_runtime.docker_socket_path();
-                        tracing::info!("Waiting for Docker at {}...", socket_path.display());
-
-                        let deadline = std::time::Instant::now() + Duration::from_secs(45);
-                        while std::time::Instant::now() < deadline {
-                            if socket_path.exists() {
-                                #[cfg(unix)]
-                                {
-                                    if let Ok(docker) = bollard::Docker::connect_with_unix(
-                                        socket_path.to_str().unwrap_or_default(),
-                                        120,
-                                        bollard::API_DEFAULT_VERSION,
-                                    ) {
-                                        if docker.ping().await.is_ok() {
-                                            tracing::info!("Docker is responsive via built-in runtime!");
-                                            let state = auto_start_handle.state::<AppState>();
-                                            state.set_docker(Some(Arc::new(docker)));
-                                            // Emit an event so the frontend knows Docker is now available
-                                            let _ = auto_start_handle.emit("docker:connected", true);
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-
-                        tracing::warn!("Docker did not become responsive via runtime socket within 45s");
-                        // Final fallback: try external Docker
-                        try_reconnect_docker(&auto_start_handle).await;
                     });
                 })
                 .ok(); // JoinHandle is dropped — the thread runs independently.

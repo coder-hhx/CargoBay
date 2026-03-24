@@ -441,7 +441,7 @@ pub fn bundled_runtime_assets_dir() -> Option<PathBuf> {
 
 /// Check if a file is a placeholder (too small and contains `PLACEHOLDER` or
 /// a Git LFS pointer).
-fn file_contains_placeholder_marker(path: &Path) -> bool {
+pub(crate) fn file_contains_placeholder_marker(path: &Path) -> bool {
     if !path.is_file() {
         return false;
     }
@@ -476,6 +476,36 @@ pub fn required_image_files(image_id: &str) -> Vec<&'static str> {
         files.push("rootfs.img");
     }
     files
+}
+
+// ---------------------------------------------------------------------------
+// Platform helper asset discovery
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "linux")]
+fn runtime_linux_dir_from_root(root: &Path) -> Option<PathBuf> {
+    if root
+        .file_name()
+        .is_some_and(|n| n == DEFAULT_LINUX_RUNTIME_ASSETS_SUBDIR)
+        && root.is_dir()
+    {
+        return Some(root.to_path_buf());
+    }
+
+    let dir = root.join(DEFAULT_LINUX_RUNTIME_ASSETS_SUBDIR);
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// First available bundled Linux runtime helper directory (`runtime-linux/`).
+#[cfg(target_os = "linux")]
+pub fn bundled_linux_runtime_assets_dir() -> Option<PathBuf> {
+    runtime_assets_root_candidates()
+        .into_iter()
+        .find_map(|root| runtime_linux_dir_from_root(&root))
 }
 
 /// Locate bundled assets for a specific image.

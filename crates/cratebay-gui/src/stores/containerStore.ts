@@ -65,31 +65,61 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
     // Create new abort controller for this request
     const controller = new AbortController();
     set({ _fetchAbortController: controller, loading: true, error: null });
+    const requestController = controller;
 
     try {
       // Timeout protection: 8 seconds max
       const timeoutId = setTimeout(
-        () => controller.abort(),
+        () => {
+          requestController.abort();
+          // If this is still the latest request, stop the spinner even though
+          // we can't truly cancel the in-flight Tauri invoke. Keep the
+          // controller so late results can still update the UI.
+          if (get()._fetchAbortController === requestController) {
+            set({
+              loading: false,
+              error: "刷新超时：runtime 可能正在启动或 Docker 无响应（稍后会自动更新）",
+            });
+          }
+        },
         8000,
       );
 
       const result = await invoke<ContainerInfo[]>("container_list");
       clearTimeout(timeoutId);
 
-      if (!controller.signal.aborted) {
-        // Merge with any "creating" placeholders that haven't been replaced yet
-        const placeholders = get().containers.filter((c) => c.id.startsWith("__creating_"));
-        set({ containers: [...result, ...placeholders], loading: false, _fetchAbortController: null });
+      // Ignore stale results (superseded by a newer request or timed out).
+      if (get()._fetchAbortController !== requestController) {
+        return;
       }
+
+      // Merge with any "creating" placeholders that haven't been replaced yet
+      const placeholders = get().containers.filter((c) => c.id.startsWith("__creating_"));
+      set({
+        containers: [...result, ...placeholders],
+        loading: false,
+        error: null,
+        _fetchAbortController: null,
+      });
     } catch (err) {
-      if (controller.signal.aborted) {
+      if (requestController.signal.aborted) {
         console.warn("[containerStore] fetchContainers aborted");
       } else {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[containerStore] fetchContainers failed:", message);
+        if (get()._fetchAbortController === requestController) {
+          set({
+            error:
+              message.length > 0 && message !== "[object Object]"
+                ? message
+                : "刷新失败：请检查 runtime 连接状态",
+          });
+        }
       }
       // On failure, keep existing containers visible, just stop loading
-      set({ loading: false, _fetchAbortController: null });
+      if (get()._fetchAbortController === requestController) {
+        set({ loading: false, _fetchAbortController: null });
+      }
     }
   },
 
@@ -255,6 +285,14 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
           message: "容器创建成功但未能自动启动，可能是镜像不支持默认命令。请尝试手动启动。",
           dismissable: true,
         });
+      } else if (container.status !== "running" && container.status !== "paused") {
+        notify({
+          type: "warning",
+          title: `容器 ${req.name} 已创建`,
+          message:
+            "容器已启动但很快退出/停止。常见原因：镜像默认命令执行完毕或命令不存在。可在创建时指定命令（例如 `sleep infinity`）后重试。",
+          dismissable: true,
+        });
       } else {
         notify({
           type: "success",
@@ -282,19 +320,56 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
   },
 
   startContainer: async (id) => {
+    const notify = useAppStore.getState().addNotification;
     try {
+      // Optimistic: mark as creating while we start (runtime may be starting)
+      set((state) => ({
+        containers: state.containers.map((c) =>
+          c.id === id ? { ...c, status: "creating", state: "starting" } : c,
+        ),
+        error: null,
+      }));
+      notify({
+        type: "info",
+        title: "正在启动容器...",
+        message: "如果 runtime 尚未就绪，启动可能需要几十秒",
+        dismissable: true,
+      });
       await invoke("container_start", { id });
       // Refresh from backend to get real status
       await get().fetchContainers();
+      const updated = get().containers.find((c) => c.id === id);
+      if (updated && updated.status !== "running" && updated.status !== "paused") {
+        notify({
+          type: "warning",
+          title: "容器未保持运行",
+          message:
+            "容器已启动但很快退出/停止。常见原因：镜像默认命令执行完毕或命令不存在。可在创建时指定命令（例如 `sleep infinity`）后重试。",
+          dismissable: true,
+        });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[containerStore] startContainer failed:", message);
       set({ error: message });
+      notify({
+        type: "error",
+        title: "启动失败",
+        message,
+        dismissable: true,
+      });
     }
   },
 
   stopContainer: async (id) => {
+    const notify = useAppStore.getState().addNotification;
     try {
+      set((state) => ({
+        containers: state.containers.map((c) =>
+          c.id === id ? { ...c, status: "creating", state: "stopping" } : c,
+        ),
+        error: null,
+      }));
       await invoke("container_stop", { id });
       // Refresh from backend to get real status
       await get().fetchContainers();
@@ -302,6 +377,12 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
       const message = err instanceof Error ? err.message : String(err);
       console.error("[containerStore] stopContainer failed:", message);
       set({ error: message });
+      notify({
+        type: "error",
+        title: "停止失败",
+        message,
+        dismissable: true,
+      });
     }
   },
 

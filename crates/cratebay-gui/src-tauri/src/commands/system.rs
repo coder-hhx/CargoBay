@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use bollard::Docker;
 use tauri::State;
 
 use crate::state::AppState;
@@ -48,6 +49,11 @@ pub async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, AppEr
 /// updated by the runtime auto-start background thread).
 #[tauri::command]
 pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, AppError> {
+    let provider = std::env::var("CRATEBAY_ENGINE_PROVIDER")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+
     let docker_opt = {
         let guard = state
             .docker
@@ -61,11 +67,34 @@ pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, A
             let is_available = docker::is_available(&d).await;
             if is_available {
                 let version_info = docker::version(&d).await.ok();
-                let socket_path = state.runtime.docker_socket_path();
-                let source = if socket_path.exists() {
-                    "built-in"
+                let (source, socket_path) = if provider == "podman" {
+                    (
+                        "podman".to_string(),
+                        std::env::var("DOCKER_HOST").ok().and_then(|v| {
+                            let trimmed = v.trim().to_string();
+                            (!trimmed.is_empty()).then_some(trimmed)
+                        }),
+                    )
                 } else {
-                    "external"
+                    let runtime_running =
+                        state.runtime.health_check().await.ok().is_some_and(|h| {
+                            matches!(
+                                h.runtime_state,
+                                RuntimeState::Starting | RuntimeState::Ready
+                            )
+                        });
+                    let source = if runtime_running {
+                        "built-in"
+                    } else {
+                        "external"
+                    }
+                    .to_string();
+                    let socket_path = if runtime_running {
+                        Some(built_in_docker_endpoint(&state))
+                    } else {
+                        external_docker_endpoint()
+                    };
+                    (source, socket_path)
                 };
                 Ok(DockerStatus {
                     connected: true,
@@ -73,8 +102,8 @@ pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, A
                     api_version: version_info.as_ref().and_then(|v| v.api_version.clone()),
                     os: version_info.as_ref().and_then(|v| v.os.clone()),
                     arch: version_info.as_ref().and_then(|v| v.arch.clone()),
-                    source: source.to_string(),
-                    socket_path: Some(socket_path.to_string_lossy().to_string()),
+                    source,
+                    socket_path,
                 })
             } else {
                 Ok(DockerStatus {
@@ -98,6 +127,42 @@ pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, A
             socket_path: None,
         }),
     }
+}
+
+fn built_in_docker_endpoint(state: &State<'_, AppState>) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        cratebay_core::runtime::linux::linux_docker_host()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        cratebay_core::runtime::windows::windows_docker_host()
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        state
+            .runtime
+            .docker_socket_path()
+            .to_string_lossy()
+            .to_string()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        "<unsupported>".to_string()
+    }
+}
+
+fn external_docker_endpoint() -> Option<String> {
+    if let Ok(host) = std::env::var("DOCKER_HOST") {
+        if !host.trim().is_empty() {
+            return Some(host);
+        }
+    }
+
+    cratebay_core::runtime::detect_external_docker().map(|path| path.to_string_lossy().to_string())
 }
 
 /// Get built-in runtime status.
@@ -197,29 +262,73 @@ pub async fn runtime_start(state: State<'_, AppState>) -> Result<String, AppErro
     tracing::info!("Runtime started, waiting for Docker...");
 
     // Step 4: Wait for Docker and update AppState
-    let socket_path = state.runtime.docker_socket_path();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
     while std::time::Instant::now() < deadline {
-        if socket_path.exists() {
-            #[cfg(unix)]
-            {
-                if let Ok(docker) = bollard::Docker::connect_with_unix(
-                    socket_path.to_str().unwrap_or_default(),
-                    120,
-                    bollard::API_DEFAULT_VERSION,
-                ) {
-                    if docker.ping().await.is_ok() {
-                        tracing::info!("Docker connected via runtime socket");
-                        state.set_docker(Some(Arc::new(docker)));
-                        return Ok("Runtime started and Docker connected".to_string());
-                    }
-                }
-            }
+        if let Some(docker) = try_connect_runtime_docker(state.runtime.as_ref()).await {
+            tracing::info!("Docker connected via built-in runtime");
+            state.set_docker(Some(Arc::new(docker)));
+            return Ok("Runtime started and Docker connected".to_string());
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
     Ok("Runtime started but Docker not yet responsive".to_string())
+}
+
+async fn try_connect_runtime_docker(
+    runtime: &dyn cratebay_core::runtime::RuntimeManager,
+) -> Option<Docker> {
+    // Linux runtime: TCP hostfwd endpoint.
+    #[cfg(target_os = "linux")]
+    {
+        let _ = runtime;
+        let host = cratebay_core::runtime::linux::linux_docker_host();
+        let http_host = host
+            .strip_prefix("tcp://")
+            .map(|rest| format!("http://{}", rest))
+            .unwrap_or_else(|| host.replace("tcp://", "http://"));
+
+        let docker = Docker::connect_with_http(&http_host, 5, bollard::API_DEFAULT_VERSION).ok()?;
+        if docker.ping().await.is_ok() {
+            return Docker::connect_with_http(&http_host, 120, bollard::API_DEFAULT_VERSION).ok();
+        }
+        None
+    }
+
+    // Windows runtime: WSL localhost forwarding endpoint.
+    #[cfg(target_os = "windows")]
+    {
+        let _ = runtime;
+        let host = cratebay_core::runtime::windows::windows_docker_host();
+        let http_host = host
+            .strip_prefix("tcp://")
+            .map(|rest| format!("http://{}", rest))
+            .unwrap_or_else(|| host.replace("tcp://", "http://"));
+
+        let docker = Docker::connect_with_http(&http_host, 5, bollard::API_DEFAULT_VERSION).ok()?;
+        if docker.ping().await.is_ok() {
+            return Docker::connect_with_http(&http_host, 120, bollard::API_DEFAULT_VERSION).ok();
+        }
+        return None;
+    }
+
+    // macOS and other Unix platforms: Unix socket.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        let socket_path = runtime.docker_socket_path();
+        let socket_str = socket_path.to_str().unwrap_or_default();
+        let docker = Docker::connect_with_unix(socket_str, 5, bollard::API_DEFAULT_VERSION).ok()?;
+        if docker.ping().await.is_ok() {
+            return Docker::connect_with_unix(socket_str, 120, bollard::API_DEFAULT_VERSION).ok();
+        }
+        None
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = runtime;
+        None
+    }
 }
 
 /// Manually stop the built-in runtime.

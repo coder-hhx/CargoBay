@@ -13,9 +13,10 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { invoke } from "@/lib/tauri";
+import { invoke, listen } from "@/lib/tauri";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { useSettingsStore } from "@/stores/settingsStore";
 import type {
   LocalImageInfo,
   ImageSearchResult,
@@ -421,7 +422,12 @@ function SearchImagesTab() {
     setPullError(null);
     setSearchError(null);
     try {
-      const data = await invoke<ImageSearchResult[]>("image_search", { query: query.trim() });
+      const data = await Promise.race([
+        invoke<ImageSearchResult[]>("image_search", { query: query.trim() }),
+        new Promise<ImageSearchResult[]>((_, reject) =>
+          window.setTimeout(() => reject(new Error("Image search timeout (15s)")), 15000),
+        ),
+      ]);
       setResults(data);
     } catch (err) {
       setResults([]);
@@ -439,12 +445,47 @@ function SearchImagesTab() {
   }, [query]);
 
   const handlePull = useCallback(async (image: string) => {
-    setPulling(image);
+    const trimmedImage = image.trim();
+    if (trimmedImage.length === 0) return;
+
+    setPulling(trimmedImage);
     setPullError(null);
     try {
-      await invoke("image_pull", { image });
+      const mirrors = useSettingsStore.getState().settings.registryMirrors;
+      const hasMirrors = Array.isArray(mirrors) && mirrors.length > 0;
+      const channelId = `pull-${Date.now()}`;
+
+      // image_pull returns immediately and streams progress via events
+      await invoke<string>("image_pull", {
+        image: trimmedImage,
+        mirrors: hasMirrors ? mirrors : null,
+        channel_id: channelId,
+      });
+
+      // Wait for completion
+      await new Promise<void>((resolve, reject) => {
+        let unlistenFn: (() => void) | null = null;
+        const timeoutId = window.setTimeout(() => {
+          unlistenFn?.();
+          reject(new Error("Image pull timeout (120s)"));
+        }, 120000);
+
+        void listen<{
+          complete: boolean;
+          error?: string | null;
+        }>(`image:pull:${channelId}`, (progress) => {
+          if (!progress.complete) return;
+          window.clearTimeout(timeoutId);
+          unlistenFn?.();
+          if (progress.error) reject(new Error(progress.error));
+          else resolve();
+        }).then((unsub) => {
+          unlistenFn = unsub;
+        });
+      });
     } catch (err) {
-      setPullError(typeof err === "string" ? err : `Failed to pull ${image}`);
+      const message = err instanceof Error ? err.message : String(err);
+      setPullError(message.length > 0 ? message : `Failed to pull ${trimmedImage}`);
     } finally {
       setPulling(null);
     }
@@ -485,6 +526,20 @@ function SearchImagesTab() {
             <Search className="h-3.5 w-3.5" />
           )}
           {t("common", "search")}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => void handlePull(query)}
+          disabled={pulling !== null || query.trim().length === 0}
+          title={t("images", "pull")}
+        >
+          {pulling === query.trim() ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          {t("images", "pull")}
         </Button>
       </div>
 

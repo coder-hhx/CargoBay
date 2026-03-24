@@ -127,12 +127,16 @@ export function ContainerCreate() {
       templateId: templateId || undefined,
       cpuCores,
       memoryMb,
+      autoStart: true,
     };
+    if (selectedTemplate?.defaultCommand?.trim()) {
+      req.command = selectedTemplate.defaultCommand.trim();
+    }
     // Fire-and-forget: close dialog immediately, store handles optimistic update
     void createContainer(req);
     resetForm();
     setOpen(false);
-  }, [canCreate, templateId, name, image, cpuCores, memoryMb, createContainer, resetForm]);
+  }, [canCreate, templateId, name, image, cpuCores, memoryMb, selectedTemplate, createContainer, resetForm]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetForm(); }}>

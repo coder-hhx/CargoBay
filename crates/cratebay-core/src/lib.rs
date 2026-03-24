@@ -6,6 +6,7 @@
 pub mod audit;
 pub mod container;
 pub mod docker;
+pub mod engine;
 pub mod error;
 pub mod fsutil;
 pub mod images;

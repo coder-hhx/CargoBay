@@ -28,7 +28,7 @@ export const dockerStatusTool: AgentTool<typeof EmptyParams> = {
   label: "Docker Status",
   description:
     "Check the current Docker connection status. " +
-    "Returns whether Docker is connected, version info, and source (external or built-in).",
+    "Returns whether Docker is connected, version info, and source (external, built-in, or podman).",
   parameters: EmptyParams,
   execute: async () => {
     const status = await invoke<{

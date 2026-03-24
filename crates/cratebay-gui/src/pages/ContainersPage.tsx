@@ -30,6 +30,7 @@ export function ContainersPage() {
   const filter = useContainerStore((s) => s.filter);
   const setFilter = useContainerStore((s) => s.setFilter);
   const loading = useContainerStore((s) => s.loading);
+  const error = useContainerStore((s) => s.error);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
   useEffect(() => {
@@ -105,6 +106,12 @@ export function ContainersPage() {
           </div>
         </div>
       </div>
+
+      {error !== null && (
+        <div className="mx-6 mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 border-b border-border px-6 py-2.5">

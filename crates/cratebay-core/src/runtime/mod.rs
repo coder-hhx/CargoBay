@@ -235,15 +235,6 @@ pub fn create_runtime_manager() -> Box<dyn RuntimeManager> {
 ///
 /// Returns `Some(path)` if a valid Docker socket is found, `None` otherwise.
 pub fn detect_external_docker() -> Option<PathBuf> {
-    // Priority 1: DOCKER_HOST environment variable
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        if let Some(path) = parse_docker_host(&host) {
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-
     let home = dirs::home_dir()?;
 
     #[cfg(target_os = "macos")]
@@ -283,12 +274,6 @@ pub fn detect_external_docker() -> Option<PathBuf> {
     }
 
     Option::None
-}
-
-/// Parse a `DOCKER_HOST` value (e.g. `unix:///var/run/docker.sock`) into a path.
-fn parse_docker_host(host: &str) -> Option<PathBuf> {
-    let stripped = host.strip_prefix("unix://")?;
-    Some(PathBuf::from(stripped))
 }
 
 // ---------------------------------------------------------------------------
@@ -378,15 +363,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_docker_host_valid_unix() {
-        let path = parse_docker_host("unix:///var/run/docker.sock");
-        assert_eq!(path, Some(PathBuf::from("/var/run/docker.sock")));
-    }
-
-    #[test]
-    fn parse_docker_host_invalid() {
-        let path = parse_docker_host("tcp://localhost:2375");
-        assert_eq!(path, None);
+    fn detect_external_docker_returns_option() {
+        // detect_external_docker() should return Option<PathBuf> and not panic,
+        // regardless of whether Docker is installed on the test machine.
+        let result = detect_external_docker();
+        // We can't assert a specific value since it depends on the environment,
+        // but we verify the function runs without panicking and returns a valid type.
+        match result {
+            Some(path) => {
+                // If a path is returned, it should exist on disk
+                assert!(
+                    path.exists(),
+                    "Detected Docker path should exist: {:?}",
+                    path
+                );
+            }
+            None => {
+                // No external Docker found — perfectly valid
+            }
+        }
     }
 
     #[test]
@@ -562,28 +557,6 @@ mod tests {
     }
 
     #[test]
-    fn detect_external_docker_returns_option() {
-        // detect_external_docker() should return Option<PathBuf> and not panic,
-        // regardless of whether Docker is installed on the test machine.
-        let result = detect_external_docker();
-        // We can't assert a specific value since it depends on the environment,
-        // but we verify the function runs without panicking and returns a valid type.
-        match result {
-            Some(path) => {
-                // If a path is returned, it should exist on disk
-                assert!(
-                    path.exists(),
-                    "Detected Docker path should exist: {:?}",
-                    path
-                );
-            }
-            None => {
-                // No external Docker found — perfectly valid
-            }
-        }
-    }
-
-    #[test]
     fn create_runtime_manager_returns_valid_manager() {
         let manager = create_runtime_manager();
         // Verify the manager has the expected docker socket path pattern
@@ -595,15 +568,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parse_docker_host_empty_string() {
-        let path = parse_docker_host("");
-        assert_eq!(path, None);
-    }
-
-    #[test]
-    fn parse_docker_host_unix_custom_path() {
-        let path = parse_docker_host("unix:///home/user/.docker/docker.sock");
-        assert_eq!(path, Some(PathBuf::from("/home/user/.docker/docker.sock")));
-    }
+    // DOCKER_HOST parsing/connection is implemented in `crate::docker` so it can
+    // support tcp/http/npipe endpoints across platforms.
 }
