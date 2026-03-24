@@ -1,8 +1,8 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **阶段**: 开发阶段 (Phase 2) — GUI 改进 + Docker 集成优化
-- **日期**: 2026-03-23
+- **阶段**: 开发阶段 (Phase 2) — Engine ensure + runtime socket forwarding + Podman fallback
+- **日期**: 2026-03-25
 - **团队模式**: 开发阶段 6 人团队（见 agent-team-workflow.md §1.1）
 - **Git HEAD**: `rewrite/v2` 分支
 
@@ -154,14 +154,26 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - `crates/cratebay-gui/src/types/settings.ts` — registryMirrors + DEFAULT_REGISTRY_MIRRORS
 - `crates/cratebay-core/src/runtime/macos.rs` — health_check 防降级（prev state = Ready → 保持 Ready）
 
+### Engine Ensure + CLI/GUI（2026-03-24）
+
+- ✅ `cratebay-core`: 新增 `engine::ensure_docker()` + `engine.lock` 跨进程互斥，统一“外部 Docker 优先 / 内置 runtime 自动启动”
+- ✅ `cratebay-core`: Windows runtime Docker 连接改为 `tcp://127.0.0.1:<CRATEBAY_WSL_DOCKER_PORT>`（WSL localhost forwarding），避免 named pipe 连接失败
+- ✅ `cratebay-core`: `DOCKER_HOST` 支持 unix/tcp/http/https/npipe；探测 ping 超时 5s（成功后返回 120s client），避免无效 DOCKER_HOST 卡住启动
+- ✅ `cratebay-core`: Linux runtime helper（QEMU）资产发现改为 `runtime-linux/`（与 `scripts/build-runtime-assets-linux.sh` 产物一致）
+- ✅ `cratebay-core`: WindowsRuntime health_check 对缓存端点失效自动回退到 localhost，避免“容器可用但 GUI 显示未连接”
+- ✅ `cratebay-gui`(Tauri bundle): 资源打包加入 `runtime-linux/**/*` 与 `runtime-wsl/**/*`，为 Win/Linux “安装即用”准备完整 runtime 资产目录
+- ✅ `cratebay-gui`(Tauri 后端): `AppState.ensure_docker()`，所有 container/image 命令自动 ensure；GUI 启动 auto-start 复用 core engine ensure
+- ✅ `cratebay-cli`: 补齐 `container/*`、`image/*`、`system docker-status` 子命令；`container create` 缺镜像时自动 pull；支持 `image search`
+- ✅ 回归验证：`cargo test --workspace`
+
 ## 待开始 📋
 
 ### 任务 E: Spec 文档对齐更新 🔴 优先
-- ✅ api-spec.md: 补齐 runtime_start/runtime_stop + Images API（已更新至 v1.4.0）
-- ✅ runtime-spec.md: socket 路径 + HTTP proxy + 健康检查稳定性（已更新至 v1.2.0）
+- ✅ api-spec.md: 增加 engine ensure 说明 + docker_status.source=podman（已更新至 v1.5.2）
+- ✅ runtime-spec.md: engine ensure flow + 资产打包布局 + macOS socket forward 默认 tcp（已更新至 v1.2.4）
 - ✅ frontend-spec.md: runtime 健康降级宽限 + containerStore 类型对齐（已更新至 v1.2.2）
 - 🔴 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段（待补充/确认）
-- 🔴 backend-spec.md: AppState.docker 新类型 + 命令分组补充（待补充）
+- ✅ backend-spec.md: engine ensure + Provider 覆盖 + EnsureOptions 字段对齐（已更新至 v1.3.2）
 - 🔴 ImagesPage: 是否保留？（代码存在但 spec 未定义，需人工决定）
 
 ### 任务 F: 自研 Runtime 移植实施 🔴 优先
@@ -183,18 +195,17 @@ pnpm run test               → ✅ 4 passed (Vitest)
 ## 阻塞/问题 ⚠️
 - **pre-commit 钩子 Bug**: `cargo test -p cratebay-cli --lib` 失败（CLI 无 lib target），当前用 `--no-verify` 跳过
 - **CodeBuddy Agent 框架 Bug**: 进程内 agent 注册表持久化，跨 TeamDelete 后仍阻止创建同名 agent，需要**重启新会话**才能创建新团队
-- **2 个本地 commit 未推送**: 需 `git push` 推送到 origin/rewrite/v2
 
 ## 文档完成明细
 
-16 份文档 + 5 份已更新至 v1.1.0：
+16 份文档（以文件头 Version 为准）：
 
 | 文档 | 版本 | 路径 |
 |------|------|------|
-| architecture.md | **1.1.0** | docs/specs/architecture.md |
-| backend-spec.md | **1.2.0** | docs/specs/backend-spec.md |
-| runtime-spec.md | **1.2.0** | docs/specs/runtime-spec.md |
-| api-spec.md | **1.4.0** | docs/specs/api-spec.md |
+| architecture.md | **1.1.1** | docs/specs/architecture.md |
+| backend-spec.md | **1.3.2** | docs/specs/backend-spec.md |
+| runtime-spec.md | **1.2.4** | docs/specs/runtime-spec.md |
+| api-spec.md | **1.5.2** | docs/specs/api-spec.md |
 | database-spec.md | **1.1.0** | docs/specs/database-spec.md |
 | frontend-spec.md | **1.2.2** | docs/specs/frontend-spec.md |
 | agent-spec.md | **1.2.0** | docs/specs/agent-spec.md |

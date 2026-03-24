@@ -1,6 +1,6 @@
 # Tauri Commands API Specification
 
-> Version: 1.5.1 | Last Updated: 2026-03-23 | Author: architect
+> Version: 1.5.2 | Last Updated: 2026-03-24 | Author: architect
 
 ---
 
@@ -103,6 +103,11 @@ pub struct ContainerInfo {
 
 ### 3.1 Container Commands
 
+**Engine ensure (important):** All container/image commands must call
+`AppState.ensure_docker()` first. If Docker is not connected yet, the backend
+will attempt to auto-start the built-in runtime (detect → provision if needed →
+start → wait for Docker). This can take up to ~45 seconds on first use.
+
 #### `container_templates`
 
 List available container templates.
@@ -183,7 +188,7 @@ pub enum ContainerStatus {
 }
 ```
 
-**Errors:** `AppError::Docker`
+**Errors:** `AppError::Docker`, `AppError::Runtime`
 
 **Example (TypeScript):**
 
@@ -1594,7 +1599,7 @@ pub struct DockerStatus {
     pub api_version: Option<String>,   // Docker API version
     pub os: Option<String>,            // "linux"
     pub arch: Option<String>,          // "amd64", "arm64"
-    pub source: String,                // "external", "built-in", "none"
+    pub source: String,                // "external", "built-in", "podman", "none"
     pub socket_path: Option<String>,
 }
 ```

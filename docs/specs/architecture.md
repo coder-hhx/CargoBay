@@ -1,6 +1,6 @@
 # System Architecture
 
-> Version: 1.1.0 | Last Updated: 2026-03-20 | Author: architect
+> Version: 1.1.1 | Last Updated: 2026-03-24 | Author: architect
 
 ---
 
@@ -674,7 +674,9 @@ The agent tool system is inherently extensible:
 | tokio | 1.x | Async runtime |
 | thiserror | 2.x | Error type derivation |
 | serde / serde_json | 1.x | Serialization |
+| serde_yaml | 0.9 | YAML serialization (CLI output) |
 | reqwest | 0.12 | HTTP client (LLM proxy) |
+| futures-util | 0.3 | Stream utilities (Docker logs/pull) |
 | tracing | 0.1 | Structured logging |
 | chrono | 0.4 | Date/time handling |
 | uuid | 1.x | Unique identifier generation |

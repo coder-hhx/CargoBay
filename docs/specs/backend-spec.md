@@ -1,6 +1,6 @@
 # Backend Specification
 
-> Version: 1.3.0 | Last Updated: 2026-03-21 | Author: architect
+> Version: 1.3.2 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -29,6 +29,7 @@ crates/
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs           # Public API exports
+│       ├── engine.rs        # Container engine ensure (runtime auto-start + locking)
 │       ├── docker.rs        # Docker connection management
 │       ├── container.rs     # Container CRUD operations
 │       ├── llm_proxy.rs     # LLM request proxy with streaming
@@ -338,73 +339,78 @@ mod tests {
 
 ## 3. cratebay-core Design
 
-### 3.1 docker.rs — Docker Connection Management
+### 3.1 engine.rs — Container Engine Ensure
 
-Manages the Docker client connection with multi-platform socket detection.
+`engine.rs` is the single entry-point used by both **GUI (Tauri)** and **CLI**
+to guarantee a responsive Docker client:
+
+- Prefer **external Docker** when available (including `DOCKER_HOST`)
+- Otherwise **provision + start built-in runtime**, then wait for Docker
+- Use a **cross-process lock** (`~/.cratebay/runtime/engine.lock`) so GUI + CLI
+  don't start/provision concurrently
+- Runtime is **not** automatically stopped when the GUI exits
+- Provider override via `CRATEBAY_ENGINE_PROVIDER`:
+  - `auto` (default): external Docker → built-in runtime → (best-effort) Podman fallback
+  - `builtin`: force built-in runtime only (no Podman fallback)
+  - `podman`: force Podman only (start Podman machine/service if needed)
 
 ```rust
 use bollard::Docker;
 use std::sync::Arc;
+use std::time::Duration;
 
-/// Create a Docker client with automatic socket detection
-pub async fn connect() -> Result<Arc<Docker>, AppError> {
-    // 1. Check DOCKER_HOST env var
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        let docker = Docker::connect_with_socket(&host, 120, API_DEFAULT_VERSION)?;
-        return Ok(Arc::new(docker));
-    }
+use crate::error::AppError;
+use crate::runtime::{self, RuntimeManager, RuntimeState};
 
-    // 2. Try platform-specific sockets
-    for socket_path in detect_socket_paths() {
-        if socket_path.exists() {
-            let docker = Docker::connect_with_unix(
-                socket_path.to_str().unwrap(),
-                120,
-                API_DEFAULT_VERSION,
-            )?;
-            // Verify connection
-            if docker.ping().await.is_ok() {
-                return Ok(Arc::new(docker));
-            }
-        }
-    }
-
-    // 3. Start built-in runtime
-    let runtime = runtime::create_runtime_manager();
-    runtime.start().await?;
-    let socket = runtime.docker_socket_path();
-    let docker = Docker::connect_with_unix(
-        socket.to_str().unwrap(),
-        120,
-        API_DEFAULT_VERSION,
-    )?;
-    Ok(Arc::new(docker))
+pub struct EnsureOptions {
+    pub lock_wait_timeout: Duration,
+    pub docker_wait_timeout: Duration,
+    pub runtime_detect_timeout: Duration,
+    pub runtime_start_timeout: Duration,
+    pub runtime_provision_timeout: Duration,
+    pub podman_start_timeout: Duration,
+    pub on_provision_progress: Option<Box<dyn Fn(runtime::ProvisionProgress) + Send>>,
 }
 
-/// Platform-specific socket paths (priority order)
-fn detect_socket_paths() -> Vec<PathBuf> {
-    let home = dirs::home_dir().unwrap_or_default();
-    let mut paths = Vec::new();
-
-    #[cfg(target_os = "macos")]
-    {
-        paths.push(home.join(".colima/default/docker.sock"));
-        paths.push(home.join(".orbstack/run/docker.sock"));
-        paths.push(PathBuf::from("/var/run/docker.sock"));
-        paths.push(home.join(".docker/run/docker.sock"));
+impl Default for EnsureOptions {
+    fn default() -> Self {
+        Self {
+            lock_wait_timeout: Duration::from_secs(10 * 60),
+            docker_wait_timeout: Duration::from_secs(45),
+            runtime_detect_timeout: Duration::from_secs(10),
+            runtime_start_timeout: Duration::from_secs(90),
+            runtime_provision_timeout: Duration::from_secs(30 * 60),
+            podman_start_timeout: Duration::from_secs(120),
+            on_provision_progress: None,
+        }
     }
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        paths.push(PathBuf::from("/var/run/docker.sock"));
-        paths.push(home.join(".docker/run/docker.sock"));
-    }
-
-    paths
+pub async fn ensure_docker(
+    runtime: &dyn RuntimeManager,
+    options: EnsureOptions,
+) -> Result<Arc<Docker>, AppError> {
+    // (implementation omitted — see crates/cratebay-core/src/engine.rs)
+    unimplemented!()
 }
 ```
 
-### 3.2 container.rs — Container CRUD Operations
+### 3.2 docker.rs — Docker Connection Management
+
+`docker.rs` manages Docker client connection with multi-platform socket detection
+but does **not** start/provision the runtime. Runtime lifecycle is handled by
+`engine.rs`.
+
+```rust
+use bollard::Docker;
+
+pub async fn connect() -> Result<Docker, AppError> {
+    // (implementation omitted — see crates/cratebay-core/src/docker.rs)
+    unimplemented!()
+}
+```
+
+### 3.3 container.rs — Container CRUD Operations
 
 ```rust
 use bollard::Docker;
@@ -413,6 +419,7 @@ use bollard::container::*;
 /// List all containers (optionally filtered)
 pub async fn list(
     docker: &Docker,
+    all: bool,
     filters: Option<ContainerListFilters>,
 ) -> Result<Vec<ContainerInfo>, AppError> { /* ... */ }
 
@@ -978,6 +985,22 @@ impl AppState {
             .ok_or_else(|| AppError::Docker(/* connection unavailable */))
     }
 
+    /// Ensure Docker is available.
+    ///
+    /// If no external Docker is reachable, this will auto-start the built-in runtime
+    /// via `cratebay_core::engine::ensure_docker` and then cache the connected client
+    /// into `AppState.docker`.
+    pub async fn ensure_docker(&self) -> Result<Arc<Docker>, AppError> {
+        if let Ok(d) = self.require_docker() {
+            return Ok(d);
+        }
+
+        let docker = cratebay_core::engine::ensure_docker(self.runtime.as_ref(), Default::default())
+            .await?;
+        self.set_docker(Some(docker.clone()));
+        Ok(docker)
+    }
+
     /// Update the Docker client (e.g., after runtime starts or stops).
     pub fn set_docker(&self, docker: Option<Arc<Docker>>) {
         if let Ok(mut guard) = self.docker.lock() {
@@ -1004,7 +1027,8 @@ pub async fn container_list(
     state: State<'_, AppState>,
     filters: Option<ContainerListFilters>,
 ) -> Result<Vec<ContainerInfo>, AppError> {
-    cratebay_core::container::list(&state.docker, filters).await
+    let docker = state.ensure_docker().await?;
+    cratebay_core::container::list(&docker, true, filters).await
 }
 
 #[tauri::command]
@@ -1230,6 +1254,7 @@ cratebay container logs <id> [--follow] [--tail <lines>]
 cratebay container inspect <id>
 
 cratebay image list
+cratebay image search <query> [--limit <n>]
 cratebay image pull <name:tag>
 cratebay image delete <id>
 
@@ -1289,7 +1314,8 @@ pub struct DockerManager {
 
 impl DockerManager {
     pub async fn new() -> Result<Self, AppError> {
-        let client = docker::connect().await?;
+        let runtime = crate::runtime::create_runtime_manager();
+        let client = crate::engine::ensure_docker(runtime.as_ref(), Default::default()).await?;
         Ok(Self { client })
     }
 

@@ -1,6 +1,6 @@
 # Built-in Container Runtime Specification
 
-> Version: 1.2.0 | Last Updated: 2026-03-22 | Author: architect
+> Version: 1.2.4 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -24,7 +24,11 @@
 
 ### Zero-Dependency Container Runtime
 
-CrateBay ships a **built-in container runtime** so that users can install the application and immediately start creating and managing containers — without installing Docker Desktop, Colima, Podman, or any other external tool.
+CrateBay ships a **built-in container runtime** so that users can install the application and immediately start creating and managing containers — without installing Docker Desktop, Colima, or any other external tool.
+
+**Note:** If Podman is already installed, CrateBay may optionally use it as a
+Docker-compatible engine fallback to keep the product usable when the built-in
+runtime is temporarily unavailable.
 
 ### Key Requirements
 
@@ -90,12 +94,12 @@ macOS Host
 │               ├── VZLinuxBootLoader (vmlinuz + initrd)
 │               ├── VZVirtioBlockStorageDevice (rootfs.img)
 │               ├── VZVirtioFileSystemDevice (shared dirs)
-│               ├── VZVirtioSocketDevice (vsock)
+│               ├── (optional) VZVirtioSocketDevice (vsock)
 │               └── VZNATNetworkDeviceAttachment
 │                   └── Alpine Linux
 │                       └── Docker Engine
 │                           └── /var/run/docker.sock
-│                               └── Exposed via vsock → host socket
+│                               └── Exposed via reverse TCP (default) or vsock (optional) → host socket
 ```
 
 ### 2.2 Linux: KVM/QEMU
@@ -247,11 +251,12 @@ pub struct ProvisionProgress {
 ### 3.3 Automatic Start Flow
 
 ```
-App Launch
+App Launch / First Docker Operation (GUI or CLI)
     │
-    ├── docker::connect() attempts socket detection
-    │   ├── Found external Docker → use it (no runtime start)
-    │   └── No Docker found → check runtime state
+    ├── engine::ensure_docker()
+    │   ├── Cross-process lock (engine.lock)
+    │   ├── Try external Docker first (no VM needed)
+    │   └── If not available → start built-in runtime
     │
     ├── runtime.detect()
     │   ├── RuntimeState::None → runtime.provision() → runtime.start()
@@ -259,10 +264,38 @@ App Launch
     │   ├── RuntimeState::Stopped → runtime.start()
     │   └── RuntimeState::Ready → already good
     │
-    └── health_check() loop (max 30s timeout)
-        ├── Docker socket responsive → READY
-        └── Timeout → show error to user
+    └── Wait for Docker responsiveness (max 45s)
+        ├── Docker socket responsive → READY (return Docker client)
+        └── Timeout / error → surface error to user
 ```
+
+**Provider override:** `CRATEBAY_ENGINE_PROVIDER` can override engine selection:
+
+- `auto` (default): external Docker → built-in runtime → (best-effort) Podman fallback
+- `builtin`: force built-in runtime only
+- `podman`: force Podman only
+
+### 3.4 Concurrency & Lifetime
+
+#### Cross-process mutual exclusion
+
+CrateBay must support **GUI + CLI** being used concurrently. To avoid two processes
+provisioning or starting the same VM at the same time, all runtime bring-up is
+guarded by a **cross-process lock**:
+
+- Lock file: `~/.cratebay/runtime/engine.lock` (under `CRATEBAY_DATA_DIR` if set)
+- Scope: provision + start + initial Docker wait loop
+- Behavior: second process waits for the lock, then re-checks Docker availability
+
+#### GUI exit does not stop the runtime
+
+The built-in runtime is treated as a **long-lived engine**. Closing the GUI does
+**not** automatically stop the runtime VM so that:
+
+- CLI can continue to manage containers/images after GUI is closed
+- Engine state survives app restarts (PID/socket recovery in runtime managers)
+
+Users can stop the runtime explicitly via `runtime_stop` (or the equivalent CLI).
 
 ---
 
@@ -276,19 +309,54 @@ App Launch
 | Linux | `~/.cratebay/runtime/docker.sock` |
 | Windows | `\\.\pipe\cratebay-docker` or `localhost:2375` |
 
-### 4.2 macOS: vsock to Unix Socket
+### 4.2 macOS: Reverse TCP (default) / vsock (optional)
+
+#### Default: reverse TCP forwarding
+
+On macOS, the runtime exposes the Docker API as a host Unix socket
+(`~/.cratebay/runtime/docker.sock`) by running a local proxy in the VZ runner:
+
+- Host binds a TCP listener (default port `6237`)
+- Guest-side agent dials back to the host listener and proxies to
+  `/var/run/docker.sock` inside the VM
+- Host proxies bytes between the Unix socket and the guest TCP connection
+
+```
+VM (guest)                             Host (macOS)
+Docker Engine                          cratebay-vz runner
+/var/run/docker.sock                   ~/.cratebay/runtime/docker.sock
+       │                                       │
+       └── cratebay-guest-agent ── TCP ─────→  tcp listener (0.0.0.0:6237)
+           proxies docker.sock                 proxies ↔ unix socket
+```
+
+This mode is the default because the current runtime image includes a guest
+agent that implements the dial-back behavior.
+
+#### Optional: vsock forwarding
+
+Vsock forwarding is supported as an opt-in mode for future runtime images that
+support it. When enabled, the host connects to the guest via
+`VZVirtioSocketDevice` and proxies to the host Unix socket.
+
+**Configuration (environment variables):**
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `CRATEBAY_RUNTIME_SOCKET_FORWARD` | Docker socket forwarding mode: `tcp` or `vsock` | `tcp` |
+| `CRATEBAY_DOCKER_PROXY_PORT` | Port used by `--tcp-forward` (host listener) or `--vsock-forward` (guest port) | `6237` |
+| `CRATEBAY_DOCKER_VSOCK_PORT` | Legacy alias for `CRATEBAY_DOCKER_PROXY_PORT` | — |
 
 ```
 VM (guest)                          Host (macOS)
 Docker Engine                       CrateBay Backend
 /var/run/docker.sock                ~/.cratebay/runtime/docker.sock
        │                                      │
-       └── socat UNIX-LISTEN:   ←── vsock ──→ socat creates
-           /var/run/docker.sock     (AF_VSOCK) Unix socket
-           (inside VM)                         on host
+       └── (optional) vsock proxy   ←── vsock ──→ host creates Unix socket
+           (inside VM)                (AF_VSOCK) on host
 ```
 
-The VM exposes its Docker socket via `VZVirtioSocketDevice` (vsock). A lightweight proxy on the host side creates a Unix socket that bollard can connect to.
+In both modes, bollard connects to the host Unix socket path.
 
 ### 4.3 Linux: QEMU Socket Forwarding
 
@@ -533,6 +601,22 @@ First App Launch
 | Linux (arm64) | vmlinuz + initrd + rootfs.qcow2 | ~400 MB |
 | Windows | WSL2 tar export | ~350 MB |
 
+### 8.4 Bundled Asset Layout (Desktop App)
+
+For "install-and-run" UX, the desktop app bundle should include runtime assets
+as resources so both **GUI and CLI** can provision the built-in runtime without
+external Docker dependencies:
+
+```
+resources/
+  runtime-images/    # kernel + initramfs (+ optional rootfs.img)
+  runtime-linux/     # Linux-only: qemu-system-* + lib/ + share/qemu/
+  runtime-wsl/       # Windows-only: WSL rootfs.tar for distro import
+```
+
+The runtime managers copy/install these assets into the per-user data dir on
+first run during `runtime.provision()`.
+
 ### 8.3 Image Contents
 
 The VM image is a minimal Alpine Linux with:
@@ -653,15 +737,18 @@ Priority 4: Start built-in runtime
 
 ### 10.2 Known Socket Paths
 
+CrateBay supports the common `DOCKER_HOST` formats:
+
+- `unix:///path/to/docker.sock` (macOS/Linux)
+- `tcp://host:port` (treated as `http://host:port`)
+- `http://host:port` / `https://host:port`
+- `npipe:////./pipe/docker_engine` (Windows)
+
+If `DOCKER_HOST` is set but Docker is not reachable, CrateBay logs a warning and
+continues with known socket paths.
+
 ```rust
 fn detect_external_docker() -> Option<PathBuf> {
-    // Check DOCKER_HOST first
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        if let Some(path) = parse_docker_host(&host) {
-            if path.exists() { return Some(path); }
-        }
-    }
-
     let home = dirs::home_dir()?;
 
     #[cfg(target_os = "macos")]
@@ -752,14 +839,16 @@ impl MacOSRuntime {
         // Network (NAT)
         let network = VZNATNetworkDeviceAttachment::new();
 
-        // Socket (vsock for Docker)
+        // Socket forwarding for Docker:
+        // - default: reverse TCP dial-back (no vsock device required)
+        // - optional: vsock forwarding (CRATEBAY_RUNTIME_SOCKET_FORWARD=vsock)
         let vsock = VZVirtioSocketDevice::new();
 
         Ok(VmConfiguration {
             boot_loader,
             cpu_count: self.config.cpu_cores,
             memory_size: self.config.memory_mb * 1024 * 1024,
-            devices: vec![disk, shared, network, vsock],
+            devices: vec![disk, shared, network, vsock], // vsock only when forwarding mode is vsock
         })
     }
 }
@@ -773,7 +862,7 @@ impl RuntimeManager for MacOSRuntime {
         // Wait for Docker inside VM to be ready
         self.wait_for_docker(Duration::from_secs(30)).await?;
 
-        // Set up vsock → Unix socket bridge
+        // Set up Docker socket forwarding (default: reverse TCP; optional: vsock)
         self.setup_socket_bridge().await?;
 
         Ok(())
@@ -1000,7 +1089,7 @@ impl RuntimeManager for WindowsRuntime {
 | Memory overhead | ~200 MB | ~200 MB | ~150 MB (shared) |
 | File sharing perf | Excellent (VirtioFS) | Excellent (VirtioFS) | Good (9P) |
 | Port forwarding | Automatic (NAT) | Manual (hostfwd) | Automatic (Win11) |
-| Docker socket | vsock → Unix | chardev → Unix | socat → pipe |
+| Docker socket | reverse TCP (default) / vsock → Unix | chardev → Unix | socat → pipe |
 | First-run download | ~400 MB | ~400 MB | ~350 MB |
 | Min OS version | macOS 13 | Kernel 5.10 | Win10 21H2 |
 
