@@ -80,9 +80,7 @@ fn start_runtime_health_monitor(
                 // Read the current docker_source to include in the event.
                 let source_str = {
                     let state = app_handle.state::<AppState>();
-                    state
-                        .get_docker_source()
-                        .map(|s| s.as_str().to_string())
+                    state.get_docker_source().map(|s| s.as_str().to_string())
                 };
                 let health = cratebay_core::runtime::HealthStatus {
                     runtime_state: cratebay_core::runtime::RuntimeState::Ready,
@@ -97,7 +95,9 @@ fn start_runtime_health_monitor(
             }
 
             // ── Slow path: shared client absent/unresponsive — full check ──
-            tracing::debug!("Health monitor: shared Docker unresponsive, running full health_check");
+            tracing::debug!(
+                "Health monitor: shared Docker unresponsive, running full health_check"
+            );
             let mut health = match runtime.health_check().await {
                 Ok(status) => status,
                 Err(e) => {

@@ -355,7 +355,10 @@ pub async fn connect_with_source() -> Result<(Docker, DockerSource), AppError> {
             if let Some(docker) =
                 try_connect_target(DockerHostTarget::UnixSocket(socket_str.to_string())).await
             {
-                tracing::info!("Connected via built-in runtime: {}", runtime_socket.display());
+                tracing::info!(
+                    "Connected via built-in runtime: {}",
+                    runtime_socket.display()
+                );
                 return Ok((docker, DockerSource::BuiltinRuntime));
             }
         }
