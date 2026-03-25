@@ -229,8 +229,8 @@ async fn try_connect_builtin(runtime: &dyn RuntimeManager) -> Option<Docker> {
         let socket = runtime.docker_socket_path();
         if socket.exists() {
             let socket_str = socket.to_str().unwrap_or_default();
-            if let Some(docker) =
-                Docker::connect_with_unix(socket_str, 5, bollard::API_DEFAULT_VERSION).ok()
+            if let Ok(docker) =
+                Docker::connect_with_unix(socket_str, 5, bollard::API_DEFAULT_VERSION)
             {
                 if crate::docker::is_available(&docker).await {
                     return Docker::connect_with_unix(
