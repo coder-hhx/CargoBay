@@ -182,21 +182,27 @@ describe("StatusBar", () => {
     });
   });
 
-  it("shows stopped status by default", () => {
+  it("shows disconnected status by default", () => {
     render(<StatusBar />);
-    expect(screen.getByText("未启动")).toBeInTheDocument();
+    expect(screen.getByText("未连接")).toBeInTheDocument();
   });
 
-  it("shows engine ready when runtime running and docker connected", () => {
+  it("shows engine ready when docker connected", () => {
     useAppStore.setState({ dockerConnected: true, runtimeStatus: "running" });
     render(<StatusBar />);
     expect(screen.getByText("引擎就绪")).toBeInTheDocument();
   });
 
-  it("shows connecting when runtime running but docker disconnected", () => {
-    useAppStore.setState({ runtimeStatus: "running" });
+  it("shows engine ready when docker connected regardless of runtimeStatus", () => {
+    useAppStore.setState({ dockerConnected: true, runtimeStatus: "stopped" });
     render(<StatusBar />);
-    expect(screen.getByText("连接中…")).toBeInTheDocument();
+    expect(screen.getByText("引擎就绪")).toBeInTheDocument();
+  });
+
+  it("shows starting when runtime is starting", () => {
+    useAppStore.setState({ runtimeStatus: "starting" });
+    render(<StatusBar />);
+    expect(screen.getByText("启动中…")).toBeInTheDocument();
   });
 
   it("shows version number", () => {
