@@ -1,6 +1,6 @@
 # Backend Specification
 
-> Version: 1.3.2 | Last Updated: 2026-03-25 | Author: architect
+> Version: 1.3.3 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -342,7 +342,17 @@ mod tests {
 ### 3.1 engine.rs — Container Engine Ensure
 
 `engine.rs` is the single entry-point used by both **GUI (Tauri)** and **CLI**
-to guarantee a responsive Docker client:
+to guarantee a responsive Docker client.
+
+**Runtime strategy for backend contributors and AI agents:**
+
+- The **built-in runtime** is the **primary product path**.
+- **Podman is fallback / escape hatch only**, not a co-equal roadmap track.
+- Container and image operations MUST stay on the **Docker-compatible API boundary** (`bollard`, Docker socket/host semantics).
+- When runtime, container, or image workflows break, fix the built-in runtime path first before expanding Podman-specific behavior.
+- Do **not** add Podman-specific product flows or architectural branches unless a human maintainer explicitly approves that work.
+
+Operational behavior:
 
 - Prefer **external Docker** when available (including `DOCKER_HOST`)
 - Otherwise **provision + start built-in runtime**, then wait for Docker
@@ -353,6 +363,8 @@ to guarantee a responsive Docker client:
   - `auto` (default): external Docker → built-in runtime → (best-effort) Podman fallback
   - `builtin`: force built-in runtime only (no Podman fallback)
   - `podman`: force Podman only (start Podman machine/service if needed)
+
+`CRATEBAY_ENGINE_PROVIDER` is a compatibility, recovery, testing, and operator-override mechanism. It does **not** change the product strategy: built-in runtime remains the default roadmap path, and Podman remains a secondary fallback mode.
 
 ```rust
 use bollard::Docker;

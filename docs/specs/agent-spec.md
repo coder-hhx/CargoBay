@@ -1,6 +1,6 @@
 # Agent Integration Specification
 
-> Version: 1.2.1 | Last Updated: 2026-03-23 | Author: frontend-architect
+> Version: 1.2.2 | Last Updated: 2026-03-25 | Author: frontend-architect
 
 ---
 
@@ -840,6 +840,8 @@ export const containerListTool: AgentTool<typeof ContainerListParams, ContainerL
 
 ## 5. Built-in Tools Catalog
 
+Container, image, shell, and system tools operate against CrateBay's **Docker-compatible control-plane boundary**. For runtime-related work, the **built-in runtime** is the primary product path; Podman is only a fallback / escape hatch and must not be treated as a parallel roadmap track by agents.
+
 ### 5.1 Container Tools
 
 | Tool | Description | Risk Level | Parameters |
@@ -891,7 +893,7 @@ export const containerListTool: AgentTool<typeof ContainerListParams, ContainerL
 
 | Tool | Description | Risk Level | Parameters |
 |------|-------------|-----------|------------|
-| `docker_status` | Check Docker daemon connectivity and version info | low | — |
+| `docker_status` | Check Docker daemon connectivity, version info, and engine source (`podman` means fallback / explicit override) | low | — |
 | `system_info` | Get host system information (OS, architecture, resources) | low | — |
 | `runtime_status` | Check CrateBay built-in container runtime status | low | — |
 

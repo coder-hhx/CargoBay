@@ -1,6 +1,6 @@
 # CrateBay 文档索引
 
-> 版本: 1.0.0 | 更新日期: 2026-03-20 | 作者: product-manager
+> 版本: 1.0.1 | 更新日期: 2026-03-25 | 作者: product-manager
 
 ---
 
@@ -44,15 +44,15 @@ docs/
 
 | # | 文档 | 版本 | 语言 | 用途 |
 |---|------|------|------|------|
-| 1 | [architecture.md](specs/architecture.md) | 1.0.0 | EN | 系统架构总览，crate 依赖关系，设计原则，跨平台策略 |
-| 2 | [frontend-spec.md](specs/frontend-spec.md) | 1.0.0 | EN | 前端技术规范：React/shadcn/Zustand 标准，页面架构，组件设计 |
-| 3 | [backend-spec.md](specs/backend-spec.md) | 1.0.0 | EN | 后端技术规范：Rust 编码规范，Tauri commands 设计，CLI 设计 |
-| 4 | [agent-spec.md](specs/agent-spec.md) | 1.0.0 | EN | Agent 集成规范：pi-agent-core 集成，工具定义，LLM Proxy |
-| 5 | [database-spec.md](specs/database-spec.md) | 1.0.0 | EN | 数据库设计：SQLite schema，迁移策略，加密方案 |
-| 6 | [runtime-spec.md](specs/runtime-spec.md) | 1.0.0 | EN | 内置容器运行时：VZ.framework/KVM/WSL2 设计 |
-| 7 | [api-spec.md](specs/api-spec.md) | 1.0.0 | EN | Tauri Commands API 完整目录，参数，返回值，错误定义 |
-| 8 | [mcp-spec.md](specs/mcp-spec.md) | 1.0.0 | EN | MCP Server + Client 规范，MCP Bridge 设计 |
-| 9 | [testing-spec.md](specs/testing-spec.md) | 1.0.0 | EN | 测试策略：测试金字塔，CI/CD 流水线，覆盖率要求 |
+| 1 | [architecture.md](specs/architecture.md) | 1.1.2 | EN | 系统架构总览，crate 依赖关系，设计原则，跨平台策略 |
+| 2 | [frontend-spec.md](specs/frontend-spec.md) | 1.2.5 | EN | 前端技术规范：React/shadcn/Zustand 标准，页面架构，组件设计 |
+| 3 | [backend-spec.md](specs/backend-spec.md) | 1.3.3 | EN | 后端技术规范：Rust 编码规范，Tauri commands 设计，CLI 设计 |
+| 4 | [agent-spec.md](specs/agent-spec.md) | 1.2.2 | EN | Agent 集成规范：pi-agent-core 集成，工具定义，LLM Proxy |
+| 5 | [database-spec.md](specs/database-spec.md) | 1.1.0 | EN | 数据库设计：SQLite schema，迁移策略，加密方案 |
+| 6 | [runtime-spec.md](specs/runtime-spec.md) | 1.2.5 | EN | 内置容器运行时：VZ.framework/KVM/WSL2 设计 |
+| 7 | [api-spec.md](specs/api-spec.md) | 1.5.3 | EN | Tauri Commands API 完整目录，参数，返回值，错误定义 |
+| 8 | [mcp-spec.md](specs/mcp-spec.md) | 1.1.0 | EN | MCP Server + Client 规范，MCP Bridge 设计 |
+| 9 | [testing-spec.md](specs/testing-spec.md) | 1.1.0 | EN | 测试策略：测试金字塔，CI/CD 流水线，覆盖率要求 |
 
 ---
 
@@ -72,8 +72,8 @@ docs/
 
 | # | 文档 | 版本 | 语言 | 用途 |
 |---|------|------|------|------|
-| 1 | [tech-decisions.md](references/tech-decisions.md) | 1.0.0 | EN | 技术决策记录（ADR 格式），12 个初始决策 |
-| 2 | [glossary.md](references/glossary.md) | 1.0.0 | EN | 术语表：项目核心概念和技术术语定义 |
+| 1 | [tech-decisions.md](references/tech-decisions.md) | 1.1.1 | EN | 技术决策记录（ADR 格式），13 个技术决策（含 runtime 策略 ADR-013） |
+| 2 | [glossary.md](references/glossary.md) | 1.0.1 | EN | 术语表：项目核心概念和技术术语定义 |
 
 ---
 
@@ -130,9 +130,10 @@ docs/
 
 | 文档 | 优先级 |
 |------|--------|
-| [runtime-spec.md](specs/runtime-spec.md) | 必读 |
+| [runtime-spec.md](specs/runtime-spec.md) | 必读（先读 §1.1 Product Runtime Strategy） |
 | [backend-spec.md](specs/backend-spec.md) | 必读 |
 | [architecture.md](specs/architecture.md) | 推荐 |
+| [tech-decisions.md](references/tech-decisions.md) | 推荐（ADR-013） |
 
 ### tester
 

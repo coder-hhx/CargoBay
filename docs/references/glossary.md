@@ -1,6 +1,6 @@
 # Glossary
 
-> Version: 1.0.0 | Last Updated: 2026-03-20 | Author: product-manager
+> Version: 1.0.1 | Last Updated: 2026-03-25 | Author: product-manager
 
 This glossary defines key terms used throughout CrateBay's documentation and codebase. All project documents should use these terms consistently.
 
@@ -130,7 +130,15 @@ The async runtime used by CrateBay's Rust backend. Provides the foundation for n
 
 ### Built-in Runtime
 
-CrateBay's zero-dependency container runtime that provisions a lightweight Linux VM with Docker inside, eliminating the need for users to install Docker Desktop separately. Platform implementations: VZ.framework (macOS), KVM/QEMU (Linux), WSL2 (Windows).
+CrateBay's zero-dependency container runtime that provisions a lightweight Linux VM with Docker inside, eliminating the need for users to install Docker Desktop separately. Platform implementations: VZ.framework (macOS), KVM/QEMU (Linux), WSL2 (Windows). This is the **primary product runtime path**.
+
+### Podman
+
+A Docker-compatible container engine that CrateBay may use as a **fallback / escape hatch** when the built-in runtime is unavailable, or when an operator explicitly forces `CRATEBAY_ENGINE_PROVIDER=podman`. Podman is a compatibility path, not a parallel product roadmap.
+
+### Engine Provider
+
+The runtime engine selection mode used by `cratebay-core/src/engine.rs`. Supported values are `auto`, `builtin`, and `podman`. Provider overrides affect connection behavior and recovery/testing flows, but do not change the product strategy that treats the built-in runtime as the primary path.
 
 ### VZ.framework
 

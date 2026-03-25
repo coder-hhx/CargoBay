@@ -1,7 +1,11 @@
 //! Podman (Docker-compatible) engine bring-up helpers.
 //!
 //! This module is used by [`crate::engine::ensure_docker`] when
-//! `CRATEBAY_ENGINE_PROVIDER=podman` is set.
+//! `CRATEBAY_ENGINE_PROVIDER=podman` is set, or as a fallback escape hatch when
+//! the built-in runtime cannot be brought up successfully.
+//!
+//! Podman support is a compatibility path, not a parallel product roadmap.
+//! CrateBay's primary runtime path remains the built-in runtime.
 //!
 //! Goal: provide a reachable Docker API endpoint backed by Podman and return a
 //! `bollard::Docker` client.

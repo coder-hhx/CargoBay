@@ -1,6 +1,6 @@
 # Technical Decision Records
 
-> Version: 1.0.0 | Last Updated: 2026-03-20 | Author: product-manager
+> Version: 1.1.1 | Last Updated: 2026-03-25 | Author: product-manager
 
 This document records Architecture Decision Records (ADRs) for the CrateBay v2 project. Each ADR captures a significant technical decision, the context that led to it, alternatives considered, and the consequences.
 
@@ -22,6 +22,7 @@ This document records Architecture Decision Records (ADRs) for the CrateBay v2 p
 | [ADR-010](#adr-010-defer-ollama-integration-to-v21) | Defer Ollama Integration to v2.1+ | Accepted |
 | [ADR-011](#adr-011-mcp-server--client-dual-support) | MCP Server + Client Dual Support | Accepted |
 | [ADR-012](#adr-012-use-streamdown-for-streaming-markdown) | Use Streamdown for Streaming Markdown | Accepted |
+| [ADR-013](#adr-013-keep-built-in-runtime-as-the-product-path) | Keep Built-in Runtime as the Product Path | Accepted |
 
 ---
 
@@ -137,6 +138,8 @@ Bundle a built-in container runtime that provisions a lightweight Linux VM with 
 - **Windows**: WSL2
 
 Fall back to detecting an existing Docker installation if the built-in runtime is unavailable.
+
+**Later clarification:** ADR-013 keeps this decision as the product baseline and clarifies that Podman remains a fallback / escape hatch rather than a parallel product roadmap.
 
 ### Alternatives Considered
 
@@ -427,6 +430,53 @@ Use Streamdown (by Vercel) for streaming markdown rendering in the chat UI.
 - **Positive**: Maintained by Vercel; aligned with the React ecosystem.
 - **Negative**: Relatively new library; fewer community resources and examples.
 - **Negative**: Bundle size impact (to be validated against dependency budget).
+
+---
+
+## ADR-013: Keep Built-in Runtime as the Product Path
+
+- **Status**: Accepted
+- **Date**: 2026-03-25
+
+### Context
+
+CrateBay's container and image management stack has seen frequent development-time issues while the built-in runtime, engine orchestration, and cross-platform Docker host handling are still being stabilized. This created a recurring question: should CrateBay stop investing in the built-in runtime and switch to Podman as the primary runtime instead?
+
+The repository already contains a multi-provider engine layer (`external Docker` / `built-in runtime` / `Podman`) and a Docker-compatible control plane built around `bollard`. Without an explicit decision record, AI agents may incorrectly treat Podman and the built-in runtime as two equal roadmap tracks and keep expanding both.
+
+### Decision
+
+CrateBay keeps the **built-in runtime** as the **primary product runtime** and the **only first-class roadmap path**.
+
+Podman remains supported only as a **fallback / escape hatch**, specifically for:
+
+1. temporary recovery when the built-in runtime is unavailable,
+2. development or CI environments that need a quick Docker-compatible engine,
+3. explicitly requested host or enterprise constraints.
+
+The implementation rules are:
+
+- Container and image management continue to target the **Docker-compatible API boundary** (`bollard`, Docker socket/host semantics).
+- AI agents and contributors must **fix the built-in runtime path first** when runtime-related issues appear.
+- Do **not** introduce Podman-specific product features, product flows, or architectural branches unless a human explicitly approves that work.
+- Podman support is maintained as a **compatibility layer**, not as a second product strategy.
+
+### Alternatives Considered
+
+| Alternative | Reason for Rejection |
+|-------------|---------------------|
+| Make Podman the default runtime | Weakens the zero-dependency product story; shifts lifecycle complexity to Podman installation and machine management; does not remove major cross-platform complexity on macOS/Windows |
+| Maintain built-in runtime and Podman as equal first-class tracks | Doubles testing and product-surface complexity; encourages AI agents to expand both paths; slows stabilization of the primary runtime |
+| Remove Podman support immediately | Removes a useful fallback for development, CI, and recovery scenarios before the built-in runtime has fully matured |
+
+### Consequences
+
+- **Positive**: Keeps the product story clear -- install CrateBay and get containers out of the box.
+- **Positive**: Gives AI agents an unambiguous rule for runtime-related work, reducing accidental roadmap drift.
+- **Positive**: Focuses engineering effort on stabilizing one primary runtime path while preserving a pragmatic fallback.
+- **Negative**: The project still carries some multi-provider complexity in `engine.rs`.
+- **Negative**: Podman compatibility must still be maintained enough to remain a reliable fallback.
+- **Negative**: Teams must resist adding convenient Podman-specific workarounds that bypass built-in runtime issues instead of fixing them.
 
 ---
 

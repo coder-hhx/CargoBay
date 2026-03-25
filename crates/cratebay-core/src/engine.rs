@@ -2,8 +2,8 @@
 //!
 //! This module provides a single, shared entry-point used by both the GUI and
 //! CLI to ensure a responsive Docker client:
-//! - Prefer external Docker when available
-//! - Otherwise start/provision the built-in runtime and wait for Docker
+//! - Reuse any reachable Docker first (external Docker or an already-running runtime)
+//! - Otherwise start/provision the built-in runtime, which is the primary product path
 //! - Use a cross-process lock to avoid concurrent provision/start (GUI + CLI)
 
 use std::fs::{File, OpenOptions};
@@ -56,7 +56,9 @@ enum EngineProvider {
     Auto,
     /// Force starting/using the built-in runtime.
     BuiltIn,
-    /// Use Podman (and optionally start Podman machine) as the Docker-compatible backend.
+    /// Fallback: use Podman (and optionally start Podman machine) as the
+    /// Docker-compatible backend when the built-in runtime is unavailable or
+    /// when it is explicitly requested via `CRATEBAY_ENGINE_PROVIDER=podman`.
     Podman,
 }
 

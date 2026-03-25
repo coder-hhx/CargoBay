@@ -1,6 +1,6 @@
 # Frontend Specification
 
-> Version: 1.2.4 | Last Updated: 2026-03-23 | Author: frontend-architect
+> Version: 1.2.5 | Last Updated: 2026-03-25 | Author: frontend-architect
 
 ---
 
@@ -317,6 +317,7 @@ interface Notification {
 
 - Initial values come from `docker_status` + `runtime_status` on app startup.
 - Ongoing updates come from the global `runtime:health` event (every ~30s).
+- `docker_status.source = "built-in"` is the normal product path. `docker_status.source = "podman"` indicates fallback / explicit override semantics and should not be presented as a separate first-class runtime mode in the UI.
 - To avoid transient UI flicker (e.g., brief ping misses), the UI applies a downgrade grace window (`RUNTIME_HEALTH_DOWNGRADE_GRACE_MS`, default 90s) before showing `running → starting`.
 
 ### 4.2 chatStore

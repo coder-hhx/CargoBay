@@ -1,6 +1,6 @@
 # Tauri Commands API Specification
 
-> Version: 1.5.2 | Last Updated: 2026-03-24 | Author: architect
+> Version: 1.5.3 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -1577,6 +1577,14 @@ pub async fn mcp_export_client_config(
 
 ### 3.5 System Commands
 
+**Runtime strategy for API consumers and AI agents:**
+
+- The **built-in runtime** is the **primary product path**.
+- **Podman is a fallback / escape hatch** and must not be treated as a co-equal roadmap track.
+- System/runtime APIs continue to expose a **Docker-compatible control-plane** even when the active engine source is external Docker, built-in runtime, or Podman.
+- `runtime_start` and `runtime_stop` are product APIs for the built-in runtime lifecycle.
+- `docker_status.source = "podman"` indicates a compatibility fallback or explicit operator override, not a change in product strategy.
+
 #### `docker_status`
 
 Get current Docker connection status.
@@ -1603,6 +1611,12 @@ pub struct DockerStatus {
     pub socket_path: Option<String>,
 }
 ```
+
+**`source` semantics:**
+- `external` — Connected to an already-available external Docker endpoint.
+- `built-in` — Connected to CrateBay's built-in runtime; this is the primary product path.
+- `podman` — Connected to a Docker-compatible Podman endpoint as fallback or explicit override.
+- `none` — No responsive Docker-compatible engine is currently connected.
 
 ---
 
@@ -1664,18 +1678,19 @@ pub async fn runtime_start(
 - `"Runtime started but Docker not yet responsive"` — VM started but Docker didn't respond within the 45-second timeout.
 
 **Behavior:**
-1. Loads persisted Runtime HTTP Proxy settings from the `settings` table.
-2. Applies proxy settings to process environment variables:
+1. This command is for the **built-in runtime lifecycle**. It does not promote Podman to a first-class product runtime.
+2. Loads persisted Runtime HTTP Proxy settings from the `settings` table.
+3. Applies proxy settings to process environment variables:
    - `CRATEBAY_RUNTIME_HTTP_PROXY`
    - `CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE`
    - `CRATEBAY_RUNTIME_HTTP_PROXY_BIND_HOST`
    - `CRATEBAY_RUNTIME_HTTP_PROXY_BIND_PORT`
    - `CRATEBAY_RUNTIME_HTTP_PROXY_GUEST_HOST`
-3. Detects the current runtime state via `runtime.detect()`.
-4. If state is `None`, provisions the runtime (downloads VM image) with logging callbacks.
-5. Starts the runtime VM via `runtime.start()`.
-6. Polls the Docker socket for up to 45 seconds.
-7. On successful Docker connection, updates `AppState.docker` with the new client.
+4. Detects the current runtime state via `runtime.detect()`.
+5. If state is `None`, provisions the runtime (downloads VM image) with logging callbacks.
+6. Starts the runtime VM via `runtime.start()`.
+7. Polls the Docker socket for up to 45 seconds.
+8. On successful Docker connection, updates `AppState.docker` with the new client.
 
 **Errors:** `AppError::Runtime`
 
@@ -1699,10 +1714,11 @@ pub async fn runtime_stop(
 - `"Runtime stopped"` — Stopped, no external Docker available.
 
 **Behavior:**
-1. Stops the runtime VM via `runtime.stop()`.
-2. Clears `AppState.docker` (sets to `None`).
-3. Attempts `docker::try_connect()` to discover external Docker installations.
-4. If an external Docker is found, updates `AppState.docker` with the external client.
+1. This command stops the **built-in runtime** only.
+2. Stops the runtime VM via `runtime.stop()`.
+3. Clears `AppState.docker` (sets to `None`).
+4. Attempts `docker::try_connect()` to discover external Docker installations.
+5. If an external Docker is found, updates `AppState.docker` with the external client.
 
 **Errors:** `AppError::Runtime`
 

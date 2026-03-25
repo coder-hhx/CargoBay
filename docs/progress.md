@@ -1,10 +1,17 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **阶段**: 开发阶段 (Phase 2) — Engine ensure + runtime socket forwarding + Podman fallback
+- **阶段**: 开发阶段 (Phase 2) — Engine ensure + runtime socket forwarding 稳定化（built-in runtime 主线 / Podman fallback）
 - **日期**: 2026-03-25
 - **团队模式**: 开发阶段 6 人团队（见 agent-team-workflow.md §1.1）
 - **Git HEAD**: `rewrite/v2` 分支
+
+## Runtime 策略（AI 必读）
+- **built-in runtime 是唯一主线**：后续 runtime、container、image 相关开发默认优先修这条链路
+- **Podman 只是 fallback / escape hatch**：仅用于兼容恢复、开发/CI 应急、或用户明确要求的特殊环境
+- **不要把 Podman 当第二主线继续扩写**：非人工明确批准，不新增 Podman 专属产品能力或分叉架构
+- **控制面边界保持 Docker-compatible**：继续围绕 `bollard`、Docker socket/host 语义实现
+- **恢复会话时必须先读**：`AGENTS.md`、`docs/specs/runtime-spec.md`、`docs/references/tech-decisions.md` 中的 runtime 策略
 
 ## 已完成 ✅
 - [x] Step 0: 分支准备 (v1-archive tag, rewrite/v2 分支, 旧代码清理) — 2026-03-20
@@ -169,14 +176,15 @@ pnpm run test               → ✅ 4 passed (Vitest)
 ## 待开始 📋
 
 ### 任务 E: Spec 文档对齐更新 🔴 优先
-- ✅ api-spec.md: 增加 engine ensure 说明 + docker_status.source=podman（已更新至 v1.5.2）
-- ✅ runtime-spec.md: engine ensure flow + 资产打包布局 + macOS socket forward 默认 tcp（已更新至 v1.2.4）
-- ✅ frontend-spec.md: runtime 健康降级宽限 + containerStore 类型对齐（已更新至 v1.2.2）
+- ✅ api-spec.md: 增加 engine ensure 说明 + docker_status.source=podman + runtime 主线策略语义（已更新至 v1.5.3）
+- ✅ runtime-spec.md: engine ensure flow + 资产打包布局 + macOS socket forward 默认 tcp + runtime 主线策略（已更新至 v1.2.5）
+- ✅ frontend-spec.md: runtime 健康降级宽限 + containerStore 类型对齐 + `docker_status.source` 的 built-in/podman 语义约束（已更新至 v1.2.5）
 - 🔴 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段（待补充/确认）
-- ✅ backend-spec.md: engine ensure + Provider 覆盖 + EnsureOptions 字段对齐（已更新至 v1.3.2）
+- ✅ backend-spec.md: engine ensure + Provider 覆盖 + EnsureOptions 字段对齐 + runtime 主线策略（已更新至 v1.3.3）
 - 🔴 ImagesPage: 是否保留？（代码存在但 spec 未定义，需人工决定）
 
-### 任务 F: 自研 Runtime 移植实施 🔴 优先
+### 任务 F: 自研 Runtime 稳定化/移植实施 🔴 优先
+- 策略前提：**built-in runtime 为主线，Podman 仅为 fallback**
 - Phase 1: 基础设施（images.rs, fsutil.rs, store 兼容层）~900 行
 - Phase 2: 核心 Runtime（common.rs + 重写 macos/linux/windows.rs）~3500 行
 - Phase 3: 集成（mod.rs + main.rs + system.rs 适配）~300 行
@@ -202,21 +210,21 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 | 文档 | 版本 | 路径 |
 |------|------|------|
-| architecture.md | **1.1.1** | docs/specs/architecture.md |
-| backend-spec.md | **1.3.2** | docs/specs/backend-spec.md |
-| runtime-spec.md | **1.2.4** | docs/specs/runtime-spec.md |
-| api-spec.md | **1.5.2** | docs/specs/api-spec.md |
+| architecture.md | **1.1.2** | docs/specs/architecture.md |
+| backend-spec.md | **1.3.3** | docs/specs/backend-spec.md |
+| runtime-spec.md | **1.2.5** | docs/specs/runtime-spec.md |
+| api-spec.md | **1.5.3** | docs/specs/api-spec.md |
 | database-spec.md | **1.1.0** | docs/specs/database-spec.md |
-| frontend-spec.md | **1.2.2** | docs/specs/frontend-spec.md |
-| agent-spec.md | **1.2.0** | docs/specs/agent-spec.md |
+| frontend-spec.md | **1.2.5** | docs/specs/frontend-spec.md |
+| agent-spec.md | **1.2.2** | docs/specs/agent-spec.md |
 | mcp-spec.md | **1.1.0** | docs/specs/mcp-spec.md |
 | testing-spec.md | **1.1.0** | docs/specs/testing-spec.md |
 | dev-workflow.md | 1.0.0 | docs/workflow/dev-workflow.md |
 | agent-team-workflow.md | 1.0.0 | docs/workflow/agent-team-workflow.md |
 | knowledge-base.md | 1.0.0 | docs/workflow/knowledge-base.md |
-| tech-decisions.md | 1.0.0 | docs/references/tech-decisions.md |
-| glossary.md | 1.0.0 | docs/references/glossary.md |
-| docs/README.md | 1.0.0 | docs/README.md |
+| tech-decisions.md | **1.1.1** | docs/references/tech-decisions.md |
+| glossary.md | **1.0.1** | docs/references/glossary.md |
+| docs/README.md | **1.0.1** | docs/README.md |
 | progress.md | — | docs/progress.md (this file) |
 
 ---
@@ -236,15 +244,23 @@ pnpm run test               → ✅ 4 passed (Vitest)
 ### 规则 2: 按 spec 执行
 所有开发工作严格遵循 `docs/specs/` 下的 spec 文档，spec 是唯一的真理来源。
 
+### 规则 3: Runtime 策略固定
+- built-in runtime 是产品主线
+- Podman 只作为 fallback / escape hatch
+- runtime、container、image 相关问题，优先修 built-in runtime 主链路
+- 非人工明确批准，不新增 Podman-only 产品能力或把 Podman 提升为默认路径
+
 ---
 
 ## 下次继续（Quick Resume）
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：GUI 稳定性修复 + Spec 对齐 + 自研 Runtime 移植（2026-03-22）
+### 当前阶段：GUI 稳定性修复 + Spec 对齐 + 自研 Runtime 稳定化/移植（2026-03-25）
 
 Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基本集成完成。当前有若干 GUI 稳定性问题需要修复。
+
+**执行约束：** built-in runtime 是主线；Podman 仅作 fallback。新会话恢复后，不要把 Podman 当成并行主路线继续扩展。
 
 ### 优先修复项（阻塞用户体验）
 1. **状态栏不稳定** — runtime 状态会从"引擎就绪"跳到"启动中"。已有后端（health_check 保持 Ready）和前端（runtime:health 防降级）修复，但仍有复现。可能的原因：
@@ -264,9 +280,10 @@ Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基
 ```
 1. 读取 AGENTS.md + 本文件（progress.md）
 2. 按"用户永久规则"创建 cratebay-dev 固定团队
-3. 询问用户上述决策项
-4. 优先修复状态栏稳定性问题
-5. 根据用户决定，执行：
+3. 先确认并遵守 runtime 策略：built-in runtime 主线，Podman fallback
+4. 询问用户上述决策项
+5. 优先修复状态栏稳定性问题
+6. 根据用户决定，执行：
 
    任务 G — 状态栏稳定性修复:
    - 排查 health monitor 为何 Docker ping 仍失败
@@ -279,7 +296,7 @@ Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基
    c. 更新 backend-spec.md: AppState.docker 新类型 + 命令分组
    d. 版本号递增
 
-   任务 F — 自研 Runtime 移植（分配给 runtime-dev + backend-dev）:
+   任务 F — 自研 Runtime 稳定化/移植（分配给 runtime-dev + backend-dev）:
    Phase 1: 基础设施移植
    Phase 2: 核心 Runtime 重写
    Phase 3: 集成
@@ -288,7 +305,7 @@ Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基
    任务 D — 修复 pre-commit 钩子:
    - `.githooks/pre-commit` 行 289-290 的 cratebay-cli --lib 问题
 
-6. 完成后更新本文件
+7. 完成后更新本文件
 ```
 
 ### Runtime 移植方案概要（来自 runtime-dev 分析）

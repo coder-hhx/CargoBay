@@ -1,6 +1,6 @@
 # AGENTS.md — CrateBay v2 Project Guide
 
-> **Version**: 2.0.0-rewrite | **Branch**: `rewrite/v2` | **Last Updated**: 2026-03-20
+> **Version**: 2.0.1-rewrite | **Branch**: `rewrite/v2` | **Last Updated**: 2026-03-25
 >
 > This file is the **entry point** for all AI Agents working on this project.
 > Detailed specs are in `docs/specs/` — load them on-demand based on your task (see Spec Loading Protocol below).
@@ -17,6 +17,31 @@
 - **Built-in container runtime** — no external Docker installation required
 - **Platforms**: macOS, Windows, Linux
 - **License**: MIT
+
+---
+
+## Runtime Strategy for AI Agents (CRITICAL)
+
+This repository has a **single runtime roadmap**:
+
+- **Built-in runtime is the primary product path** across macOS, Linux, and Windows.
+- **Podman is a fallback / escape hatch**, not a co-equal roadmap track.
+- **Do not add Podman-specific product features** unless a human explicitly requests and approves them.
+- **When container or image management breaks, fix the built-in runtime path first** (runtime lifecycle, engine orchestration, Docker-compatible API boundary) before expanding Podman behavior.
+- **Keep the control-plane boundary Docker-compatible** (`bollard`, Docker socket/host semantics) even when the underlying engine is built-in runtime, external Docker, or Podman.
+- **Read `docs/specs/runtime-spec.md` and `docs/references/tech-decisions.md` before changing runtime, engine, container, or image code.**
+
+Use Podman only for:
+
+1. compatibility fallback when built-in runtime is unavailable,
+2. development / CI recovery paths,
+3. explicitly requested enterprise or host-environment constraints.
+
+Non-goals for routine development:
+
+- making Podman the default runtime,
+- building a second first-class product surface around Podman,
+- adding workarounds that increase long-term multi-engine complexity without clear user value.
 
 ---
 

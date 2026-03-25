@@ -1,6 +1,6 @@
 # System Architecture
 
-> Version: 1.1.1 | Last Updated: 2026-03-24 | Author: architect
+> Version: 1.1.2 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -475,6 +475,10 @@ The backend attempts Docker connections in priority order:
 ### 9.1 Design Goal
 
 Users install CrateBay and run containers immediately — no Docker Desktop, no Colima, no manual configuration.
+
+**Runtime strategy:** the built-in runtime is CrateBay's primary product path across macOS, Linux, and Windows. Podman is a secondary compatibility fallback / escape hatch, not a co-equal roadmap track. The control-plane boundary remains Docker-compatible (`bollard`, Docker socket/host semantics) regardless of whether the active engine source is external Docker, the built-in runtime, or Podman fallback.
+
+See [runtime-spec.md](runtime-spec.md) §1.1 for the product runtime strategy and [tech-decisions.md](../references/tech-decisions.md) ADR-013 for the decision record.
 
 ### 9.2 Platform Implementations
 

@@ -1,6 +1,6 @@
 # Built-in Container Runtime Specification
 
-> Version: 1.2.4 | Last Updated: 2026-03-25 | Author: architect
+> Version: 1.2.5 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -29,6 +29,24 @@ CrateBay ships a **built-in container runtime** so that users can install the ap
 **Note:** If Podman is already installed, CrateBay may optionally use it as a
 Docker-compatible engine fallback to keep the product usable when the built-in
 runtime is temporarily unavailable.
+
+### 1.1 Product Runtime Strategy
+
+CrateBay has a **single runtime roadmap**:
+
+- The **built-in runtime** is the **primary product path** across macOS, Linux, and Windows.
+- **Podman is a fallback / escape hatch**, not a co-equal roadmap track.
+- Container and image management MUST continue to target the **Docker-compatible API boundary** (`bollard`, Docker socket/host semantics).
+- When runtime-related issues occur, contributors SHOULD fix the built-in runtime path first before expanding Podman-specific behavior.
+- Podman-specific product features, product flows, or architectural branches are **out of scope** unless explicitly approved by a human maintainer.
+
+Podman remains useful for:
+
+1. temporary recovery when the built-in runtime is unavailable,
+2. development or CI environments needing a quick Docker-compatible engine,
+3. explicitly requested host or enterprise constraints.
+
+This strategy keeps CrateBay aligned with its zero-dependency product goal while preserving a pragmatic compatibility fallback.
 
 ### Key Requirements
 
@@ -274,6 +292,8 @@ App Launch / First Docker Operation (GUI or CLI)
 - `auto` (default): external Docker → built-in runtime → (best-effort) Podman fallback
 - `builtin`: force built-in runtime only
 - `podman`: force Podman only
+
+`CRATEBAY_ENGINE_PROVIDER` exists for compatibility, recovery, testing, and explicit operator choice. It does **not** change the product strategy: the built-in runtime remains the default roadmap path, and Podman remains a secondary fallback mode.
 
 ### 3.4 Concurrency & Lifetime
 
