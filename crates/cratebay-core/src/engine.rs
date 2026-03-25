@@ -34,6 +34,10 @@ pub struct EnsureOptions {
     pub podman_start_timeout: Duration,
     /// Optional callback invoked during runtime provisioning.
     pub on_provision_progress: Option<Box<dyn Fn(runtime::ProvisionProgress) + Send>>,
+    /// When `false` (default), only attempt the CrateBay built-in runtime.
+    /// When `true`, also try external Docker daemons (Colima, Docker Desktop,
+    /// etc.) as a fallback when the built-in runtime is unavailable.
+    pub allow_external_docker: bool,
 }
 
 impl Default for EnsureOptions {
@@ -46,6 +50,7 @@ impl Default for EnsureOptions {
             runtime_provision_timeout: Duration::from_secs(30 * 60),
             podman_start_timeout: Duration::from_secs(120),
             on_provision_progress: None,
+            allow_external_docker: false,
         }
     }
 }
@@ -80,11 +85,13 @@ fn engine_provider_from_env() -> EngineProvider {
 
 /// Ensure a responsive Docker client, starting the built-in runtime if needed.
 ///
-/// Behavior:
-/// 1) Try to connect to any reachable Docker (external or already-running runtime).
-/// 2) If unavailable, acquire a cross-process lock and retry.
-/// 3) If still unavailable, detect/provision/start the built-in runtime.
-/// 4) Wait for Docker to respond, then connect and return a shared client.
+/// When `options.allow_external_docker` is `false` (default), only the
+/// CrateBay built-in runtime is used — external Docker daemons (Colima,
+/// Docker Desktop, etc.) are skipped.
+///
+/// When `allow_external_docker` is `true`, the original auto-detection order
+/// is used: try any reachable Docker first, then bring up the built-in runtime
+/// if needed.
 pub async fn ensure_docker(
     runtime: &dyn RuntimeManager,
     options: EnsureOptions,
@@ -97,6 +104,7 @@ pub async fn ensure_docker(
         runtime_provision_timeout,
         podman_start_timeout,
         on_provision_progress,
+        allow_external_docker,
     } = options;
 
     let provider = engine_provider_from_env();
@@ -108,17 +116,31 @@ pub async fn ensure_docker(
         return Ok(Arc::new(docker));
     }
 
-    if provider == EngineProvider::Auto {
+    // Auto mode with external Docker allowed: try any reachable Docker first.
+    if provider == EngineProvider::Auto && allow_external_docker {
         if let Some(docker) = try_connect_any(runtime).await {
+            return Ok(Arc::new(docker));
+        }
+    }
+
+    // Auto mode without external Docker, or BuiltIn mode:
+    // only try the built-in runtime socket (skip external sockets).
+    if provider == EngineProvider::Auto && !allow_external_docker {
+        if let Some(docker) = try_connect_builtin(runtime).await {
             return Ok(Arc::new(docker));
         }
     }
 
     let _lock = acquire_engine_lock(lock_wait_timeout).await?;
 
-    // Another process may have started Docker while we were waiting.
-    if provider == EngineProvider::Auto {
+    // Another process may have started Docker while we were waiting — re-check.
+    if provider == EngineProvider::Auto && allow_external_docker {
         if let Some(docker) = try_connect_any(runtime).await {
+            return Ok(Arc::new(docker));
+        }
+    }
+    if provider == EngineProvider::Auto && !allow_external_docker {
+        if let Some(docker) = try_connect_builtin(runtime).await {
             return Ok(Arc::new(docker));
         }
     }
@@ -157,11 +179,9 @@ pub async fn ensure_docker(
     .await;
 
     if let Err(e) = bringup_result {
-        // If the built-in runtime failed to start/provision, try Podman as a
-        // pragmatic fallback in Auto mode. This keeps CrateBay usable on
-        // machines where our built-in runtime is temporarily broken but Podman
-        // is available.
-        if provider == EngineProvider::Auto {
+        // If the built-in runtime failed, try Podman as a pragmatic fallback
+        // only in Auto+allow_external mode.
+        if provider == EngineProvider::Auto && allow_external_docker {
             if let Ok(docker) = podman::ensure_podman_docker(podman_start_timeout).await {
                 tracing::warn!(
                     "Built-in runtime bring-up failed ({}); falling back to Podman",
@@ -169,10 +189,7 @@ pub async fn ensure_docker(
                 );
                 return Ok(Arc::new(docker));
             }
-        }
-
-        // Final fallback: external Docker may have appeared while we were provisioning.
-        if provider == EngineProvider::Auto {
+            // Final fallback: external Docker may have appeared while provisioning.
             if let Some(docker) = try_connect_any(runtime).await {
                 return Ok(Arc::new(docker));
             }
@@ -183,7 +200,7 @@ pub async fn ensure_docker(
     match wait_for_docker(runtime, docker_wait_timeout).await {
         Ok(docker) => Ok(Arc::new(docker)),
         Err(e) => {
-            if provider == EngineProvider::Auto {
+            if provider == EngineProvider::Auto && allow_external_docker {
                 if let Ok(docker) = podman::ensure_podman_docker(podman_start_timeout).await {
                     tracing::warn!(
                         "Timed out waiting for built-in runtime Docker ({}); falling back to Podman",
@@ -191,9 +208,6 @@ pub async fn ensure_docker(
                     );
                     return Ok(Arc::new(docker));
                 }
-            }
-
-            if provider == EngineProvider::Auto {
                 if let Some(docker) = try_connect_any(runtime).await {
                     return Ok(Arc::new(docker));
                 }
@@ -206,6 +220,38 @@ pub async fn ensure_docker(
 // ---------------------------------------------------------------------------
 // Connection helpers
 // ---------------------------------------------------------------------------
+
+/// Try to connect to the CrateBay built-in runtime only (skip external Docker).
+async fn try_connect_builtin(runtime: &dyn RuntimeManager) -> Option<Docker> {
+    // Unix socket path (macOS / Linux socket mode)
+    #[cfg(unix)]
+    {
+        let socket = runtime.docker_socket_path();
+        if socket.exists() {
+            let socket_str = socket.to_str().unwrap_or_default();
+            if let Some(docker) = Docker::connect_with_unix(
+                socket_str,
+                5,
+                bollard::API_DEFAULT_VERSION,
+            )
+            .ok()
+            {
+                if crate::docker::is_available(&docker).await {
+                    return Docker::connect_with_unix(
+                        socket_str,
+                        120,
+                        bollard::API_DEFAULT_VERSION,
+                    )
+                    .ok();
+                }
+            }
+        }
+    }
+
+    // TCP endpoint (Linux KVM / Windows WSL2)
+    let docker = connect_runtime_docker(runtime).ok()?;
+    crate::docker::is_available(&docker).await.then_some(docker)
+}
 
 async fn try_connect_any(runtime: &dyn RuntimeManager) -> Option<Docker> {
     if let Some(docker) = crate::docker::try_connect().await {

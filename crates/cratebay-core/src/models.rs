@@ -48,6 +48,33 @@ pub struct ContainerListFilters {
     pub name: Option<String>,
     pub image: Option<String>,
     pub label: Option<HashMap<String, String>>,
+    /// When `true`, only return containers with the
+    /// `com.cratebay.sandbox.managed=true` label (created by CrateBay).
+    /// When `false` or `None`, return all containers.
+    pub managed_only: Option<bool>,
+}
+
+/// Identifies which Docker backend a connection was established through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DockerSource {
+    /// CrateBay built-in VM runtime (VZ / KVM / WSL2).
+    BuiltinRuntime,
+    /// Colima — a popular macOS/Linux Docker daemon wrapper.
+    Colima,
+    /// Any other external Docker daemon (Docker Desktop, Podman socket, etc.).
+    External,
+}
+
+impl DockerSource {
+    /// Return the canonical string tag sent in Tauri events.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DockerSource::BuiltinRuntime => "builtin",
+            DockerSource::Colima => "colima",
+            DockerSource::External => "other",
+        }
+    }
 }
 
 /// Request to create a new container.

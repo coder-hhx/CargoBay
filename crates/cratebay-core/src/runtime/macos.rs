@@ -64,7 +64,7 @@ const HEALTH_PING_CONNECT_TIMEOUT_SECS: u64 = 8;
 
 /// Consecutive failed health-check cycles required before degrading
 /// from `Ready` to `Starting`.
-const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 2;
+const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 3;
 
 /// Grace period for SIGTERM before escalating to SIGKILL.
 const STOP_GRACE_PERIOD: Duration = Duration::from_secs(15);
@@ -1537,6 +1537,7 @@ impl RuntimeManager for MacOSRuntime {
             docker_version,
             uptime_seconds,
             last_check: chrono::Utc::now().to_rfc3339(),
+            docker_source: None,
         })
     }
 

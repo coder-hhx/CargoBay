@@ -47,6 +47,10 @@ interface ContainerState {
 
   // Computed
   filteredContainers: () => ContainerInfo[];
+  /** Containers created by CrateBay (have com.cratebay.sandbox.managed=true label) */
+  managedContainers: () => ContainerInfo[];
+  /** Containers NOT created by CrateBay (Colima, Docker Desktop, etc.) */
+  externalContainers: () => ContainerInfo[];
 }
 
 export const useContainerStore = create<ContainerState>()((set, get) => ({
@@ -464,5 +468,17 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
       }
       return true;
     });
+  },
+
+  managedContainers: () => {
+    return get().containers.filter(
+      (c) => c.labels?.["com.cratebay.sandbox.managed"] === "true"
+    );
+  },
+
+  externalContainers: () => {
+    return get().containers.filter(
+      (c) => c.labels?.["com.cratebay.sandbox.managed"] !== "true"
+    );
   },
 }));

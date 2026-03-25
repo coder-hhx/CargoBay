@@ -23,7 +23,11 @@ use state::AppState;
 ///
 /// This uses the already-connected client instead of creating a new connection
 /// each time, and retries briefly to smooth transient socket jitter.
-async fn is_shared_docker_responsive(app_handle: &tauri::AppHandle) -> bool {
+///
+/// Returns `Some(Arc<Docker>)` if the shared client is responsive, `None` otherwise.
+async fn get_responsive_shared_docker(
+    app_handle: &tauri::AppHandle,
+) -> Option<Arc<bollard::Docker>> {
     let docker = {
         let state = app_handle.state::<AppState>();
         let guard = match state.docker.lock() {
@@ -33,42 +37,67 @@ async fn is_shared_docker_responsive(app_handle: &tauri::AppHandle) -> bool {
                     "Failed to lock Docker state for health reconciliation: {}",
                     e
                 );
-                return false;
+                return None;
             }
         };
         guard.clone()
-    };
+    }?;
 
-    let Some(docker) = docker else {
-        return false;
-    };
-
-    for attempt in 0..3 {
+    // 5 retries at 200 ms gives ~800 ms total — enough to absorb brief socket
+    // proxy restarts without meaningfully delaying the health event.
+    for attempt in 0..5u8 {
         if docker.ping().await.is_ok() {
-            return true;
+            return Some(docker);
         }
-        if attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(300)).await;
+        if attempt < 4 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
 
-    false
+    None
 }
 
 /// Start runtime health monitor in Tauri async runtime.
 ///
-/// Compared to the core-layer monitor thread, this version can reconcile
-/// transient degraded health results against AppState's shared Docker client
-/// before emitting `runtime:health`, reducing Ready→Starting flicker.
+/// Strategy (shared-client-first):
+/// 1. Try to ping the **shared** Docker client from AppState first.
+///    - If it responds, broadcast `Ready` immediately with the current docker_source.
+/// 2. Only fall back to `runtime.health_check()` when the shared client is
+///    unresponsive or absent.
 fn start_runtime_health_monitor(
     app_handle: tauri::AppHandle,
     runtime: Arc<dyn cratebay_core::runtime::RuntimeManager>,
 ) {
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        // 20-second interval — faster feedback without excessive overhead.
+        let mut interval = tokio::time::interval(Duration::from_secs(20));
         loop {
             interval.tick().await;
 
+            // ── Fast path: shared client is alive ──────────────────────────
+            if let Some(_docker) = get_responsive_shared_docker(&app_handle).await {
+                tracing::debug!("Health monitor: shared Docker client responsive — emitting Ready");
+                // Read the current docker_source to include in the event.
+                let source_str = {
+                    let state = app_handle.state::<AppState>();
+                    state
+                        .get_docker_source()
+                        .map(|s| s.as_str().to_string())
+                };
+                let health = cratebay_core::runtime::HealthStatus {
+                    runtime_state: cratebay_core::runtime::RuntimeState::Ready,
+                    docker_responsive: true,
+                    docker_version: None,
+                    uptime_seconds: None,
+                    last_check: Utc::now().to_rfc3339(),
+                    docker_source: source_str,
+                };
+                let _ = app_handle.emit(events::event_names::RUNTIME_HEALTH, &health);
+                continue;
+            }
+
+            // ── Slow path: shared client absent/unresponsive — full check ──
+            tracing::debug!("Health monitor: shared Docker unresponsive, running full health_check");
             let mut health = match runtime.health_check().await {
                 Ok(status) => status,
                 Err(e) => {
@@ -79,24 +108,15 @@ fn start_runtime_health_monitor(
                         docker_version: None,
                         uptime_seconds: None,
                         last_check: Utc::now().to_rfc3339(),
+                        docker_source: None,
                     }
                 }
             };
 
-            if !health.docker_responsive
-                && matches!(
-                    health.runtime_state,
-                    cratebay_core::runtime::RuntimeState::Starting
-                        | cratebay_core::runtime::RuntimeState::Ready
-                        | cratebay_core::runtime::RuntimeState::Error(_)
-                )
-                && is_shared_docker_responsive(&app_handle).await
-            {
-                tracing::debug!(
-                    "Health monitor: keeping runtime Ready based on shared Docker client"
-                );
-                health.runtime_state = cratebay_core::runtime::RuntimeState::Ready;
-                health.docker_responsive = true;
+            // Annotate the slow-path result with the known source (if any).
+            if health.docker_source.is_none() {
+                let state = app_handle.state::<AppState>();
+                health.docker_source = state.get_docker_source().map(|s| s.as_str().to_string());
             }
 
             let _ = app_handle.emit(events::event_names::RUNTIME_HEALTH, &health);
@@ -370,7 +390,19 @@ fn main() {
     };
 
     let app_state = AppState {
-        docker: Arc::new(Mutex::new(docker)),
+        docker: Arc::new(Mutex::new(docker.clone())),
+        docker_source: Arc::new(Mutex::new({
+            // Infer source from the initial connection attempt.
+            // If we already have a Docker client, check which socket it came from.
+            // For now, we default to External since detect_external_docker ran first.
+            // The health monitor will refine this on the next tick.
+            if docker.is_some() {
+                Some(cratebay_core::models::DockerSource::External)
+            } else {
+                None
+            }
+        })),
+        docker_init: Arc::new(tokio::sync::OnceCell::new()),
         db: Arc::new(Mutex::new(conn)),
         data_dir,
         llm_cancel_tokens: Arc::new(Mutex::new(std::collections::HashMap::new())),

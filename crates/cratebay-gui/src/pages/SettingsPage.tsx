@@ -335,6 +335,7 @@ function RuntimeTab() {
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const runtimeStatus = useAppStore((s) => s.runtimeStatus);
   const dockerConnected = useAppStore((s) => s.dockerConnected);
+  const dockerSource = useAppStore((s) => s.dockerSource);
   const runtimeLoading = useAppStore((s) => s.runtimeLoading);
   const setRuntimeLoading = useAppStore((s) => s.setRuntimeLoading);
   const addNotification = useAppStore((s) => s.addNotification);
@@ -359,13 +360,6 @@ function RuntimeTab() {
     settings.runtimeHttpProxyBindPort,
     settings.runtimeHttpProxyGuestHost,
   ]);
-
-  const runtimeStatusLabels: Record<"starting" | "running" | "stopped" | "error", string> = {
-    running: t("settings", "runtimeRunning"),
-    starting: t("settings", "runtimeStarting"),
-    stopped: t("settings", "runtimeStopped"),
-    error: t("settings", "runtimeError"),
-  };
 
   const handleRuntimeStart = async () => {
     try {
@@ -484,41 +478,61 @@ function RuntimeTab() {
   return (
     <div className="flex max-w-2xl flex-col">
       {/* VM Status */}
+      {/* Container Engine — unified single status row */}
       <SettingRow
-        label={t("settings", "vmStatus")}
-        description={t("settings", "vmStatusDesc")}
+        label={t("settings", "containerEngine")}
+        description={t("settings", "containerEngineDesc")}
       >
         <div className="flex items-center gap-2">
-          <RuntimeStatusDot status={runtimeStatus} />
+          <RuntimeStatusDot status={dockerConnected ? "connected" : runtimeStatus === "starting" ? "starting" : "disconnected"} />
           <span
             className={`text-sm font-medium ${
-              runtimeStatus === "running"
+              dockerConnected
                 ? "text-green-500"
                 : runtimeStatus === "error"
                   ? "text-red-500"
                   : "text-muted-foreground"
             }`}
           >
-            {runtimeStatusLabels[runtimeStatus]}
+            {dockerConnected
+              ? dockerSource === "builtin"
+                ? t("settings", "dockerSourceBuiltin")
+                : dockerSource === "colima"
+                  ? "Colima"
+                      : t("settings", "dockerSourceExternal")
+              : runtimeStatus === "starting"
+                ? t("settings", "runtimeStarting")
+                : runtimeStatus === "error"
+                  ? t("settings", "runtimeError")
+                  : t("common", "disconnected")}
           </span>
         </div>
       </SettingRow>
 
-      {/* Docker Connection */}
+      {/* Allow External Docker Fallback */}
       <SettingRow
-        label={t("settings", "dockerConnection")}
-        description={t("settings", "dockerConnectionDesc")}
+        label={t("settings", "allowExternalDocker")}
+        description={t("settings", "allowExternalDockerDesc")}
       >
-        <div className="flex items-center gap-2">
-          <RuntimeStatusDot
-            status={dockerConnected ? "connected" : "disconnected"}
-          />
-          <span
-            className={`text-sm font-medium ${
-              dockerConnected ? "text-green-500" : "text-muted-foreground"
+        <div className="flex items-center gap-3">
+          <button
+            role="switch"
+            aria-checked={settings.allowExternalDocker}
+            onClick={() =>
+              void updateSettings({ allowExternalDocker: !settings.allowExternalDocker })
+            }
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+              settings.allowExternalDocker ? "bg-primary" : "bg-muted"
             }`}
           >
-            {dockerConnected ? t("common", "connected") : t("common", "disconnected")}
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                settings.allowExternalDocker ? "translate-x-[18px]" : "translate-x-1"
+              }`}
+            />
+          </button>
+          <span className="text-xs text-muted-foreground">
+            {t("settings", "allowExternalDockerHint")}
           </span>
         </div>
       </SettingRow>

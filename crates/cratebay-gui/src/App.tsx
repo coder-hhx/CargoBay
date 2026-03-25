@@ -43,6 +43,8 @@ interface RuntimeHealthPayload {
   docker_version: string | null;
   uptime_seconds: number | null;
   last_check: string;
+  /** Which Docker backend is connected: "builtin" | "colima" | "other" | null */
+  docker_source: string | null;
 }
 
 const RUNTIME_HEALTH_DOWNGRADE_GRACE_MS = 90_000;
@@ -72,10 +74,15 @@ function mapRuntimeState(state: string | Record<string, string>): "starting" | "
 function setEngineState(
   runtimeStatus: "starting" | "running" | "stopped" | "error",
   dockerConnected: boolean,
+  dockerSource?: string | null,
 ) {
+  const source = (dockerSource as import("@/stores/appStore").DockerSource) ?? null;
   useAppStore.setState({
     runtimeStatus,
     dockerConnected,
+    // builtinRuntimeReady = true only when source is builtin AND docker is responsive
+    builtinRuntimeReady: dockerConnected && source === "builtin",
+    ...(source !== undefined ? { dockerSource: source } : {}),
   });
 }
 
@@ -157,7 +164,7 @@ function App() {
     void initRuntimeStatus();
   }, []);
 
-  // Listen for runtime:health events from backend (emitted every 30s)
+  // Listen for runtime:health events from backend (emitted every 20s)
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
@@ -166,11 +173,12 @@ function App() {
       (payload) => {
         const nextRuntimeStatus = mapRuntimeState(payload.runtime_state);
         const nextDockerConnected = payload.docker_responsive;
+        const source = payload.docker_source ?? null;
         const current = useAppStore.getState();
 
         // Any confirmed Docker responsiveness means engine is effectively ready.
         if (nextDockerConnected) {
-          setEngineState("running", true);
+          setEngineState("running", true, source);
           markHealthy();
           return;
         }
@@ -186,7 +194,7 @@ function App() {
           return;
         }
 
-        setEngineState(nextRuntimeStatus, nextDockerConnected);
+        setEngineState(nextRuntimeStatus, nextDockerConnected, source);
       },
     ).then((unsub) => {
       unlisten = unsub;

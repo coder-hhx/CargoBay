@@ -30,23 +30,18 @@ function getEngineStatus(
   dockerConnected: boolean,
   runtimeStatus: "starting" | "running" | "stopped" | "error",
 ): { color: "green" | "red" | "yellow" | "gray"; label: string; pulse: boolean } {
-  if (dockerConnected && runtimeStatus === "running") {
+  // Docker is connected — regardless of source (builtin / Colima / OrbStack)
+  if (dockerConnected) {
     return { color: "green", label: "引擎就绪", pulse: false };
   }
+  // Builtin runtime is trying to start
   if (runtimeStatus === "starting") {
     return { color: "yellow", label: "启动中…", pulse: true };
   }
   if (runtimeStatus === "error") {
     return { color: "red", label: "引擎异常", pulse: false };
   }
-  if (runtimeStatus === "stopped") {
-    return { color: "gray", label: "未启动", pulse: false };
-  }
-  // runtime running but docker not connected yet
-  if (!dockerConnected) {
-    return { color: "yellow", label: "连接中…", pulse: true };
-  }
-  return { color: "gray", label: "未知", pulse: false };
+  return { color: "gray", label: "未连接", pulse: false };
 }
 
 /**

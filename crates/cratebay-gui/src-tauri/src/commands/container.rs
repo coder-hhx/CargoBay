@@ -27,7 +27,7 @@ pub async fn container_list(
     state: State<'_, AppState>,
     filters: Option<ContainerListFilters>,
 ) -> Result<Vec<ContainerInfo>, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::list(&docker, true, filters).await
 }
 
@@ -40,7 +40,7 @@ pub async fn container_create(
     state: State<'_, AppState>,
     request: ContainerCreateRequest,
 ) -> Result<ContainerInfo, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
 
     // Validate input
     validation::validate_container_name(&request.name)?;
@@ -60,7 +60,7 @@ pub async fn container_create(
 /// Start a stopped container.
 #[tauri::command]
 pub async fn container_start(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::start(&docker, &id).await?;
 
     let db = state.db.lock_or_recover()?;
@@ -75,7 +75,7 @@ pub async fn container_stop(
     id: String,
     timeout: Option<u32>,
 ) -> Result<(), AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::stop(&docker, &id, timeout).await?;
 
     let db = state.db.lock_or_recover()?;
@@ -90,7 +90,7 @@ pub async fn container_delete(
     id: String,
     force: Option<bool>,
 ) -> Result<(), AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::delete(&docker, &id, force.unwrap_or(false)).await?;
 
     let db = state.db.lock_or_recover()?;
@@ -106,7 +106,7 @@ pub async fn container_exec(
     cmd: Vec<String>,
     working_dir: Option<String>,
 ) -> Result<ExecResult, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     let result = container::exec(&docker, &id, cmd, working_dir).await?;
 
     let db = state.db.lock_or_recover()?;
@@ -122,7 +122,7 @@ pub async fn container_logs(
     id: String,
     options: Option<LogOptions>,
 ) -> Result<Vec<LogEntry>, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::logs(&docker, &id, options).await
 }
 
@@ -132,7 +132,7 @@ pub async fn container_inspect(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ContainerDetail, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::inspect(&docker, &id).await
 }
 
@@ -142,7 +142,7 @@ pub async fn container_stats(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ContainerStats, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::stats(&docker, &id).await
 }
 
@@ -158,7 +158,7 @@ pub async fn container_exec_stream(
     channel_id: String,
     working_dir: Option<String>,
 ) -> Result<(), AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
 
     let event_name = format!("exec:stream:{}", channel_id);
     let app_handle = app.clone();
@@ -178,7 +178,7 @@ pub async fn container_exec_stream(
 /// List local Docker images.
 #[tauri::command]
 pub async fn image_list(state: State<'_, AppState>) -> Result<Vec<LocalImageInfo>, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::image_list(&docker).await
 }
 
@@ -214,7 +214,7 @@ pub async fn image_inspect(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ImageInspectInfo, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::image_inspect(&docker, &id).await
 }
 
@@ -225,7 +225,7 @@ pub async fn image_remove(
     id: String,
     force: Option<bool>,
 ) -> Result<(), AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::image_remove(&docker, &id, force.unwrap_or(false)).await
 }
 
@@ -236,7 +236,7 @@ pub async fn image_tag(
     source: String,
     target: String,
 ) -> Result<(), AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     container::image_tag(&docker, &source, &target).await
 }
 
@@ -254,7 +254,7 @@ pub async fn image_pull(
     mirrors: Option<Vec<String>>,
     channel_id: Option<String>,
 ) -> Result<String, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     let channel_id = channel_id.unwrap_or_else(|| format!("pull-{}", uuid::Uuid::new_v4()));
     let ch_id = channel_id.clone();
     let app_handle = app.clone();

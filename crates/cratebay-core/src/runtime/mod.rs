@@ -88,6 +88,9 @@ pub struct HealthStatus {
     pub uptime_seconds: Option<u64>,
     /// Timestamp of this health check (RFC 3339).
     pub last_check: String,
+    /// Which Docker backend is currently connected.
+    /// One of: "builtin" | "colima" | "other" | null.
+    pub docker_source: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +328,7 @@ pub fn start_health_monitor(
                                 docker_version: None,
                                 uptime_seconds: None,
                                 last_check: chrono::Utc::now().to_rfc3339(),
+                                docker_source: None,
                             });
                         }
                     }
@@ -461,6 +465,7 @@ mod tests {
             docker_version: Some("24.0.7".into()),
             uptime_seconds: Some(3600),
             last_check: "2026-03-20T00:00:00Z".into(),
+            docker_source: None,
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"Ready\""));
@@ -483,6 +488,7 @@ mod tests {
             docker_version: None,
             uptime_seconds: None,
             last_check: "2026-03-20T00:00:00Z".into(),
+            docker_source: None,
         };
         let json = serde_json::to_string(&status).unwrap();
         let deserialized: HealthStatus = serde_json::from_str(&json).unwrap();

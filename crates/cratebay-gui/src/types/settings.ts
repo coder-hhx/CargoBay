@@ -83,6 +83,8 @@ export interface AppSettings {
   runtimeHttpProxyBindHost: string;
   runtimeHttpProxyBindPort: number;
   runtimeHttpProxyGuestHost: string;
+  /** When true, fall back to Colima / Docker Desktop if built-in runtime is unavailable. */
+  allowExternalDocker: boolean;
 }
 
 /**

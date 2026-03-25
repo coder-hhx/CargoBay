@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useContainerStore } from "@/stores/containerStore";
+import { useAppStore } from "@/stores/appStore";
 import { useI18n } from "@/lib/i18n";
 import { ContainerCard } from "@/components/container/ContainerCard";
 import { ContainerList } from "@/components/container/ContainerList";
@@ -8,11 +9,12 @@ import { ContainerCreate } from "@/components/container/ContainerCreate";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Search, Box, LayoutGrid, List } from "lucide-react";
-import type { ContainerFilter } from "@/types/container";
+import { RefreshCw, Search, Box, LayoutGrid, List, Server, ExternalLink } from "lucide-react";
+import type { ContainerFilter, ContainerInfo } from "@/types/container";
 
 type FilterStatus = ContainerFilter["status"];
 type ViewMode = "grid" | "table";
+type ContainerTab = "cratebay" | "external";
 
 type FilterLabelKey = "all" | "running" | "stopped" | "creating";
 const FILTER_LABEL_KEYS: Record<FilterStatus, FilterLabelKey> = {
@@ -21,6 +23,34 @@ const FILTER_LABEL_KEYS: Record<FilterStatus, FilterLabelKey> = {
   stopped: "stopped",
   creating: "creating",
 };
+
+function isManagedContainer(c: ContainerInfo): boolean {
+  return c.labels?.["com.cratebay.sandbox.managed"] === "true";
+}
+
+function applyStatusFilter(list: ContainerInfo[], filter: ContainerFilter): ContainerInfo[] {
+  const statusFilter = filter.status as FilterStatus;
+  return list.filter((c) => {
+    if (statusFilter !== "all") {
+      if (statusFilter === "stopped") {
+        if (c.status !== "stopped" && c.status !== "exited" && c.status !== "dead") return false;
+      } else if (statusFilter === "creating") {
+        if (c.status !== "creating" && c.status !== "created") return false;
+      } else if (c.status !== statusFilter) {
+        return false;
+      }
+    }
+    if (filter.templateId !== null && c.labels?.["com.cratebay.template_id"] !== filter.templateId) return false;
+    if (
+      filter.search.length > 0 &&
+      !c.name.toLowerCase().includes(filter.search.toLowerCase()) &&
+      !c.image.toLowerCase().includes(filter.search.toLowerCase())
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
 
 export function ContainersPage() {
   const { t } = useI18n();
@@ -32,48 +62,49 @@ export function ContainersPage() {
   const loading = useContainerStore((s) => s.loading);
   const error = useContainerStore((s) => s.error);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [activeTab, setActiveTab] = useState<ContainerTab>("cratebay");
+
+  // Read builtin runtime ready state from appStore
+  const builtinRuntimeReady = useAppStore((s) => s.builtinRuntimeReady);
+  const dockerConnected = useAppStore((s) => s.dockerConnected);
+  const dockerSource = useAppStore((s) => s.dockerSource);
 
   useEffect(() => {
     void fetchContainers();
     void fetchTemplates();
   }, [fetchContainers, fetchTemplates]);
 
-  // Counts for filter chips
-  const counts = useMemo(
-    () => ({
-      all: containers.length,
-      running: containers.filter((c) => c.status === "running").length,
-      stopped: containers.filter((c) => c.status === "stopped" || c.status === "exited" || c.status === "dead").length,
-      creating: containers.filter((c) => c.status === "creating" || c.status === "created").length,
-    }),
+  // Split containers into managed (CrateBay) and external
+  const managedContainers = useMemo(
+    () => containers.filter(isManagedContainer),
+    [containers],
+  );
+  const externalContainers = useMemo(
+    () => containers.filter((c) => !isManagedContainer(c)),
     [containers],
   );
 
-  // Filtered containers
-  const filteredContainers = useMemo(() => {
-    const statusFilter = filter.status as FilterStatus;
-    return containers.filter((c) => {
-      // Status filter
-      if (statusFilter !== "all") {
-        if (statusFilter === "stopped") {
-          if (c.status !== "stopped" && c.status !== "exited" && c.status !== "dead") return false;
-        } else if (statusFilter === "creating") {
-          if (c.status !== "creating" && c.status !== "created") return false;
-        } else if (c.status !== statusFilter) {
-          return false;
-        }
-      }
-      if (filter.templateId !== null && c.labels?.["com.cratebay.template_id"] !== filter.templateId) return false;
-      if (
-        filter.search.length > 0 &&
-        !c.name.toLowerCase().includes(filter.search.toLowerCase()) &&
-        !c.image.toLowerCase().includes(filter.search.toLowerCase())
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [containers, filter]);
+  // Apply filters on the active tab's container list
+  const activeContainers = activeTab === "cratebay" ? managedContainers : externalContainers;
+  const filteredContainers = useMemo(
+    () => applyStatusFilter(activeContainers, filter),
+    [activeContainers, filter],
+  );
+
+  // Counts for filter chips (per tab)
+  const counts = useMemo(
+    () => ({
+      all: activeContainers.length,
+      running: activeContainers.filter((c) => c.status === "running").length,
+      stopped: activeContainers.filter(
+        (c) => c.status === "stopped" || c.status === "exited" || c.status === "dead",
+      ).length,
+      creating: activeContainers.filter(
+        (c) => c.status === "creating" || c.status === "created",
+      ).length,
+    }),
+    [activeContainers],
+  );
 
   const currentChipFilter: FilterStatus =
     (filter.status as FilterStatus) in FILTER_LABEL_KEYS
@@ -84,12 +115,21 @@ export function ContainersPage() {
     setFilter({ status: f });
   };
 
+  // Source label for external tab header
+  const sourceLabel =
+    dockerSource === "colima"
+      ? "Colima"
+      : dockerSource === "other"
+        ? t("containers", "externalDocker")
+        : t("containers", "externalDocker");
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       {/* Header — stats + actions */}
       <div className="flex items-center justify-between px-6 py-3">
         <p className="text-xs text-muted-foreground">
-          {containers.length} {t("containers", "containerCount")} &middot; {counts.running} {t("containers", "running")}
+          {containers.length} {t("containers", "containerCount")} &middot;{" "}
+          {containers.filter((c) => c.status === "running").length} {t("containers", "running")}
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -110,6 +150,49 @@ export function ContainersPage() {
       {error !== null && (
         <div className="mx-6 mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {error}
+        </div>
+      )}
+
+      {/* Source Tabs */}
+      <div className="flex items-center gap-0 border-b border-border px-6">
+        <button
+          onClick={() => setActiveTab("cratebay")}
+          className={cn(
+            "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors focus:outline-none",
+            activeTab === "cratebay"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+          data-testid="tab-cratebay"
+        >
+          <Server className="h-3.5 w-3.5" />
+          CrateBay
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {managedContainers.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab("external")}
+          className={cn(
+            "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors focus:outline-none",
+            activeTab === "external"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+          data-testid="tab-external"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          {sourceLabel}
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {externalContainers.length}
+          </span>
+        </button>
+      </div>
+
+      {/* Builtin runtime not ready notice (CrateBay tab only) — info level, not blocking */}
+      {activeTab === "cratebay" && !builtinRuntimeReady && dockerConnected && (
+        <div className="mx-6 mt-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-400">
+          {t("containers", "builtinRuntimeNotReady")}
         </div>
       )}
 
@@ -184,7 +267,9 @@ export function ContainersPage() {
             <Box className="mb-3 h-12 w-12 opacity-20" />
             <h3 className="text-sm font-medium">{t("containers", "noContainers")}</h3>
             <p className="mt-1 text-xs">
-              {t("containers", "noContainersHint")}
+              {activeTab === "cratebay"
+                ? t("containers", "noContainersHint")
+                : t("containers", "noExternalContainersHint")}
             </p>
           </div>
         ) : (
@@ -196,7 +281,7 @@ export function ContainersPage() {
         )}
       </div>
 
-      {/* Detail slide panel — positioned within the content area */}
+      {/* Detail slide panel */}
       <ContainerDetail />
     </div>
   );

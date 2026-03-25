@@ -62,7 +62,7 @@ const HEALTH_PING_RETRY_DELAY: Duration = Duration::from_millis(400);
 
 /// Consecutive failed health-check cycles required before degrading
 /// from `Ready` to `Starting`.
-const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 2;
+const READY_DOWNGRADE_FAILURE_THRESHOLD: u8 = 3;
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -1066,6 +1066,7 @@ impl RuntimeManager for LinuxRuntime {
             docker_version: None, // Would require a full Docker API call
             uptime_seconds,
             last_check: chrono::Utc::now().to_rfc3339(),
+            docker_source: None,
         })
     }
 

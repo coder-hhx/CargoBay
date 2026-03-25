@@ -173,6 +173,42 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - ✅ `cratebay-cli`: 补齐 `container/*`、`image/*`、`system docker-status` 子命令；`container create` 缺镜像时自动 pull；支持 `image search`
 - ✅ 回归验证：`cargo test --workspace`
 
+### 状态栏抖动 + 并发阻塞修复（2026-03-25）
+
+**问题 1：状态栏从"引擎就绪"间歇性回退"启动中"**
+
+根因：health_check() 每轮新建 Docker 连接（非复用共享 client），瞬时 socket 抖动被误判为 runtime 不可用。
+
+修复：
+- ✅ **三平台降级阈值上调 2→3**：`READY_DOWNGRADE_FAILURE_THRESHOLD` 更新至 3（macos.rs:67 / linux.rs:65 / windows.rs:52），容忍更多瞬时 ping 失败
+- ✅ **health monitor 改"共享连接优先"**：`main.rs` 中 `start_runtime_health_monitor()` 重构；共享 client 可用时直接广播 Ready，跳过 health_check() 新建连接；共享 client 不可用才走 health_check() 慢路径
+- ✅ **health monitor 周期 30s→20s**：更快感知真实故障
+- ✅ **重试策略增强**：`get_responsive_shared_docker()` 重试次数 3→5，间隔 300ms→200ms
+
+**问题 2：容器操作、镜像操作、状态刷新互相阻塞**
+
+根因：所有命令都调 `ensure_docker()` → 内部 `engine::ensure_docker()` 有跨进程文件锁，默认等待 10 分钟；并发命令在锁上排队；同时每次命令都 ping Docker 导致 ~5s 延迟。
+
+修复：
+- ✅ **AppState 新增 `docker_init: Arc<OnceCell<...>>`**：`state.rs` 增加字段，确保同进程内 Docker 初始化只执行一次
+- ✅ **新增 `ensure_docker_once()` 方法**：`state.rs` 新方法；已有 client 时零延迟直接返回（无 ping）；无 client 时单例化初始化，并发调用等待同一 future；锁等待超时从 10 分钟缩短到 60 秒
+- ✅ **container.rs 所有命令改用 `ensure_docker_once()`**：15 处 `ensure_docker()` 全部替换，消除并发排队
+- ✅ **main.rs 初始化补入 `docker_init`**
+
+**回归验证：**
+- ✅ `cargo test --workspace`：332 passed / 5 ignored（0 failed）
+- ✅ `pnpm typecheck`：0 错误
+- ✅ `pnpm test`：216 passed / 2 skipped（0 failed），18 个测试文件
+- ✅ `pnpm build`：构建成功；顺带修复 `tw-animate-css` 依赖缺失问题
+
+**关键代码变更文件：**
+- `crates/cratebay-core/src/runtime/macos.rs:67` — READY_DOWNGRADE_FAILURE_THRESHOLD 2→3
+- `crates/cratebay-core/src/runtime/linux.rs:65` — READY_DOWNGRADE_FAILURE_THRESHOLD 2→3
+- `crates/cratebay-core/src/runtime/windows.rs:52` — READY_DOWNGRADE_FAILURE_THRESHOLD 2→3
+- `crates/cratebay-gui/src-tauri/src/main.rs` — health monitor 共享连接优先 + 周期 20s + 重试增强
+- `crates/cratebay-gui/src-tauri/src/state.rs` — docker_init OnceCell + ensure_docker_once()
+- `crates/cratebay-gui/src-tauri/src/commands/container.rs` — 15 处改用 ensure_docker_once()
+
 ## 待开始 📋
 
 ### 任务 E: Spec 文档对齐更新 🔴 优先
@@ -256,19 +292,19 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：GUI 稳定性修复 + Spec 对齐 + 自研 Runtime 稳定化/移植（2026-03-25）
+### 当前阶段：Spec 对齐 + 自研 Runtime 稳定化/移植（2026-03-25）
 
-Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基本集成完成。当前有若干 GUI 稳定性问题需要修复。
+Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基本集成完成。状态栏抖动和命令并发阻塞问题已修复。
 
 **执行约束：** built-in runtime 是主线；Podman 仅作 fallback。新会话恢复后，不要把 Podman 当成并行主路线继续扩展。
 
-### 优先修复项（阻塞用户体验）
-1. **状态栏不稳定** — runtime 状态会从"引擎就绪"跳到"启动中"。已有后端（health_check 保持 Ready）和前端（runtime:health 防降级）修复，但仍有复现。可能的原因：
-   - health monitor 用独立线程的 tokio runtime，和主 AppState 的 Docker 连接不共享
-   - `connect_with_unix(..., 5, ...)` 超时 5s 可能不够
-   - 需要增加重试机制或复用 AppState 中的 Docker 连接
-2. **VM 网络问题** — CrateBay 内置 VM 的 Docker 无法联网拉取镜像，所有 mirrors 和直连都超时。这影响容器创建的完整测试
-3. **容器创建端到端验证** — 需要解决网络问题或找到其他方式创建有效测试镜像
+### 已解决问题（本次会话）
+- ✅ 状态栏从"引擎就绪"回退"启动中"：health monitor 共享连接优先 + 降级阈值上调
+- ✅ 容器/镜像/状态操作互相阻塞：OnceCell 单例化初始化 + 快速路径无 ping
+
+### 剩余优先修复项
+1. **VM 网络问题** — CrateBay 内置 VM 的 Docker 无法联网拉取镜像，所有 mirrors 和直连都超时。这影响容器创建的完整测试
+2. **容器创建端到端验证** — 需要解决网络问题或找到其他方式创建有效测试镜像
 
 ### 待人工决策（阻塞后续工作）
 1. **ImagesPage** 是否保留？（代码存在但 frontend-spec 未定义）
@@ -282,18 +318,12 @@ Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基
 2. 按"用户永久规则"创建 cratebay-dev 固定团队
 3. 先确认并遵守 runtime 策略：built-in runtime 主线，Podman fallback
 4. 询问用户上述决策项
-5. 优先修复状态栏稳定性问题
-6. 根据用户决定，执行：
+5. 根据用户决定，执行：
 
-   任务 G — 状态栏稳定性修复:
-   - 排查 health monitor 为何 Docker ping 仍失败
-   - 考虑让 health monitor 复用 AppState 中的 Docker 连接
-   - 增加 ping 超时或重试
-   
    任务 E — Spec 文档对齐（分配给 doc-keeper 或 architect）:
    a. 更新 api-spec.md: 添加 runtime_start, runtime_stop, image_pull（非阻塞版）命令定义
    b. 更新 frontend-spec.md: Settings 6 Tab 结构 + appStore 新字段 + ImagesPage + registryMirrors
-   c. 更新 backend-spec.md: AppState.docker 新类型 + 命令分组
+   c. 更新 backend-spec.md: AppState 新字段（docker_init）+ ensure_docker_once() + 命令分组
    d. 版本号递增
 
    任务 F — 自研 Runtime 稳定化/移植（分配给 runtime-dev + backend-dev）:
@@ -305,7 +335,7 @@ Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基
    任务 D — 修复 pre-commit 钩子:
    - `.githooks/pre-commit` 行 289-290 的 cratebay-cli --lib 问题
 
-7. 完成后更新本文件
+6. 完成后更新本文件
 ```
 
 ### Runtime 移植方案概要（来自 runtime-dev 分析）

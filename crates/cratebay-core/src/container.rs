@@ -63,6 +63,13 @@ pub async fn list(
                 label.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
             list_filters.insert("label".to_string(), label_filters);
         }
+        // managed_only: filter to only CrateBay-managed containers
+        if f.managed_only == Some(true) {
+            let existing = list_filters
+                .entry("label".to_string())
+                .or_insert_with(Vec::new);
+            existing.push("com.cratebay.sandbox.managed=true".to_string());
+        }
     }
 
     let options = Some(ListContainersOptions {
