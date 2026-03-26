@@ -61,7 +61,6 @@ describe("API Key Security", () => {
         runtimeHttpProxyBindHost: "0.0.0.0",
         runtimeHttpProxyBindPort: 3128,
         runtimeHttpProxyGuestHost: "192.168.64.1",
-        allowExternalDocker: false,
       },
     });
   });

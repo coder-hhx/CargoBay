@@ -61,7 +61,7 @@ async fn get_responsive_shared_docker(
 ///
 /// Strategy (shared-client-first):
 /// 1. Try to ping the **shared** Docker client from AppState first.
-///    - If it responds, broadcast `Ready` immediately with the current docker_source.
+///    - If it responds, broadcast `Ready` immediately.
 /// 2. Only fall back to `runtime.health_check()` when the shared client is
 ///    unresponsive or absent.
 fn start_runtime_health_monitor(
@@ -77,18 +77,13 @@ fn start_runtime_health_monitor(
             // ── Fast path: shared client is alive ──────────────────────────
             if let Some(_docker) = get_responsive_shared_docker(&app_handle).await {
                 tracing::debug!("Health monitor: shared Docker client responsive — emitting Ready");
-                // Read the current docker_source to include in the event.
-                let source_str = {
-                    let state = app_handle.state::<AppState>();
-                    state.get_docker_source().map(|s| s.as_str().to_string())
-                };
                 let health = cratebay_core::runtime::HealthStatus {
                     runtime_state: cratebay_core::runtime::RuntimeState::Ready,
                     docker_responsive: true,
                     docker_version: None,
                     uptime_seconds: None,
                     last_check: Utc::now().to_rfc3339(),
-                    docker_source: source_str,
+                    docker_source: Some("builtin".to_string()),
                 };
                 let _ = app_handle.emit(events::event_names::RUNTIME_HEALTH, &health);
                 continue;
@@ -108,35 +103,19 @@ fn start_runtime_health_monitor(
                         docker_version: None,
                         uptime_seconds: None,
                         last_check: Utc::now().to_rfc3339(),
-                        docker_source: None,
+                        docker_source: Some("builtin".to_string()),
                     }
                 }
             };
 
-            // Annotate the slow-path result with the known source (if any).
-            if health.docker_source.is_none() {
-                let state = app_handle.state::<AppState>();
-                health.docker_source = state.get_docker_source().map(|s| s.as_str().to_string());
+            // Set docker_source to "builtin" if Docker is responsive.
+            if health.docker_responsive && health.docker_source.is_none() {
+                health.docker_source = Some("builtin".to_string());
             }
 
             let _ = app_handle.emit(events::event_names::RUNTIME_HEALTH, &health);
         }
     });
-}
-
-/// Try to (re)connect to Docker via any available path.
-///
-/// Called as a fallback when the built-in runtime fails to start or
-/// when we need to retry after runtime startup.
-async fn try_reconnect_docker(app_handle: &tauri::AppHandle) {
-    if let Some(docker) = cratebay_core::docker::try_connect().await {
-        tracing::info!("Docker reconnected via fallback path");
-        let state = app_handle.state::<AppState>();
-        state.set_docker(Some(Arc::new(docker)));
-        let _ = app_handle.emit("docker:connected", true);
-    } else {
-        tracing::warn!("Docker still not available after reconnection attempt");
-    }
 }
 
 const SETTINGS_KEY_RUNTIME_HTTP_PROXY: &str = "runtimeHttpProxy";
@@ -391,17 +370,6 @@ fn main() {
 
     let app_state = AppState {
         docker: Arc::new(Mutex::new(docker.clone())),
-        docker_source: Arc::new(Mutex::new({
-            // Infer source from the initial connection attempt.
-            // If we already have a Docker client, check which socket it came from.
-            // For now, we default to External since detect_external_docker ran first.
-            // The health monitor will refine this on the next tick.
-            if docker.is_some() {
-                Some(cratebay_core::models::DockerSource::External)
-            } else {
-                None
-            }
-        })),
         docker_init: Arc::new(tokio::sync::OnceCell::new()),
         db: Arc::new(Mutex::new(conn)),
         data_dir,
@@ -506,8 +474,6 @@ fn main() {
                             }
                             Err(e) => {
                                 tracing::warn!("Engine auto-start failed: {}", e);
-                                // Final fallback: try external Docker
-                                try_reconnect_docker(&auto_start_handle).await;
                             }
                         }
                     });

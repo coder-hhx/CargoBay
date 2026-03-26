@@ -9,8 +9,6 @@ interface Notification {
   dismissable: boolean;
 }
 
-export type DockerSource = "builtin" | "colima" | "other" | null;
-
 interface AppState {
   // Navigation
   currentPage: "chat" | "containers" | "images" | "mcp" | "settings";
@@ -36,10 +34,6 @@ interface AppState {
   // true only when the CrateBay self-hosted VM runtime is ready.
   builtinRuntimeReady: boolean;
   setBuiltinRuntimeReady: (ready: boolean) => void;
-
-  // Which Docker backend is currently connected
-  dockerSource: DockerSource;
-  setDockerSource: (source: DockerSource) => void;
 
   // Runtime control operations
   runtimeLoading: boolean;
@@ -83,10 +77,6 @@ export const useAppStore = create<AppState>()((set) => ({
   // Built-in runtime
   builtinRuntimeReady: false,
   setBuiltinRuntimeReady: (ready) => set({ builtinRuntimeReady: ready }),
-
-  // Docker source
-  dockerSource: null,
-  setDockerSource: (source) => set({ dockerSource: source }),
 
   // Runtime control operations
   runtimeLoading: false,

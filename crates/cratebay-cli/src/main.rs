@@ -37,6 +37,10 @@ enum Commands {
     #[command(subcommand)]
     Image(ImageCommands),
 
+    /// Runtime management (start/stop/status)
+    #[command(subcommand)]
+    Runtime(RuntimeCommands),
+
     /// System information
     #[command(subcommand)]
     System(SystemCommands),
@@ -145,6 +149,18 @@ enum ImageCommands {
 
     /// Delete a local image
     Delete { id: String },
+}
+
+#[derive(Subcommand)]
+enum RuntimeCommands {
+    /// Show runtime status
+    Status,
+    /// Start the built-in runtime
+    Start,
+    /// Stop the built-in runtime
+    Stop,
+    /// Pre-download runtime image without starting
+    Provision,
 }
 
 #[derive(Subcommand)]
@@ -263,6 +279,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Commands::Runtime(cmd) => match cmd {
+            RuntimeCommands::Status => commands::runtime::status().await?,
+            RuntimeCommands::Start => commands::runtime::start().await?,
+            RuntimeCommands::Stop => commands::runtime::stop().await?,
+            RuntimeCommands::Provision => commands::runtime::provision().await?,
+        },
         Commands::System(cmd) => match cmd {
             SystemCommands::Info => commands::system::info()?,
             SystemCommands::DockerStatus => commands::system::docker_status().await?,

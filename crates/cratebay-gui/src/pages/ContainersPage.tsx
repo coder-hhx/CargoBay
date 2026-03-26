@@ -9,12 +9,11 @@ import { ContainerCreate } from "@/components/container/ContainerCreate";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Search, Box, LayoutGrid, List, Server, ExternalLink } from "lucide-react";
+import { RefreshCw, Search, Box, LayoutGrid, List } from "lucide-react";
 import type { ContainerFilter, ContainerInfo } from "@/types/container";
 
 type FilterStatus = ContainerFilter["status"];
 type ViewMode = "grid" | "table";
-type ContainerTab = "cratebay" | "external";
 
 type FilterLabelKey = "all" | "running" | "stopped" | "creating";
 const FILTER_LABEL_KEYS: Record<FilterStatus, FilterLabelKey> = {
@@ -23,10 +22,6 @@ const FILTER_LABEL_KEYS: Record<FilterStatus, FilterLabelKey> = {
   stopped: "stopped",
   creating: "creating",
 };
-
-function isManagedContainer(c: ContainerInfo): boolean {
-  return c.labels?.["com.cratebay.sandbox.managed"] === "true";
-}
 
 function applyStatusFilter(list: ContainerInfo[], filter: ContainerFilter): ContainerInfo[] {
   const statusFilter = filter.status as FilterStatus;
@@ -62,48 +57,35 @@ export function ContainersPage() {
   const loading = useContainerStore((s) => s.loading);
   const error = useContainerStore((s) => s.error);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [activeTab, setActiveTab] = useState<ContainerTab>("cratebay");
 
   // Read builtin runtime ready state from appStore
   const builtinRuntimeReady = useAppStore((s) => s.builtinRuntimeReady);
   const dockerConnected = useAppStore((s) => s.dockerConnected);
-  const dockerSource = useAppStore((s) => s.dockerSource);
 
   useEffect(() => {
     void fetchContainers();
     void fetchTemplates();
   }, [fetchContainers, fetchTemplates]);
 
-  // Split containers into managed (CrateBay) and external
-  const managedContainers = useMemo(
-    () => containers.filter(isManagedContainer),
-    [containers],
-  );
-  const externalContainers = useMemo(
-    () => containers.filter((c) => !isManagedContainer(c)),
-    [containers],
-  );
-
-  // Apply filters on the active tab's container list
-  const activeContainers = activeTab === "cratebay" ? managedContainers : externalContainers;
+  // Apply filters on all containers
   const filteredContainers = useMemo(
-    () => applyStatusFilter(activeContainers, filter),
-    [activeContainers, filter],
+    () => applyStatusFilter(containers, filter),
+    [containers, filter],
   );
 
-  // Counts for filter chips (per tab)
+  // Counts for filter chips
   const counts = useMemo(
     () => ({
-      all: activeContainers.length,
-      running: activeContainers.filter((c) => c.status === "running").length,
-      stopped: activeContainers.filter(
+      all: containers.length,
+      running: containers.filter((c) => c.status === "running").length,
+      stopped: containers.filter(
         (c) => c.status === "stopped" || c.status === "exited" || c.status === "dead",
       ).length,
-      creating: activeContainers.filter(
+      creating: containers.filter(
         (c) => c.status === "creating" || c.status === "created",
       ).length,
     }),
-    [activeContainers],
+    [containers],
   );
 
   const currentChipFilter: FilterStatus =
@@ -114,14 +96,6 @@ export function ContainersPage() {
   const handleChipClick = (f: FilterStatus) => {
     setFilter({ status: f });
   };
-
-  // Source label for external tab header
-  const sourceLabel =
-    dockerSource === "colima"
-      ? "Colima"
-      : dockerSource === "other"
-        ? t("containers", "externalDocker")
-        : t("containers", "externalDocker");
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -153,44 +127,8 @@ export function ContainersPage() {
         </div>
       )}
 
-      {/* Source Tabs */}
-      <div className="flex items-center gap-0 border-b border-border px-6">
-        <button
-          onClick={() => setActiveTab("cratebay")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors focus:outline-none",
-            activeTab === "cratebay"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-          data-testid="tab-cratebay"
-        >
-          <Server className="h-3.5 w-3.5" />
-          CrateBay
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {managedContainers.length}
-          </span>
-        </button>
-        <button
-          onClick={() => setActiveTab("external")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors focus:outline-none",
-            activeTab === "external"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-          data-testid="tab-external"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          {sourceLabel}
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {externalContainers.length}
-          </span>
-        </button>
-      </div>
-
-      {/* Builtin runtime not ready notice (CrateBay tab only) — info level, not blocking */}
-      {activeTab === "cratebay" && !builtinRuntimeReady && dockerConnected && (
+      {/* Builtin runtime not ready notice — info level, not blocking */}
+      {!builtinRuntimeReady && dockerConnected && (
         <div className="mx-6 mt-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-400">
           {t("containers", "builtinRuntimeNotReady")}
         </div>
@@ -267,9 +205,7 @@ export function ContainersPage() {
             <Box className="mb-3 h-12 w-12 opacity-20" />
             <h3 className="text-sm font-medium">{t("containers", "noContainers")}</h3>
             <p className="mt-1 text-xs">
-              {activeTab === "cratebay"
-                ? t("containers", "noContainersHint")
-                : t("containers", "noExternalContainersHint")}
+              {t("containers", "noContainersHint")}
             </p>
           </div>
         ) : (

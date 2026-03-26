@@ -146,7 +146,7 @@ export function ContainerCreate() {
           {t("containers", "create")}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>{t("containers", "create")}</DialogTitle>
           <DialogDescription>

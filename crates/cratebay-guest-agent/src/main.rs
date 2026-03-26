@@ -17,6 +17,9 @@ fn run() -> Result<(), String> {
     raise_nofile_limit();
     let cfg = Config::from_env_and_args()?;
 
+    eprintln!("cratebay-guest-agent: mode={:?} docker_socket={} docker_host_tcp={:?}",
+        cfg.listen, cfg.docker_socket.display(), cfg.docker_host_tcp);
+
     match cfg.listen {
         ListenMode::Vsock { port } => run_vsock(port, cfg.docker_socket),
         ListenMode::Tcp { addr } => run_tcp(addr, cfg.docker_socket),
@@ -279,6 +282,7 @@ fn run_vsock(port: u32, docker_socket: std::path::PathBuf) -> Result<(), String>
     use std::time::Duration;
 
     let listener_fd = vsock_listen(port)?;
+    eprintln!("vsock: listening on port {}", port);
     eprintln!(
         "cratebay-guest-agent listening: vsock:{} -> {}",
         port,
@@ -335,6 +339,7 @@ fn run_tcp(addr: std::net::SocketAddr, docker_socket: std::path::PathBuf) -> Res
     use std::time::Duration;
 
     let listener = TcpListener::bind(addr).map_err(|e| format!("bind tcp {}: {}", addr, e))?;
+    eprintln!("tcp: listening on {}", addr);
     eprintln!(
         "cratebay-guest-agent listening: tcp:{} -> {}",
         addr,
@@ -390,6 +395,7 @@ fn run_connect(
     let docker_target = docker_host_tcp
         .map(|target| target.to_string())
         .unwrap_or_else(|| docker_socket.display().to_string());
+    eprintln!("connect: dialing {} (pool_size={})", addr, connect_pool_size);
     eprintln!(
         "cratebay-guest-agent connecting: tcp:{} -> {} (workers={})",
         addr, docker_target, connect_pool_size

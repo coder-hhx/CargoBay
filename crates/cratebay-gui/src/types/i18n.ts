@@ -131,9 +131,7 @@ export interface Translations {
     cpuCores: string;
     memoryMb: string;
     selectTemplate: string;
-    externalDocker: string;
     builtinRuntimeNotReady: string;
-    noExternalContainersHint: string;
   };
   mcp: {
     title: string;
@@ -257,12 +255,8 @@ export interface Translations {
     runtimeProxySaveSuccess: string;
     runtimeProxyRestartHint: string;
     dockerSourceBuiltin: string;
-    dockerSourceExternal: string;
     containerEngine: string;
     containerEngineDesc: string;
-    allowExternalDocker: string;
-    allowExternalDockerDesc: string;
-    allowExternalDockerHint: string;
     english: string;
     simplifiedChinese: string;
   };

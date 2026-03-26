@@ -157,7 +157,7 @@ impl Default for WindowsRuntime {
 
 #[async_trait]
 impl RuntimeManager for WindowsRuntime {
-    async fn detect(&self) -> Result<RuntimeState, AppError> {
+    async fn get_state(&self) -> Result<RuntimeState, AppError> {
         // Step 1: Check if WSL2 is available
         let wsl2_ok = tokio::task::spawn_blocking(|| wsl2_available())
             .await
@@ -223,7 +223,7 @@ impl RuntimeManager for WindowsRuntime {
 
         {
             let mut state = self.state.lock().await;
-            *state = RuntimeState::Provisioning;
+            *state = RuntimeState::Starting;
         }
 
         let wsl2_ok = tokio::task::spawn_blocking(|| wsl2_available())
@@ -439,7 +439,7 @@ impl RuntimeManager for WindowsRuntime {
                 docker_version: None,
                 uptime_seconds: None,
                 last_check: chrono::Utc::now().to_rfc3339(),
-                docker_source: None,
+                docker_source: Some("builtin".to_string()),
             });
         }
 
@@ -520,7 +520,7 @@ impl RuntimeManager for WindowsRuntime {
             docker_version,
             uptime_seconds,
             last_check: chrono::Utc::now().to_rfc3339(),
-            docker_source: None,
+            docker_source: Some("builtin".to_string()),
         })
     }
 

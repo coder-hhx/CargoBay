@@ -49,11 +49,6 @@ pub async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, AppEr
 /// updated by the runtime auto-start background thread).
 #[tauri::command]
 pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, AppError> {
-    let provider = std::env::var("CRATEBAY_ENGINE_PROVIDER")
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-
     let docker_opt = {
         let guard = state
             .docker
@@ -67,35 +62,8 @@ pub async fn docker_status(state: State<'_, AppState>) -> Result<DockerStatus, A
             let is_available = docker::is_available(&d).await;
             if is_available {
                 let version_info = docker::version(&d).await.ok();
-                let (source, socket_path) = if provider == "podman" {
-                    (
-                        "podman".to_string(),
-                        std::env::var("DOCKER_HOST").ok().and_then(|v| {
-                            let trimmed = v.trim().to_string();
-                            (!trimmed.is_empty()).then_some(trimmed)
-                        }),
-                    )
-                } else {
-                    let runtime_running =
-                        state.runtime.health_check().await.ok().is_some_and(|h| {
-                            matches!(
-                                h.runtime_state,
-                                RuntimeState::Starting | RuntimeState::Ready
-                            )
-                        });
-                    let source = if runtime_running {
-                        "built-in"
-                    } else {
-                        "external"
-                    }
-                    .to_string();
-                    let socket_path = if runtime_running {
-                        Some(built_in_docker_endpoint(&state))
-                    } else {
-                        external_docker_endpoint()
-                    };
-                    (source, socket_path)
-                };
+                let source = "built-in".to_string();
+                let socket_path = Some(built_in_docker_endpoint(&state));
                 Ok(DockerStatus {
                     connected: true,
                     version: version_info.as_ref().and_then(|v| v.version.clone()),
@@ -153,16 +121,6 @@ fn built_in_docker_endpoint(state: &State<'_, AppState>) -> String {
     {
         "<unsupported>".to_string()
     }
-}
-
-fn external_docker_endpoint() -> Option<String> {
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        if !host.trim().is_empty() {
-            return Some(host);
-        }
-    }
-
-    cratebay_core::runtime::detect_external_docker().map(|path| path.to_string_lossy().to_string())
 }
 
 /// Get built-in runtime status.
@@ -238,7 +196,7 @@ pub async fn runtime_start(state: State<'_, AppState>) -> Result<String, AppErro
     apply_runtime_http_proxy_env(&state)?;
 
     // Step 1: Detect
-    let current = state.runtime.detect().await?;
+    let current = state.runtime.get_state().await?;
     tracing::info!("Runtime current state: {:?}", current);
 
     // Step 2: Provision if needed
@@ -340,12 +298,6 @@ pub async fn runtime_stop(state: State<'_, AppState>) -> Result<String, AppError
     // Clear Docker connection since runtime is stopping
     state.set_docker(None);
 
-    // Try to reconnect to external Docker if available
-    if let Some(docker) = docker::try_connect().await {
-        state.set_docker(Some(Arc::new(docker)));
-        return Ok("Runtime stopped, reconnected to external Docker".to_string());
-    }
-
     Ok("Runtime stopped".to_string())
 }
 
@@ -354,7 +306,7 @@ fn format_runtime_state(state: &RuntimeState) -> String {
     match state {
         RuntimeState::None => "none".to_string(),
         RuntimeState::Provisioned => "provisioned".to_string(),
-        RuntimeState::Provisioning | RuntimeState::Starting => "starting".to_string(),
+        RuntimeState::Starting => "starting".to_string(),
         RuntimeState::Ready => "ready".to_string(),
         RuntimeState::Stopping | RuntimeState::Stopped => "stopped".to_string(),
         RuntimeState::Error(_) => "error".to_string(),

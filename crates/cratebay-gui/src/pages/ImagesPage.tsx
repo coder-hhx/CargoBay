@@ -12,11 +12,12 @@
  * @see api-spec.md for Tauri command signatures
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { invoke, listen } from "@/lib/tauri";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { invoke } from "@/lib/tauri";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { useSettingsStore } from "@/stores/settingsStore";
+import { usePullStore } from "@/stores/pullStore";
+import { PullTaskList } from "@/components/images/PullTaskList";
 import type {
   LocalImageInfo,
   ImageSearchResult,
@@ -51,6 +52,18 @@ import {
 export function ImagesPage() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<"local" | "search">("local");
+  const refreshLocalRef = useRef<(() => void) | null>(null);
+
+  // 当有拉取任务完成时，自动刷新本地镜像列表
+  const tasks = usePullStore((s) => s.tasks);
+  const prevCompletedRef = useRef(0);
+  useEffect(() => {
+    const completedCount = tasks.filter((t) => t.complete && t.error === null).length;
+    if (completedCount > prevCompletedRef.current) {
+      refreshLocalRef.current?.();
+    }
+    prevCompletedRef.current = completedCount;
+  }, [tasks]);
 
   return (
     <div className="flex h-full flex-col">
@@ -85,9 +98,16 @@ export function ImagesPage() {
         </div>
       </div>
 
+      {/* 全局拉取任务列表 — 在两个 tab 之间始终可见 */}
+      <PullTaskList />
+
       {/* Content */}
       <div className="flex-1 overflow-auto">
-        {activeTab === "local" ? <LocalImagesTab /> : <SearchImagesTab />}
+        {activeTab === "local" ? (
+          <LocalImagesTab onRefreshRef={refreshLocalRef} />
+        ) : (
+          <SearchImagesTab />
+        )}
       </div>
     </div>
   );
@@ -95,7 +115,7 @@ export function ImagesPage() {
 
 /* ========== Local Images Tab ========== */
 
-function LocalImagesTab() {
+function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject<(() => void) | null> }) {
   const { t } = useI18n();
   const [images, setImages] = useState<LocalImageInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,6 +149,14 @@ function LocalImagesTab() {
     void fetchImages();
   }, [fetchImages]);
 
+  // 暴露刷新方法给父组件
+  useEffect(() => {
+    onRefreshRef.current = () => void fetchImages();
+    return () => {
+      onRefreshRef.current = null;
+    };
+  }, [fetchImages, onRefreshRef]);
+
   const filteredImages = useMemo(() => {
     if (filter.length === 0) return images;
     const q = filter.toLowerCase();
@@ -155,17 +183,18 @@ function LocalImagesTab() {
   const handleRemove = useCallback(async (id: string) => {
     setRemoving(true);
     try {
-      await invoke("image_remove", { id, force: false });
+      await invoke("image_remove", { id, force: true });
     } catch {
       // Docker not available — removal failed
       setRemoving(false);
       setRemoveConfirm(null);
       return;
     }
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    // Refresh the full list from Docker to get accurate state
+    await fetchImages();
     setRemoving(false);
     setRemoveConfirm(null);
-  }, []);
+  }, [fetchImages]);
 
   return (
     <div className="px-6 py-4">
@@ -413,13 +442,12 @@ function SearchImagesTab() {
   const [results, setResults] = useState<ImageSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [pulling, setPulling] = useState<string | null>(null);
-  const [pullError, setPullError] = useState<string | null>(null);
+  const startPull = usePullStore((s) => s.startPull);
+  const isPulling = usePullStore((s) => s.isPulling);
 
   const handleSearch = useCallback(async () => {
     if (query.trim().length === 0) return;
     setSearching(true);
-    setPullError(null);
     setSearchError(null);
     try {
       const data = await Promise.race([
@@ -444,52 +472,9 @@ function SearchImagesTab() {
     }
   }, [query]);
 
-  const handlePull = useCallback(async (image: string) => {
-    const trimmedImage = image.trim();
-    if (trimmedImage.length === 0) return;
-
-    setPulling(trimmedImage);
-    setPullError(null);
-    try {
-      const mirrors = useSettingsStore.getState().settings.registryMirrors;
-      const hasMirrors = Array.isArray(mirrors) && mirrors.length > 0;
-      const channelId = `pull-${Date.now()}`;
-
-      // image_pull returns immediately and streams progress via events
-      await invoke<string>("image_pull", {
-        image: trimmedImage,
-        mirrors: hasMirrors ? mirrors : null,
-        channel_id: channelId,
-      });
-
-      // Wait for completion
-      await new Promise<void>((resolve, reject) => {
-        let unlistenFn: (() => void) | null = null;
-        const timeoutId = window.setTimeout(() => {
-          unlistenFn?.();
-          reject(new Error("Image pull timeout (120s)"));
-        }, 120000);
-
-        void listen<{
-          complete: boolean;
-          error?: string | null;
-        }>(`image:pull:${channelId}`, (progress) => {
-          if (!progress.complete) return;
-          window.clearTimeout(timeoutId);
-          unlistenFn?.();
-          if (progress.error) reject(new Error(progress.error));
-          else resolve();
-        }).then((unsub) => {
-          unlistenFn = unsub;
-        });
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setPullError(message.length > 0 ? message : `Failed to pull ${trimmedImage}`);
-    } finally {
-      setPulling(null);
-    }
-  }, []);
+  const handlePull = useCallback((image: string) => {
+    void startPull(image);
+  }, [startPull]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -527,33 +512,12 @@ function SearchImagesTab() {
           )}
           {t("common", "search")}
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => void handlePull(query)}
-          disabled={pulling !== null || query.trim().length === 0}
-          title={t("images", "pull")}
-        >
-          {pulling === query.trim() ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Download className="h-3.5 w-3.5" />
-          )}
-          {t("images", "pull")}
-        </Button>
       </div>
 
       {/* Search error */}
       {searchError !== null && (
         <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {searchError}
-        </div>
-      )}
-
-      {/* Pull error */}
-      {pullError !== null && (
-        <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {pullError}
         </div>
       )}
 
@@ -570,8 +534,8 @@ function SearchImagesTab() {
             <SearchResultCard
               key={`${result.source}-${result.reference}-${idx}`}
               result={result}
-              pulling={pulling === result.reference}
-              onPull={() => void handlePull(result.reference)}
+              pulling={isPulling(result.reference)}
+              onPull={() => handlePull(result.reference)}
             />
           ))}
         </div>
@@ -630,20 +594,22 @@ function SearchResultCard({
             {formatPulls(result.pulls)}
           </span>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 gap-1 px-2 text-xs"
-          disabled={pulling}
-          onClick={onPull}
-        >
-          {pulling ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
+        {pulling ? (
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span className="text-xs text-muted-foreground">拉取中</span>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={onPull}
+          >
             <Download className="h-3 w-3" />
-          )}
-          {t("images", "pull")}
-        </Button>
+            {t("images", "pull")}
+          </Button>
+        )}
       </div>
     </div>
   );

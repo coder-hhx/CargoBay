@@ -12,18 +12,13 @@ use tokio_util::sync::CancellationToken;
 use cratebay_core::engine::EnsureOptions;
 use cratebay_core::error::AppError;
 use cratebay_core::mcp::McpManager;
-use cratebay_core::models::DockerSource;
 use cratebay_core::runtime::RuntimeManager;
-use cratebay_core::MutexExt;
 
 /// Shared application state accessible from all Tauri commands.
 pub struct AppState {
     /// Docker client (optional — Docker may not be available).
     /// Wrapped in Mutex so it can be updated after runtime starts.
     pub docker: Arc<Mutex<Option<Arc<Docker>>>>,
-
-    /// Which backend the current Docker client is connected through.
-    pub docker_source: Arc<Mutex<Option<DockerSource>>>,
 
     /// In-process single-flight guard for Docker initialisation.
     ///
@@ -69,9 +64,6 @@ impl AppState {
 
     /// Ensure Docker is available, with in-process single-flight deduplication.
     ///
-    /// Reads the `allowExternalDocker` setting from the database to decide
-    /// whether to allow fallback to Colima / Docker Desktop.
-    ///
     /// When Docker is not yet connected, only the **first** concurrent caller
     /// runs the full `engine::ensure_docker()` start sequence. All other
     /// concurrent callers await that same future.
@@ -85,40 +77,17 @@ impl AppState {
             return Ok(docker);
         }
 
-        // Read the allow_external_docker setting.
-        let allow_external = self
-            .db
-            .lock_or_recover()
-            .ok()
-            .and_then(|db| {
-                cratebay_core::storage::get_setting(&db, "allowExternalDocker")
-                    .ok()
-                    .flatten()
-            })
-            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
-            .unwrap_or(false);
-
         // Single-flight init: exactly one concurrent caller runs ensure_docker.
         let result = self
             .docker_init
             .get_or_init(|| async {
                 let options = EnsureOptions {
                     lock_wait_timeout: Duration::from_secs(60),
-                    allow_external_docker: allow_external,
                     ..Default::default()
                 };
                 match cratebay_core::engine::ensure_docker(self.runtime.as_ref(), options).await {
                     Ok(docker) => {
-                        // Infer source from the runtime socket path.
-                        let source = if allow_external {
-                            // When external is allowed we can't know which socket won,
-                            // so record as External for now (health monitor will refine).
-                            DockerSource::External
-                        } else {
-                            DockerSource::BuiltinRuntime
-                        };
                         self.set_docker(Some(docker.clone()));
-                        self.set_docker_source(Some(source));
                         Ok(docker)
                     }
                     Err(e) => Err(e.to_string()),
@@ -139,25 +108,8 @@ impl AppState {
         }
     }
 
-    /// Get the current Docker connection source.
-    pub fn get_docker_source(&self) -> Option<DockerSource> {
-        self.docker_source.lock().ok()?.clone()
-    }
-
-    /// Update the Docker connection source.
-    pub fn set_docker_source(&self, source: Option<DockerSource>) {
-        if let Ok(mut guard) = self.docker_source.lock() {
-            *guard = source;
-        }
-    }
-
     /// Check if Docker is currently available.
     pub fn has_docker(&self) -> bool {
         self.docker.lock().map(|g| g.is_some()).unwrap_or(false)
-    }
-
-    /// Returns true if connected to the CrateBay built-in runtime.
-    pub fn is_builtin_runtime(&self) -> bool {
-        matches!(self.get_docker_source(), Some(DockerSource::BuiltinRuntime))
     }
 }

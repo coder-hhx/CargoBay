@@ -2,12 +2,13 @@
 //!
 //! All Docker operations use `bollard` with `Arc<Docker>` for shared access.
 //! Supports multi-platform socket detection.
+//! Only connects to the CrateBay built-in runtime — external Docker daemons
+//! (Colima, Docker Desktop, OrbStack, Podman) are not attempted.
 
 use bollard::Docker;
 use std::time::Duration;
 
 use crate::error::AppError;
-use crate::models::DockerSource;
 use crate::runtime;
 
 #[derive(Debug, Clone)]
@@ -138,10 +139,10 @@ async fn try_connect_target(target: DockerHostTarget) -> Option<Docker> {
 
 /// Create a Docker client connection.
 ///
-/// Attempts connections in priority order (per runtime-spec.md §10):
+/// Attempts connections in priority order:
 /// 1. `DOCKER_HOST` environment variable
-/// 2. Platform-specific external Docker sockets (via `runtime::detect_external_docker`)
-/// 3. Built-in runtime socket
+/// 2. Built-in runtime socket
+/// 3. Built-in runtime TCP (Linux/Windows)
 /// 4. Bollard local defaults as fallback
 pub async fn connect() -> Result<Docker, AppError> {
     // 1. DOCKER_HOST environment variable (supports unix/tcp/http/npipe)
@@ -157,42 +158,7 @@ pub async fn connect() -> Result<Docker, AppError> {
         }
     }
 
-    // 2. Platform-specific external Docker sockets (via `runtime::detect_external_docker`)
-    if let Some(socket_path) = runtime::detect_external_docker() {
-        tracing::info!("External Docker detected at: {}", socket_path.display());
-        let socket_str = socket_path.to_str().unwrap_or_default();
-
-        // Bound ping time so a stale socket/pipe can't hang the app.
-        #[cfg(unix)]
-        {
-            if let Some(docker) =
-                try_connect_target(DockerHostTarget::UnixSocket(socket_str.to_string())).await
-            {
-                tracing::info!("Connected via external Docker: {}", socket_path.display());
-                return Ok(docker);
-            }
-            tracing::warn!(
-                "External Docker socket exists but not responsive: {}",
-                socket_path.display()
-            );
-        }
-
-        #[cfg(windows)]
-        {
-            if let Some(docker) =
-                try_connect_target(DockerHostTarget::NamedPipe(socket_str.to_string())).await
-            {
-                tracing::info!("Connected via external Docker: {}", socket_path.display());
-                return Ok(docker);
-            }
-            tracing::warn!(
-                "External Docker pipe exists but not responsive: {}",
-                socket_path.display()
-            );
-        }
-    }
-
-    // 3. Try built-in runtime socket
+    // 2. Try built-in runtime socket
     let runtime_mgr = runtime::create_runtime_manager();
     let runtime_socket = runtime_mgr.docker_socket_path();
     if runtime_socket.exists() {
@@ -219,7 +185,7 @@ pub async fn connect() -> Result<Docker, AppError> {
         }
     }
 
-    // 3b. Try built-in runtime TCP endpoint (Linux/Windows)
+    // 3. Try built-in runtime TCP endpoint (Linux/Windows)
     //
     // On Linux and Windows the built-in runtime exposes Docker via a TCP
     // endpoint (hostfwd / WSL localhost forwarding). `docker_socket_path()`
@@ -271,136 +237,12 @@ pub async fn try_connect() -> Option<Docker> {
     connect().await.ok()
 }
 
-/// Attempt to connect, returning both the Docker client and the source it
-/// was connected through.  Returns `None` if Docker is not available.
-pub async fn try_connect_with_source() -> Option<(Docker, DockerSource)> {
-    connect_with_source().await.ok()
-}
-
 /// Check if Docker daemon is accessible.
 pub async fn is_available(docker: &Docker) -> bool {
     matches!(
         tokio::time::timeout(Duration::from_secs(DOCKER_PING_TIMEOUT_SECS), docker.ping()).await,
         Ok(Ok(_))
     )
-}
-
-/// Infer the [`DockerSource`] from a Unix socket path.
-fn source_from_socket_path(path: &str) -> DockerSource {
-    if path.contains(".cratebay") {
-        DockerSource::BuiltinRuntime
-    } else if path.contains(".colima") {
-        DockerSource::Colima
-    } else {
-        DockerSource::External
-    }
-}
-
-/// Like [`connect`] but also returns where the connection was established.
-pub async fn connect_with_source() -> Result<(Docker, DockerSource), AppError> {
-    // 1. DOCKER_HOST
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        if let Some(target) = parse_docker_host_target(&host) {
-            let source = if host.contains(".cratebay") {
-                DockerSource::BuiltinRuntime
-            } else if host.contains(".colima") {
-                DockerSource::Colima
-            } else {
-                DockerSource::External
-            };
-            if let Some(docker) = try_connect_target(target).await {
-                tracing::info!("Connected via DOCKER_HOST (source={:?})", source);
-                return Ok((docker, source));
-            }
-        }
-    }
-
-    // 2. Platform-specific external Docker (detect_external_docker)
-    if let Some(socket_path) = runtime::detect_external_docker() {
-        let socket_str = socket_path.to_str().unwrap_or_default();
-        let source = source_from_socket_path(socket_str);
-
-        #[cfg(unix)]
-        if let Some(docker) =
-            try_connect_target(DockerHostTarget::UnixSocket(socket_str.to_string())).await
-        {
-            tracing::info!(
-                "Connected via external Docker: {} (source={:?})",
-                socket_path.display(),
-                source
-            );
-            return Ok((docker, source));
-        }
-
-        #[cfg(windows)]
-        if let Some(docker) =
-            try_connect_target(DockerHostTarget::NamedPipe(socket_str.to_string())).await
-        {
-            tracing::info!(
-                "Connected via external Docker: {} (source={:?})",
-                socket_path.display(),
-                source
-            );
-            return Ok((docker, source));
-        }
-    }
-
-    // 3. Built-in runtime socket
-    let runtime_mgr = runtime::create_runtime_manager();
-    let runtime_socket = runtime_mgr.docker_socket_path();
-    if runtime_socket.exists() {
-        #[cfg(unix)]
-        {
-            let socket_str = runtime_socket.to_str().unwrap_or_default();
-            if let Some(docker) =
-                try_connect_target(DockerHostTarget::UnixSocket(socket_str.to_string())).await
-            {
-                tracing::info!(
-                    "Connected via built-in runtime: {}",
-                    runtime_socket.display()
-                );
-                return Ok((docker, DockerSource::BuiltinRuntime));
-            }
-        }
-    }
-
-    // 3b. Built-in runtime TCP endpoint (Linux/Windows)
-    #[cfg(target_os = "linux")]
-    {
-        let host = runtime::linux::linux_docker_host();
-        if let Some(target) = parse_docker_host_target(&host) {
-            if let Some(docker) = try_connect_target(target).await {
-                tracing::info!("Connected via built-in Linux runtime TCP");
-                return Ok((docker, DockerSource::BuiltinRuntime));
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let host = runtime::windows::windows_docker_host();
-        if let Some(target) = parse_docker_host_target(&host) {
-            if let Some(docker) = try_connect_target(target).await {
-                tracing::info!("Connected via built-in Windows runtime TCP");
-                return Ok((docker, DockerSource::BuiltinRuntime));
-            }
-        }
-        let pipe = r"\\.\pipe\cratebay-docker";
-        if let Some(target) = parse_docker_host_target(pipe) {
-            if let Some(docker) = try_connect_target(target).await {
-                return Ok((docker, DockerSource::BuiltinRuntime));
-            }
-        }
-    }
-
-    // 4. Bollard local defaults
-    let docker = Docker::connect_with_local_defaults()?;
-    if !crate::docker::is_available(&docker).await {
-        return Err(AppError::Runtime(
-            "Docker local defaults detected but daemon is not reachable".to_string(),
-        ));
-    }
-    Ok((docker, DockerSource::External))
 }
 
 /// Get Docker version information.

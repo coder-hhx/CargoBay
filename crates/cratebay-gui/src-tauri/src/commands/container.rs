@@ -280,7 +280,7 @@ pub async fn image_pull(
         // Progress callback that emits Tauri events
         let app_for_progress = app.clone();
         let event_for_progress = event_name.clone();
-        let progress_cb: container::PullProgressCallback = Box::new(move |progress| {
+        let progress_cb: container::PullProgressCallback = std::sync::Arc::new(move |progress| {
             let percent = if progress.total_bytes > 0 {
                 ((progress.current_bytes as f64 / progress.total_bytes as f64) * 100.0) as u32
             } else {

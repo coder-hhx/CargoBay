@@ -30,7 +30,7 @@ function getEngineStatus(
   dockerConnected: boolean,
   runtimeStatus: "starting" | "running" | "stopped" | "error",
 ): { color: "green" | "red" | "yellow" | "gray"; label: string; pulse: boolean } {
-  // Docker is connected — regardless of source (builtin / Colima / OrbStack)
+  // Docker is connected via built-in runtime
   if (dockerConnected) {
     return { color: "green", label: "引擎就绪", pulse: false };
   }

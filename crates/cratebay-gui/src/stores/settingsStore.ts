@@ -74,7 +74,6 @@ const defaultSettings: AppSettings = {
   runtimeHttpProxyBindHost: "0.0.0.0",
   runtimeHttpProxyBindPort: 3128,
   runtimeHttpProxyGuestHost: "192.168.64.1",
-  allowExternalDocker: false,
 };
 
 let providerIdCounter = 0;
@@ -338,7 +337,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         "maxConversationHistory", "containerDefaultTtlHours",
         "confirmDestructiveOps", "reasoningEffort", "registryMirrors",
         "runtimeHttpProxy", "runtimeHttpProxyBridge", "runtimeHttpProxyBindHost",
-        "runtimeHttpProxyBindPort", "runtimeHttpProxyGuestHost", "allowExternalDocker",
+        "runtimeHttpProxyBindPort", "runtimeHttpProxyGuestHost",
       ];
       const fetched: Partial<AppSettings> = {};
       for (const key of keys) {

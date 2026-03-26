@@ -38,7 +38,7 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col overflow-auto p-6">
       <Tabs defaultValue="general" className="flex-1">
-        <TabsList>
+        <TabsList className="mb-4">
           <TabsTrigger value="general" data-testid="settings-tab-general">{t("settings", "general")}</TabsTrigger>
           <TabsTrigger value="providers" data-testid="settings-tab-providers">{t("settings", "providers")}</TabsTrigger>
           <TabsTrigger value="appearance" data-testid="settings-tab-appearance">{t("settings", "appearance")}</TabsTrigger>
@@ -133,7 +133,13 @@ function GeneralTab() {
           }
         >
           <SelectTrigger className="w-48">
-            <SelectValue />
+            <SelectValue>
+              {settings.theme === "dark"
+                ? t("settings", "themeDark")
+                : settings.theme === "light"
+                  ? t("settings", "themeLight")
+                  : t("settings", "themeSystem")}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="dark">{t("settings", "themeDark")}</SelectItem>
@@ -335,31 +341,16 @@ function RuntimeTab() {
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const runtimeStatus = useAppStore((s) => s.runtimeStatus);
   const dockerConnected = useAppStore((s) => s.dockerConnected);
-  const dockerSource = useAppStore((s) => s.dockerSource);
   const runtimeLoading = useAppStore((s) => s.runtimeLoading);
   const setRuntimeLoading = useAppStore((s) => s.setRuntimeLoading);
   const addNotification = useAppStore((s) => s.addNotification);
   const [cpuCores, setCpuCores] = useState(4);
   const [memoryGB, setMemoryGB] = useState(8);
   const [proxyInput, setProxyInput] = useState(settings.runtimeHttpProxy);
-  const [bridgeEnabled, setBridgeEnabled] = useState(settings.runtimeHttpProxyBridge);
-  const [bindHostInput, setBindHostInput] = useState(settings.runtimeHttpProxyBindHost);
-  const [bindPortInput, setBindPortInput] = useState(String(settings.runtimeHttpProxyBindPort));
-  const [guestHostInput, setGuestHostInput] = useState(settings.runtimeHttpProxyGuestHost);
 
   useEffect(() => {
     setProxyInput(settings.runtimeHttpProxy);
-    setBridgeEnabled(settings.runtimeHttpProxyBridge);
-    setBindHostInput(settings.runtimeHttpProxyBindHost);
-    setBindPortInput(String(settings.runtimeHttpProxyBindPort));
-    setGuestHostInput(settings.runtimeHttpProxyGuestHost);
-  }, [
-    settings.runtimeHttpProxy,
-    settings.runtimeHttpProxyBridge,
-    settings.runtimeHttpProxyBindHost,
-    settings.runtimeHttpProxyBindPort,
-    settings.runtimeHttpProxyGuestHost,
-  ]);
+  }, [settings.runtimeHttpProxy]);
 
   const handleRuntimeStart = async () => {
     try {
@@ -434,29 +425,15 @@ function RuntimeTab() {
   };
 
   const handleSaveRuntimeProxy = async () => {
-    const parsedBindPort = Number(bindPortInput.trim());
-    const bindPort = Number.isInteger(parsedBindPort) && parsedBindPort > 0 && parsedBindPort <= 65535
-      ? parsedBindPort
-      : 3128;
-    const bindHost = bindHostInput.trim().length > 0 ? bindHostInput.trim() : "0.0.0.0";
-    const guestHost = guestHostInput.trim().length > 0 ? guestHostInput.trim() : "192.168.64.1";
     const proxy = proxyInput.trim();
-
     try {
-      await updateSettings({
-        runtimeHttpProxy: proxy,
-        runtimeHttpProxyBridge: bridgeEnabled,
-        runtimeHttpProxyBindHost: bindHost,
-        runtimeHttpProxyBindPort: bindPort,
-        runtimeHttpProxyGuestHost: guestHost,
-      });
+      await updateSettings({ runtimeHttpProxy: proxy });
       addNotification({
         type: "success",
         title: t("settings", "runtimeProxySaveSuccess"),
         message: t("settings", "runtimeProxyRestartHint"),
         dismissable: true,
       });
-      setBindPortInput(String(bindPort));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       addNotification({
@@ -468,12 +445,7 @@ function RuntimeTab() {
     }
   };
 
-  const runtimeProxyDirty =
-    proxyInput.trim() !== settings.runtimeHttpProxy ||
-    bridgeEnabled !== settings.runtimeHttpProxyBridge ||
-    bindHostInput.trim() !== settings.runtimeHttpProxyBindHost ||
-    bindPortInput.trim() !== String(settings.runtimeHttpProxyBindPort) ||
-    guestHostInput.trim() !== settings.runtimeHttpProxyGuestHost;
+  const runtimeProxyDirty = proxyInput.trim() !== settings.runtimeHttpProxy;
 
   return (
     <div className="flex max-w-2xl flex-col">
@@ -495,44 +467,12 @@ function RuntimeTab() {
             }`}
           >
             {dockerConnected
-              ? dockerSource === "builtin"
-                ? t("settings", "dockerSourceBuiltin")
-                : dockerSource === "colima"
-                  ? "Colima"
-                      : t("settings", "dockerSourceExternal")
+              ? t("settings", "dockerSourceBuiltin")
               : runtimeStatus === "starting"
                 ? t("settings", "runtimeStarting")
                 : runtimeStatus === "error"
                   ? t("settings", "runtimeError")
                   : t("common", "disconnected")}
-          </span>
-        </div>
-      </SettingRow>
-
-      {/* Allow External Docker Fallback */}
-      <SettingRow
-        label={t("settings", "allowExternalDocker")}
-        description={t("settings", "allowExternalDockerDesc")}
-      >
-        <div className="flex items-center gap-3">
-          <button
-            role="switch"
-            aria-checked={settings.allowExternalDocker}
-            onClick={() =>
-              void updateSettings({ allowExternalDocker: !settings.allowExternalDocker })
-            }
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-              settings.allowExternalDocker ? "bg-primary" : "bg-muted"
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                settings.allowExternalDocker ? "translate-x-[18px]" : "translate-x-1"
-              }`}
-            />
-          </button>
-          <span className="text-xs text-muted-foreground">
-            {t("settings", "allowExternalDockerHint")}
           </span>
         </div>
       </SettingRow>
@@ -587,45 +527,6 @@ function RuntimeTab() {
           className="w-64 font-mono text-xs"
         />
       </SettingRow>
-
-      <SettingRow
-        label={t("settings", "runtimeHttpProxyBridge")}
-        description={t("settings", "runtimeHttpProxyBridgeDesc")}
-      >
-        <Switch
-          checked={bridgeEnabled}
-          onCheckedChange={setBridgeEnabled}
-        />
-      </SettingRow>
-
-      {bridgeEnabled && (
-        <>
-          <SettingRow label={t("settings", "runtimeHttpProxyBindHost")}>
-            <Input
-              value={bindHostInput}
-              onChange={(e) => setBindHostInput(e.target.value)}
-              className="w-48 font-mono text-xs"
-            />
-          </SettingRow>
-          <SettingRow label={t("settings", "runtimeHttpProxyBindPort")}>
-            <Input
-              type="number"
-              min={1}
-              max={65535}
-              value={bindPortInput}
-              onChange={(e) => setBindPortInput(e.target.value)}
-              className="w-32 font-mono text-xs"
-            />
-          </SettingRow>
-          <SettingRow label={t("settings", "runtimeHttpProxyGuestHost")}>
-            <Input
-              value={guestHostInput}
-              onChange={(e) => setGuestHostInput(e.target.value)}
-              className="w-48 font-mono text-xs"
-            />
-          </SettingRow>
-        </>
-      )}
 
       <div className="flex items-center justify-between py-3 border-b border-border">
         <p className="text-xs text-muted-foreground">{t("settings", "runtimeProxyRestartHint")}</p>

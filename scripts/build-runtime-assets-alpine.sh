@@ -12,6 +12,7 @@ alpine_version="${CRATEBAY_ALPINE_VERSION:-v3.19}"
 # Alpine netboot kernel+initramfs flavor: `virt` is optimized for VMs and
 # provides a working virtio console (console=hvc0) under Virtualization.framework.
 netboot_flavor="${CRATEBAY_ALPINE_NETBOOT_FLAVOR:-virt}" # virt|lts
+alpine_mirror="${CRATEBAY_ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}"
 ubuntu_release="${CRATEBAY_UBUNTU_RELEASE:-24.04}"
 ubuntu_series="${CRATEBAY_UBUNTU_SERIES:-noble}"
 ubuntu_suite="${CRATEBAY_UBUNTU_SUITE:-noble-updates}"
@@ -126,7 +127,7 @@ chmod 0755 "$tmp_dir/cratebay-guest-agent"
 
 echo ""
 echo "== Download runtime kernel+initramfs (${arch}) =="
-release_base="https://dl-cdn.alpinelinux.org/alpine/${alpine_version}/releases/${arch}/netboot"
+release_base="${alpine_mirror}/${alpine_version}/releases/${arch}/netboot"
 curl -fL --retry 3 --retry-delay 1 -o "$tmp_dir/initramfs.gz" "${release_base}/initramfs-${netboot_flavor}"
 if [[ "$arch" == "aarch64" ]]; then
   ubuntu_kernel_url="${ubuntu_cloud_base}/${ubuntu_release}/release/unpacked/ubuntu-${ubuntu_release}-server-cloudimg-arm64-vmlinuz-generic"
@@ -387,10 +388,11 @@ import urllib.request
 
 alpine_version = sys.argv[1]
 arch = sys.argv[2]
+alpine_mirror = os.environ.get("CRATEBAY_ALPINE_MIRROR", "https://dl-cdn.alpinelinux.org/alpine")
 
 repos = [
-    ("main", f"https://dl-cdn.alpinelinux.org/alpine/{alpine_version}/main/{arch}/APKINDEX.tar.gz"),
-    ("community", f"https://dl-cdn.alpinelinux.org/alpine/{alpine_version}/community/{arch}/APKINDEX.tar.gz"),
+    ("main", f"{alpine_mirror}/{alpine_version}/main/{arch}/APKINDEX.tar.gz"),
+    ("community", f"{alpine_mirror}/{alpine_version}/community/{arch}/APKINDEX.tar.gz"),
 ]
 
 pkg = {}  # name -> {"repo":..., "ver":..., "deps":[...], "provides":[...]}
@@ -472,7 +474,7 @@ download_apk() {
   local name="$2"
   local version="$3"
   local out="$4"
-  local url="https://dl-cdn.alpinelinux.org/alpine/${alpine_version}/${repo}/${arch}/${name}-${version}.apk"
+  local url="${alpine_mirror}/${alpine_version}/${repo}/${arch}/${name}-${version}.apk"
   curl -fL --retry 3 --retry-delay 1 -o "$out" "$url"
 }
 

@@ -51,7 +51,7 @@ const MIN_MACOS_VERSION: u32 = 13;
 const RUNNER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Timeout for Docker to become responsive after the VM starts.
-const DOCKER_READY_TIMEOUT: Duration = Duration::from_secs(45);
+const DOCKER_READY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Number of ping attempts performed in each health check cycle.
 const HEALTH_PING_ATTEMPTS: usize = 3;
@@ -585,7 +585,12 @@ impl MacOSRuntime {
             .any(|arg| arg.starts_with("cratebay_dns="))
         {
             let dns_servers = Self::resolve_dns_servers();
-            if !dns_servers.is_empty() {
+            if dns_servers.is_empty() {
+                // This shouldn't happen since resolve_dns_servers always adds defaults,
+                // but guard against it anyway.
+                tracing::warn!("DNS server list is empty, injecting failsafe DNS");
+                cmdline.push_str(" cratebay_dns=1.1.1.1,8.8.8.8");
+            } else {
                 cmdline.push_str(" cratebay_dns=");
                 cmdline.push_str(&dns_servers.join(","));
             }
@@ -610,6 +615,7 @@ impl MacOSRuntime {
             cmdline.push_str(&common::docker_proxy_port().to_string());
         }
 
+        tracing::debug!("VM boot cmdline: {}", cmdline);
         cmdline
     }
 
@@ -732,6 +738,7 @@ impl MacOSRuntime {
 
     /// Query macOS DNS configuration via `scutil --dns`.
     fn resolve_dns_servers() -> Vec<String> {
+        tracing::debug!("Resolving DNS servers for runtime VM...");
         const DEFAULT_DNS: &[&str] = &["1.1.1.1", "8.8.8.8"];
 
         // Check env override
@@ -742,6 +749,7 @@ impl MacOSRuntime {
                 .filter(|s| !s.is_empty() && s.parse::<std::net::Ipv4Addr>().is_ok())
                 .collect();
             if !servers.is_empty() {
+                tracing::info!("Using DNS from CRATEBAY_RUNTIME_DNS: {:?}", servers);
                 return servers;
             }
         }
@@ -774,6 +782,12 @@ impl MacOSRuntime {
             }
         }
 
+        if servers.is_empty() {
+            tracing::warn!("No DNS servers found from scutil, will use defaults only");
+        } else {
+            tracing::debug!("DNS servers from scutil: {:?}", servers);
+        }
+
         // Ensure defaults are included
         for dns in DEFAULT_DNS {
             if seen.insert(dns.to_string()) {
@@ -781,6 +795,7 @@ impl MacOSRuntime {
             }
         }
 
+        tracing::info!("Final DNS servers for VM: {:?}", servers);
         servers
     }
 
@@ -876,14 +891,11 @@ impl MacOSRuntime {
             sock_path.to_string_lossy()
         );
 
-        // Architecture-based default socket forwarding mode:
-        // - Apple Silicon (aarch64): vsock is reliable and lower latency
-        // - Intel (x86_64): reverse TCP is more stable on Intel Macs
-        let default_forward_mode = if cfg!(target_arch = "aarch64") {
-            "vsock"
-        } else {
-            "tcp"
-        };
+        // Default to TCP forwarding mode on all architectures.
+        // vsock requires the vmw_vsock_virtio_transport kernel module which
+        // may not be present in the initramfs. TCP reverse-connect works
+        // reliably across both aarch64 and x86_64.
+        let default_forward_mode = "tcp";
 
         let forward_mode = std::env::var("CRATEBAY_RUNTIME_SOCKET_FORWARD")
             .ok()
@@ -923,6 +935,27 @@ impl MacOSRuntime {
             }
         }
 
+        // Auto-start built-in HTTP CONNECT proxy inside the VZ runner if the
+        // proxy was auto-configured (env var was set by start() above).
+        // The proxy runs inside the long-lived VZ runner process.
+        if std::env::var("CRATEBAY_RUNTIME_HTTP_PROXY")
+            .ok()
+            .filter(|v| v.contains("192.168.64.1:"))
+            .is_some()
+        {
+            // Extract port from the env var (e.g. "192.168.64.1:3128" → 3128)
+            let proxy_port = std::env::var("CRATEBAY_RUNTIME_HTTP_PROXY")
+                .ok()
+                .and_then(|v| v.rsplit(':').next().map(|s| s.to_string()))
+                .unwrap_or_else(|| "3128".to_string());
+            cmd.arg("--http-connect-proxy")
+                .arg(format!("0.0.0.0:{}", proxy_port));
+            tracing::info!(
+                "VZ runner will host built-in HTTP proxy on 0.0.0.0:{}",
+                proxy_port,
+            );
+        }
+
         // Rosetta support
         if common::env_flag_enabled("CRATEBAY_RUNTIME_ROSETTA") && Self::rosetta_available() {
             cmd.arg("--rosetta");
@@ -946,6 +979,15 @@ impl MacOSRuntime {
                 Ok(())
             });
         }
+
+        tracing::debug!(
+            "VZ runner command: {:?} (kernel={}, disk={}, cpus={}, mem={}MB)",
+            runner_path.display(),
+            paths.kernel_path.display(),
+            disk.display(),
+            self.config.cpu_cores,
+            self.config.memory_mb,
+        );
 
         let child = cmd.spawn().map_err(|e| {
             AppError::Runtime(format!(
@@ -1064,7 +1106,7 @@ impl RuntimeManager for MacOSRuntime {
     /// 2. Whether runtime images are installed and ready
     /// 3. Whether the VZ runner process is alive
     /// 4. Whether Docker is responsive on the socket
-    async fn detect(&self) -> Result<RuntimeState, AppError> {
+    async fn get_state(&self) -> Result<RuntimeState, AppError> {
         // Check macOS version
         match Self::check_macos_version() {
             Ok(true) => {}
@@ -1130,7 +1172,7 @@ impl RuntimeManager for MacOSRuntime {
         &self,
         on_progress: Box<dyn Fn(ProvisionProgress) + Send>,
     ) -> Result<(), AppError> {
-        self.set_state(RuntimeState::Provisioning)?;
+        self.set_state(RuntimeState::Starting)?;
 
         // Stage 1: Check prerequisites
         on_progress(ProvisionProgress {
@@ -1306,6 +1348,59 @@ impl RuntimeManager for MacOSRuntime {
             }
 
             self.set_state(RuntimeState::Starting)?;
+
+            // If no external HTTP proxy is configured, auto-enable the built-in
+            // HTTP CONNECT proxy inside the VZ runner process.  The VZ runner is
+            // long-lived so the proxy survives after the CLI/GUI process exits.
+            // We set the env var here so that build_cmdline() injects the correct
+            // `cratebay_http_proxy=` kernel argument for the guest.
+            if Self::resolve_runtime_http_proxy_config().is_none() {
+                let proxy_port = 3128u16;
+                std::env::set_var(
+                    "CRATEBAY_RUNTIME_HTTP_PROXY",
+                    format!("192.168.64.1:{}", proxy_port),
+                );
+                std::env::set_var("CRATEBAY_RUNTIME_HTTP_PROXY_BRIDGE", "0");
+                tracing::info!(
+                    "Auto-enabling built-in HTTP proxy (guest will use 192.168.64.1:{})",
+                    proxy_port,
+                );
+            }
+
+            // Check if an existing VZ runner (from a previous GUI session) is
+            // still alive and Docker is already responsive.  If so, adopt it
+            // instead of killing it and restarting — this preserves running
+            // containers across GUI restarts.
+            let existing_pids = find_runner_processes();
+            if !existing_pids.is_empty() {
+                let socket_path = self.docker_socket_path();
+                if socket_path.exists() {
+                    if let Ok(docker) = bollard::Docker::connect_with_unix(
+                        socket_path.to_str().unwrap_or_default(),
+                        5,
+                        bollard::API_DEFAULT_VERSION,
+                    ) {
+                        if crate::docker::is_available(&docker).await {
+                            // Adopt the existing runner
+                            let pid = existing_pids[0];
+                            tracing::info!(
+                                "Adopting existing VZ runner (PID {}) — Docker is responsive",
+                                pid,
+                            );
+                            if let Ok(mut guard) = self.runner_pid.lock() {
+                                *guard = Some(pid);
+                            }
+                            if let Ok(mut guard) = self.started_at.lock() {
+                                if guard.is_none() {
+                                    *guard = Some(Instant::now());
+                                }
+                            }
+                            self.set_state(RuntimeState::Ready)?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
 
             // Clean up any stray runner processes from previous sessions
             cleanup_stray_runner_processes(None, "start preflight");
@@ -1559,7 +1654,7 @@ impl RuntimeManager for MacOSRuntime {
             docker_version,
             uptime_seconds,
             last_check: chrono::Utc::now().to_rfc3339(),
-            docker_source: None,
+            docker_source: Some("builtin".to_string()),
         })
     }
 
@@ -1694,8 +1789,8 @@ mod tests {
         let rt = test_runtime();
         assert_eq!(rt.get_state().unwrap(), RuntimeState::None);
 
-        rt.set_state(RuntimeState::Provisioning).unwrap();
-        assert_eq!(rt.get_state().unwrap(), RuntimeState::Provisioning);
+        rt.set_state(RuntimeState::Starting).unwrap();
+        assert_eq!(rt.get_state().unwrap(), RuntimeState::Starting);
 
         rt.set_state(RuntimeState::Ready).unwrap();
         assert_eq!(rt.get_state().unwrap(), RuntimeState::Ready);
@@ -1802,7 +1897,7 @@ mod tests {
     async fn detect_returns_none_when_no_images() {
         let rt = test_runtime();
         // With default config and no images installed, should return None or Provisioned
-        let state = rt.detect().await.unwrap();
+        let state = RuntimeManager::get_state(&rt).await.unwrap();
         // The exact state depends on whether runtime images happen to be
         // installed on this machine
         assert!(
@@ -1889,7 +1984,6 @@ mod tests {
         let rt = test_runtime();
         let transitions = vec![
             RuntimeState::None,
-            RuntimeState::Provisioning,
             RuntimeState::Provisioned,
             RuntimeState::Starting,
             RuntimeState::Ready,

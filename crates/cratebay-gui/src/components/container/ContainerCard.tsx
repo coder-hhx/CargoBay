@@ -92,24 +92,19 @@ export function ContainerCard({ container }: ContainerCardProps) {
 
       {/* Specs (limits) */}
       {(container.cpuCores !== undefined || container.memoryMb !== undefined) && (
-        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-muted-foreground">
           {container.cpuCores !== undefined && (
-            <span className="inline-flex items-center gap-1">
-              <span className="text-[10px] uppercase tracking-wider">CPU</span>
-              <span className="font-mono">{container.cpuCores} cores</span>
-            </span>
+            <span>CPU {container.cpuCores} cores</span>
           )}
           {container.memoryMb !== undefined && (
-            <span className="inline-flex items-center gap-1">
-              <span className="text-[10px] uppercase tracking-wider">MEM</span>
-              <span className="font-mono">{container.memoryMb} MB</span>
-            </span>
+            <span>MEM {container.memoryMb} MB</span>
           )}
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex items-center gap-1 border-t border-border/50 pt-3">
+      {/* Actions — negative margins extend border to card edge,
+           pl-2 (16-2=14px effective) so button icon (with its own pl) aligns with text above */}
+      <div className="-mx-4 -mb-4 flex items-center gap-0.5 border-t border-border/50 pl-2 pr-2 py-2">
         {isRunning ? (
           <>
             <Button

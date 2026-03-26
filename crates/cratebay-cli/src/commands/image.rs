@@ -65,7 +65,7 @@ pub async fn search(
 pub async fn pull(docker: &Docker, image: &str) -> Result<()> {
     eprintln!("Pulling image: {}", image);
 
-    let cb: container::PullProgressCallback = Box::new(|progress| {
+    let cb: container::PullProgressCallback = std::sync::Arc::new(|progress| {
         if progress.total_bytes > 0 {
             let pct = (progress.current_bytes as f64 / progress.total_bytes as f64) * 100.0;
             eprintln!("{:>6.1}% {}", pct, progress.status);

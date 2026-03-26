@@ -13,6 +13,7 @@ pub mod images;
 pub mod llm_proxy;
 pub mod mcp;
 pub mod models;
+pub mod proxy;
 pub mod runtime;
 pub mod storage;
 pub mod validation;

@@ -31,16 +31,14 @@ use crate::models::ResourceUsage;
 /// Runtime lifecycle state.
 ///
 /// Follows the state machine defined in runtime-spec.md §3.1:
-/// `None → Provisioning → Provisioned → Starting → Ready → Stopping → Stopped`
+/// `None → Provisioned → Starting → Ready → Stopping → Stopped`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RuntimeState {
     /// No runtime detected, needs provisioning.
     None,
-    /// Downloading / preparing VM image.
-    Provisioning,
     /// Image ready, VM not started.
     Provisioned,
-    /// VM is booting.
+    /// VM is booting or Docker initializing.
     Starting,
     /// Docker is available and responsive.
     Ready,
@@ -88,8 +86,7 @@ pub struct HealthStatus {
     pub uptime_seconds: Option<u64>,
     /// Timestamp of this health check (RFC 3339).
     pub last_check: String,
-    /// Which Docker backend is currently connected.
-    /// One of: "builtin" | "colima" | "other" | null.
+    /// Which Docker backend is currently connected (always "builtin" for CrateBay runtime).
     pub docker_source: Option<String>,
 }
 
@@ -173,8 +170,8 @@ pub enum Protocol {
 /// All async methods use `async-trait` to maintain object-safety.
 #[async_trait]
 pub trait RuntimeManager: Send + Sync {
-    /// Detect the current runtime state.
-    async fn detect(&self) -> Result<RuntimeState, AppError>;
+    /// Query the current lifecycle state (fast local query, <100ms).
+    async fn get_state(&self) -> Result<RuntimeState, AppError>;
 
     /// Download and prepare the VM image (first-run provisioning).
     ///
@@ -227,59 +224,6 @@ pub fn create_runtime_manager() -> Box<dyn RuntimeManager> {
 }
 
 // ---------------------------------------------------------------------------
-// External Docker Detection (§10.2)
-// ---------------------------------------------------------------------------
-
-/// Detect an existing external Docker installation.
-///
-/// Checks, in priority order:
-/// 1. `DOCKER_HOST` environment variable
-/// 2. Platform-specific known socket paths
-///
-/// Returns `Some(path)` if a valid Docker socket is found, `None` otherwise.
-pub fn detect_external_docker() -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
-
-    #[cfg(target_os = "macos")]
-    {
-        let paths = [
-            home.join(".colima/default/docker.sock"),
-            home.join(".orbstack/run/docker.sock"),
-            PathBuf::from("/var/run/docker.sock"),
-            home.join(".docker/run/docker.sock"),
-        ];
-        for path in paths {
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let paths = [
-            PathBuf::from("/var/run/docker.sock"),
-            home.join(".docker/run/docker.sock"),
-        ];
-        for path in paths {
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let pipe = PathBuf::from(r"\\.\pipe\docker_engine");
-        if pipe.exists() {
-            return Some(pipe);
-        }
-    }
-
-    Option::None
-}
-
-// ---------------------------------------------------------------------------
 // Health Monitor (§9.2)
 // ---------------------------------------------------------------------------
 
@@ -328,7 +272,7 @@ pub fn start_health_monitor(
                                 docker_version: None,
                                 uptime_seconds: None,
                                 last_check: chrono::Utc::now().to_rfc3339(),
-                                docker_source: None,
+                                docker_source: Some("builtin".to_string()),
                             });
                         }
                     }
@@ -367,28 +311,6 @@ mod tests {
     }
 
     #[test]
-    fn detect_external_docker_returns_option() {
-        // detect_external_docker() should return Option<PathBuf> and not panic,
-        // regardless of whether Docker is installed on the test machine.
-        let result = detect_external_docker();
-        // We can't assert a specific value since it depends on the environment,
-        // but we verify the function runs without panicking and returns a valid type.
-        match result {
-            Some(path) => {
-                // If a path is returned, it should exist on disk
-                assert!(
-                    path.exists(),
-                    "Detected Docker path should exist: {:?}",
-                    path
-                );
-            }
-            None => {
-                // No external Docker found — perfectly valid
-            }
-        }
-    }
-
-    #[test]
     fn provision_progress_default() {
         let progress = ProvisionProgress::default();
         assert_eq!(progress.percent, 0.0);
@@ -412,7 +334,6 @@ mod tests {
     fn runtime_state_all_variants_serialize_deserialize() {
         let variants = vec![
             (RuntimeState::None, "\"None\""),
-            (RuntimeState::Provisioning, "\"Provisioning\""),
             (RuntimeState::Provisioned, "\"Provisioned\""),
             (RuntimeState::Starting, "\"Starting\""),
             (RuntimeState::Ready, "\"Ready\""),
@@ -465,7 +386,7 @@ mod tests {
             docker_version: Some("24.0.7".into()),
             uptime_seconds: Some(3600),
             last_check: "2026-03-20T00:00:00Z".into(),
-            docker_source: None,
+            docker_source: Some("builtin".to_string()),
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"Ready\""));
@@ -488,7 +409,7 @@ mod tests {
             docker_version: None,
             uptime_seconds: None,
             last_check: "2026-03-20T00:00:00Z".into(),
-            docker_source: None,
+            docker_source: Some("builtin".to_string()),
         };
         let json = serde_json::to_string(&status).unwrap();
         let deserialized: HealthStatus = serde_json::from_str(&json).unwrap();

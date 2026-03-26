@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error as _;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::AppError;
@@ -62,13 +63,6 @@ pub async fn list(
             let label_filters: Vec<String> =
                 label.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
             list_filters.insert("label".to_string(), label_filters);
-        }
-        // managed_only: filter to only CrateBay-managed containers
-        if f.managed_only == Some(true) {
-            let existing = list_filters
-                .entry("label".to_string())
-                .or_insert_with(Vec::new);
-            existing.push("com.cratebay.sandbox.managed=true".to_string());
         }
     }
 
@@ -1122,7 +1116,7 @@ pub async fn image_tag(docker: &Docker, source: &str, target: &str) -> Result<()
 }
 
 /// Progress callback for image pull operations.
-pub type PullProgressCallback = Box<dyn Fn(PullProgress) + Send + 'static>;
+pub type PullProgressCallback = Arc<dyn Fn(PullProgress) + Send + Sync + 'static>;
 
 /// Pull progress info.
 #[derive(Debug, Clone)]
@@ -1253,9 +1247,20 @@ pub async fn image_pull_with_mirrors(
         );
 
         // For mirrors, we don't pass the progress callback since it might be a transient attempt
-        match image_pull(docker, image, Some(mirror), None).await {
+        match image_pull(docker, image, Some(mirror), on_progress.clone()).await {
             Ok(()) => {
                 tracing::info!("Successfully pulled '{}' via mirror '{}'", image, mirror);
+                // Re-tag the mirror image to the original name and remove the mirror tag.
+                let mirror_ref = rewrite_image_for_mirror(image, mirror);
+                if mirror_ref != image {
+                    if let Err(e) = image_tag(docker, &mirror_ref, image).await {
+                        tracing::warn!("Failed to re-tag '{}' → '{}': {}", mirror_ref, image, e);
+                    } else {
+                        // Remove the mirror-specific tag (best-effort)
+                        let _ = image_remove(docker, &mirror_ref, false).await;
+                        tracing::info!("Re-tagged '{}' → '{}' and removed mirror tag", mirror_ref, image);
+                    }
+                }
                 return Ok(());
             }
             Err(e) => {

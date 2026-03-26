@@ -628,7 +628,7 @@ impl RuntimeManager for LinuxRuntime {
     /// 2. Whether Docker is responsive (via TCP ping).
     /// 3. Whether runtime images are provisioned.
     /// 4. KVM and QEMU binary availability.
-    async fn detect(&self) -> Result<RuntimeState, AppError> {
+    async fn get_state(&self) -> Result<RuntimeState, AppError> {
         let host = linux_docker_host();
 
         // If QEMU is running, check Docker readiness.
@@ -697,7 +697,7 @@ impl RuntimeManager for LinuxRuntime {
     ) -> Result<(), AppError> {
         {
             let mut state = self.state.lock().await;
-            *state = RuntimeState::Provisioning;
+            *state = RuntimeState::Starting;
         }
 
         // Stage 1: Check prerequisites.
@@ -818,7 +818,7 @@ impl RuntimeManager for LinuxRuntime {
                 RuntimeState::Starting => {
                     return Err(AppError::Runtime("Runtime is already starting".into()));
                 }
-                RuntimeState::Provisioning => {
+                RuntimeState::Starting => {
                     return Err(AppError::Runtime(
                         "Runtime is currently being provisioned".into(),
                     ));
@@ -1066,7 +1066,7 @@ impl RuntimeManager for LinuxRuntime {
             docker_version: None, // Would require a full Docker API call
             uptime_seconds,
             last_check: chrono::Utc::now().to_rfc3339(),
-            docker_source: None,
+            docker_source: Some("builtin".to_string()),
         })
     }
 
@@ -1391,7 +1391,7 @@ mod tests {
     #[tokio::test]
     async fn detect_returns_valid_state() {
         let rt = LinuxRuntime::new();
-        let state = rt.detect().await;
+        let state = rt.get_state().await;
         // On a non-Linux platform or without KVM, detect should still succeed
         // and return a valid state.
         assert!(state.is_ok());

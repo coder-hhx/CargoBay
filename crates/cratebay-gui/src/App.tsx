@@ -43,7 +43,7 @@ interface RuntimeHealthPayload {
   docker_version: string | null;
   uptime_seconds: number | null;
   last_check: string;
-  /** Which Docker backend is connected: "builtin" | "colima" | "other" | null */
+  /** Which Docker backend is connected (always "builtin" in v2) */
   docker_source: string | null;
 }
 
@@ -74,15 +74,12 @@ function mapRuntimeState(state: string | Record<string, string>): "starting" | "
 function setEngineState(
   runtimeStatus: "starting" | "running" | "stopped" | "error",
   dockerConnected: boolean,
-  dockerSource?: string | null,
 ) {
-  const source = (dockerSource as import("@/stores/appStore").DockerSource) ?? null;
   useAppStore.setState({
     runtimeStatus,
     dockerConnected,
-    // builtinRuntimeReady = true only when source is builtin AND docker is responsive
-    builtinRuntimeReady: dockerConnected && source === "builtin",
-    ...(source !== undefined ? { dockerSource: source } : {}),
+    // builtinRuntimeReady = true when docker is responsive
+    builtinRuntimeReady: dockerConnected,
   });
 }
 
@@ -173,12 +170,11 @@ function App() {
       (payload) => {
         const nextRuntimeStatus = mapRuntimeState(payload.runtime_state);
         const nextDockerConnected = payload.docker_responsive;
-        const source = payload.docker_source ?? null;
         const current = useAppStore.getState();
 
         // Any confirmed Docker responsiveness means engine is effectively ready.
         if (nextDockerConnected) {
-          setEngineState("running", true, source);
+          setEngineState("running", true);
           markHealthy();
           return;
         }
@@ -194,7 +190,7 @@ function App() {
           return;
         }
 
-        setEngineState(nextRuntimeStatus, nextDockerConnected, source);
+        setEngineState(nextRuntimeStatus, nextDockerConnected);
       },
     ).then((unsub) => {
       unlisten = unsub;

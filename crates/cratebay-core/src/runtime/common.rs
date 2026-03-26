@@ -136,7 +136,7 @@ pub fn docker_proxy_port() -> u32 {
 ///
 /// Override via `CRATEBAY_DOCKER_SOCKET_PATH`.
 pub fn host_docker_socket_path() -> &'static Path {
-    DOCKER_SOCKET_PATH
+    let path = DOCKER_SOCKET_PATH
         .get_or_init(|| {
             if let Ok(p) = std::env::var("CRATEBAY_DOCKER_SOCKET_PATH") {
                 if !p.trim().is_empty() {
@@ -167,7 +167,9 @@ pub fn host_docker_socket_path() -> &'static Path {
                 .join("runtime")
                 .join("docker.sock")
         })
-        .as_path()
+        .as_path();
+    tracing::debug!("Host Docker socket path: {}", path.display());
+    path
 }
 
 /// Per-VM Docker socket path on the host.

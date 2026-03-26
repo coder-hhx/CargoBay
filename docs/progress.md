@@ -1,15 +1,14 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **阶段**: 开发阶段 (Phase 2) — Spec 对齐完成，聚焦 VM 网络修复 + 容器端到端验证 + Runtime 稳定化/移植（built-in runtime 主线 / Podman fallback）
-- **日期**: 2026-03-25
+- **阶段**: 开发阶段 (Phase 2) — Runtime 架构重构完成，自研 runtime 端到端可用
+- **日期**: 2026-03-26
 - **团队模式**: 开发阶段 6 人团队（见 agent-team-workflow.md §1.1）
 - **Git HEAD**: `rewrite/v2` 分支
 
 ## Runtime 策略（AI 必读）
-- **built-in runtime 是唯一主线**：后续 runtime、container、image 相关开发默认优先修这条链路
-- **Podman 只是 fallback / escape hatch**：仅用于兼容恢复、开发/CI 应急、或用户明确要求的特殊环境
-- **不要把 Podman 当第二主线继续扩写**：非人工明确批准，不新增 Podman 专属产品能力或分叉架构
+- **built-in runtime 是唯一路径**：已移除所有外部 Docker 支持（Colima/OrbStack/Docker Desktop/Podman）
+- **不再有 fallback**：CrateBay 只使用自研内置 runtime
 - **控制面边界保持 Docker-compatible**：继续围绕 `bollard`、Docker socket/host 语义实现
 - **恢复会话时必须先读**：`AGENTS.md`、`docs/specs/runtime-spec.md`、`docs/references/tech-decisions.md` 中的 runtime 策略
 
@@ -111,6 +110,58 @@ pnpm run test               → ✅ 4 passed (Vitest)
   - ✅ 移植分 3 Phase，~10 文件，~5200 行，优先级 macOS → Linux → Windows
 
 ## 进行中 🔄
+
+### Runtime 架构重构 + 端到端验证（2026-03-26）
+
+**Phase 1: 移除外部 Docker 支持 ✅**
+- ✅ 删除 Podman 引擎模块 (`engine/podman.rs`)
+- ✅ 删除 Colima/OrbStack/Docker Desktop 检测逻辑
+- ✅ 前端删除 CrateBay/External Docker 双标签页、`allowExternalDocker` toggle
+- ✅ 简化为纯内置 runtime 单一代码路径
+
+**Phase 2: 规范化 RuntimeManager trait ✅**
+- ✅ 状态机从 8 个变体简化为 7 个（移除 `Provisioning`）
+- ✅ `detect()` → `get_state()` 语义更清晰
+- ✅ 三平台实现（macOS/Linux/Windows）适配完成
+
+**Phase 3: 统一 GUI/CLI 启动流程 ✅**
+- ✅ 新增 CLI `cratebay runtime start/stop/status/provision` 命令
+- ✅ GUI/CLI 复用 `engine::ensure_docker()` 统一路径
+
+**Phase 4: VM 网络修复 ✅**
+- ✅ DNS 注入诊断日志全链路覆盖（macos.rs, common.rs, guest-agent, vz runner）
+- ✅ DNS failsafe：空列表时强制注入 `1.1.1.1,8.8.8.8`
+- ✅ aarch64 runtime 镜像构建（Alpine kernel + initramfs + Docker + guest-agent）
+- ✅ 构建脚本支持 `CRATEBAY_ALPINE_MIRROR` 国内镜像加速
+- ✅ vsock 内核模块缺失 → 默认改为 TCP 转发模式
+- ✅ Docker 等待超时 45s → 120s
+- ✅ VZ NAT 出口不通 → VZ runner 内置 HTTP CONNECT 代理（自动绑定 0.0.0.0:3128）
+- ✅ GUI 重启不再杀容器 → `start()` 先 adopt 已运行的 VZ runner 进程
+
+**Phase 5: 容器/镜像管理完善 ✅**
+- ✅ 镜像搜索（Docker Engine API + Docker Hub HTTP API 双路径）
+- ✅ Mirror 拉取后自动 re-tag + 清理 mirror tag
+- ✅ `PullProgressCallback` 从 `Box` 改为 `Arc`，mirror 阶段也有进度回调
+- ✅ 全局拉取任务列表（pullStore + PullTaskList 组件）
+- ✅ 多镜像并行拉取，跨 tab 进度可见
+- ✅ 拉取完成自动刷新本地镜像列表
+
+**GUI 修复 ✅**
+- ✅ 创建容器对话框宽度溢出 → `sm:max-w-lg`
+- ✅ 容器卡片 CPU/MEM 字体统一为 `text-xs`
+- ✅ 容器卡片底部按钮栏对齐（左右边距与内容一致）
+- ✅ 主题下拉"system"→"跟随系统"中文显示
+- ✅ 设置 Tab 增加下边距
+- ✅ 运行时设置简化（删除桥接等高级选项）
+- ✅ 搜索页删除多余的全局"拉取"按钮
+- ✅ 镜像删除改为 `force: true` + 刷新列表
+
+**端到端验证结果 ✅**
+- ✅ `cratebay runtime start` — VM 启动 + Docker 就绪（9 秒）
+- ✅ `cratebay image pull alpine:3.20` — 通过内置 HTTP 代理拉取成功
+- ✅ `cratebay container create/exec/stop/delete` — 全流程成功
+- ✅ GUI 打包安装（CrateBay.app）— 容器管理、镜像搜索/拉取均可用
+- ✅ `cargo test` 344 passed / `pnpm test` 217 passed / `pnpm typecheck` 零错误
 
 ### GUI + Docker 集成优化（2026-03-22）
 
@@ -219,25 +270,13 @@ pnpm run test               → ✅ 4 passed (Vitest)
 ## 待开始 📋
 
 ### 当前优先项
-1. **VM 网络问题** — CrateBay 内置 VM 的 Docker 仍无法联网拉取镜像，所有 mirrors 和直连都超时
-2. **容器创建端到端验证** — 需要解决网络问题或准备可用本地测试镜像，完成 create → start → exec → stop → delete 全流程验证
-3. **任务 F: 自研 Runtime 稳定化/移植实施**
-   - 策略前提：**built-in runtime 为主线，Podman 仅为 fallback**
-   - Phase 1: 基础设施（images.rs, fsutil.rs, store 兼容层）
-   - Phase 2: 核心 Runtime（common.rs + 重写 macos/linux/windows.rs）
-   - Phase 3: 集成（mod.rs + main.rs + system.rs 适配）
-   - 优先级：macOS → Linux → Windows
-
-### 本轮已完成
-- ✅ 任务 E: Spec 文档对齐更新
-- ✅ 任务 D: 修复 pre-commit 钩子 Bug
-
-### 待人工决策
-1. **是否立即进入 Runtime 移植实施？** 若进入，按 macOS → Linux → Windows 执行
+1. **Apple Developer ID 签名** — 获取 com.apple.vm.networking entitlement 让 VZ NAT 原生工作，替代内置 HTTP 代理桥接
+2. **vsock 内核模块** — 将 vmw_vsock_virtio_transport 加入 initramfs，恢复 vsock 低延迟转发模式
+3. **GUI 打磨** — 容器详情面板、端口映射 UI、Volume 管理
+4. **Linux/Windows Runtime 验证** — 在对应平台上运行端到端测试
 
 ## 阻塞/问题 ⚠️
-- **VM 网络问题**: 内置 VM 中 Docker 拉取镜像超时，阻塞真实容器端到端验证
-- **CodeBuddy Agent 框架 Bug**: 进程内 agent 注册表持久化，跨 TeamDelete 后仍阻止创建同名 agent，需要**重启新会话**才能创建新团队
+- **VZ NAT 出口限制**: macOS VZ.framework 的 NAT 需要 Apple Developer ID 签名才能获取 `com.apple.vm.networking` entitlement。当前通过内置 HTTP CONNECT 代理桥接解决，正式发布需要 Developer ID 签名。
 
 ## 文档完成明细
 
@@ -291,39 +330,37 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：Spec 对齐已完成，聚焦 VM 网络修复 + 容器端到端验证 + Runtime 移植决策（2026-03-25）
+### 当前阶段：Runtime 重构完成，自研 runtime 端到端可用（2026-03-26）
 
-Step 0-7 基础骨架全部完成。GUI 已经能构建安装运行，Docker 基本集成完成。状态栏抖动和命令并发阻塞问题、Spec 对齐与 pre-commit 钩子问题已修复。
+Step 0-7 基础骨架 + Runtime 架构重构全部完成。GUI 已打包安装可用，容器管理和镜像搜索/拉取端到端验证通过。
 
-**执行约束：** built-in runtime 是主线；Podman 仅作 fallback。新会话恢复后，不要把 Podman 当成并行主路线继续扩展。
+**执行约束：** built-in runtime 是唯一路径。外部 Docker 支持已完全移除。
 
-### 已解决问题（本次会话）
-- ✅ 状态栏从"引擎就绪"回退"启动中"：health monitor 共享连接优先 + 降级阈值上调
-- ✅ 容器/镜像/状态操作互相阻塞：OnceCell 单例化初始化 + 快速路径无 ping
-- ✅ Spec 文档与代码实现重新对齐：补齐 `frontend-spec.md` / `backend-spec.md` / `api-spec.md`
-- ✅ pre-commit 钩子误拦截：`cratebay-cli --lib` 改为 `cratebay-cli --bins`
+### 已解决问题（本次会话 2026-03-26）
+- ✅ 移除所有外部 Docker 支持（Colima/OrbStack/Docker Desktop/Podman）
+- ✅ RuntimeManager trait 规范化（`detect()` → `get_state()`，状态机简化）
+- ✅ CLI `cratebay runtime start/stop/status/provision` 命令
+- ✅ aarch64 runtime 镜像构建 + 国内镜像加速（`CRATEBAY_ALPINE_MIRROR`）
+- ✅ VZ runner 签名 + 执行权限修复
+- ✅ vsock 不可用 → 默认 TCP 转发
+- ✅ VZ NAT 出口不通 → VZ runner 内置 HTTP CONNECT 代理桥接
+- ✅ GUI 重启不杀容器 → adopt 已运行的 VZ runner
+- ✅ Mirror 拉取 re-tag + 全局拉取任务列表
+- ✅ GUI 多处 UI 修复（对话框宽度、卡片对齐、主题翻译、设置简化等）
 
-### 剩余优先修复项
-1. **VM 网络问题** — CrateBay 内置 VM 的 Docker 无法联网拉取镜像，所有 mirrors 和直连都超时。这影响容器创建的完整测试
-2. **容器创建端到端验证** — 需要解决网络问题或找到其他方式创建有效测试镜像
-
-### 待人工决策（阻塞后续工作）
-1. **是否立即进入 Runtime 移植实施？** 若进入，优先 macOS
+### 剩余优先项
+1. **Apple Developer ID 签名** — 获取 `com.apple.vm.networking` entitlement
+2. **vsock 内核模块** — 恢复低延迟转发
+3. **GUI 打磨** — 容器详情面板、端口映射、Volume 管理
 
 ### 可执行步骤
 
 ```
 1. 读取 AGENTS.md + 本文件（progress.md）
-2. 按"用户永久规则"创建 cratebay-dev 固定团队
-3. 先确认并遵守 runtime 策略：built-in runtime 主线，Podman fallback
-4. 优先处理 VM 网络问题，确认内置 VM 能拉取镜像
-5. 完成容器 create → start → exec → stop → delete 端到端验证
-6. 询问用户是否立即开始任务 F（Runtime 移植，macOS 优先）
-7. 若用户确认，执行任务 F：
-   - Phase 1: 基础设施移植
-   - Phase 2: 核心 Runtime 重写
-   - Phase 3: 集成
-8. 完成后更新本文件
+2. 先确认并遵守 runtime 策略：built-in runtime 是唯一路径
+3. 运行 `cratebay runtime status` 确认 runtime 可用
+4. 根据用户需求继续 GUI 打磨或功能开发
+5. 完成后更新本文件
 ```
 
 ### Runtime 移植方案概要（来自 runtime-dev 分析）
