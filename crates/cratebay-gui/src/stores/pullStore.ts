@@ -91,11 +91,11 @@ export const usePullStore = create<PullState>()((set, get) => ({
         set((state) => ({
           tasks: state.tasks.map((t) =>
             t.id === channelId && !t.complete
-              ? { ...t, complete: true, error: "拉取超时 (120s)" }
+              ? { ...t, complete: true, error: "拉取超时 (5min)" }
               : t,
           ),
         }));
-      }, 120000);
+      }, 300000);
 
       // 轮询检查完成状态，清理超时和监听
       const checkInterval = window.setInterval(() => {

@@ -34,8 +34,8 @@ const MAX_HEADER_SIZE: usize = 8192;
 ///
 /// Returns the address it is listening on.
 pub async fn start_builtin_proxy(bind_addr: Option<SocketAddr>) -> Result<SocketAddr, String> {
-    let addr = bind_addr
-        .unwrap_or_else(|| SocketAddr::from(([192, 168, 64, 1], DEFAULT_PROXY_PORT)));
+    let addr =
+        bind_addr.unwrap_or_else(|| SocketAddr::from(([192, 168, 64, 1], DEFAULT_PROXY_PORT)));
 
     // Bind on the current runtime first so we can report the actual address.
     let listener = TcpListener::bind(addr)
@@ -112,7 +112,10 @@ async fn handle_proxy_connection(mut client: TcpStream, peer: SocketAddr) {
 
         let n = match tokio::time::timeout(IO_TIMEOUT, client.read(&mut buf[filled..])).await {
             Ok(Ok(0)) | Err(_) => {
-                tracing::debug!("Proxy: client {} disconnected or timed out during header read", peer);
+                tracing::debug!(
+                    "Proxy: client {} disconnected or timed out during header read",
+                    peer
+                );
                 return;
             }
             Ok(Ok(n)) => n,
@@ -150,7 +153,11 @@ async fn handle_proxy_connection(mut client: TcpStream, peer: SocketAddr) {
 
     let parts: Vec<&str> = request_line.splitn(3, ' ').collect();
     if parts.len() < 2 {
-        tracing::debug!("Proxy: malformed request line from {}: {:?}", peer, request_line);
+        tracing::debug!(
+            "Proxy: malformed request line from {}: {:?}",
+            peer,
+            request_line
+        );
         let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
         return;
     }
@@ -178,9 +185,7 @@ async fn handle_connect(mut client: TcpStream, peer: SocketAddr, target: &str) {
         Some(a) => a,
         None => {
             tracing::debug!("Proxy: bad CONNECT target {:?} from {}", target, peer);
-            let _ = client
-                .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                .await;
+            let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
             return;
         }
     };
@@ -189,9 +194,7 @@ async fn handle_connect(mut client: TcpStream, peer: SocketAddr, target: &str) {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             tracing::debug!("Proxy: failed to connect to {} for {}: {}", addr, peer, e);
-            let _ = client
-                .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-                .await;
+            let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
             return;
         }
         Err(_) => {
@@ -235,9 +238,7 @@ async fn handle_plain_http(
         Some(v) => v,
         None => {
             tracing::debug!("Proxy: bad URI {:?} from {}", target, peer);
-            let _ = client
-                .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                .await;
+            let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
             return;
         }
     };
@@ -246,9 +247,7 @@ async fn handle_plain_http(
         Some(a) => a,
         None => {
             tracing::debug!("Proxy: bad host {:?} from {}", host_port, peer);
-            let _ = client
-                .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                .await;
+            let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
             return;
         }
     };
@@ -258,9 +257,7 @@ async fn handle_plain_http(
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             tracing::debug!("Proxy: failed to connect to {} for {}: {}", addr, peer, e);
-            let _ = client
-                .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-                .await;
+            let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
             return;
         }
         Err(_) => {
@@ -284,10 +281,7 @@ async fn handle_plain_http(
     };
 
     // Build new request line: METHOD /path HTTP/1.1
-    let version = request_line
-        .splitn(3, ' ')
-        .nth(2)
-        .unwrap_or("HTTP/1.1");
+    let version = request_line.splitn(3, ' ').nth(2).unwrap_or("HTTP/1.1");
     let new_request_line = format!("{} {} {}\r\n", method, path, version);
 
     let mut forwarded_header = new_request_line;
@@ -305,9 +299,7 @@ async fn handle_plain_http(
     // Send rewritten headers to upstream.
     if let Err(e) = upstream.write_all(forwarded_header.as_bytes()).await {
         tracing::debug!("Proxy: upstream write error for {}: {}", peer, e);
-        let _ = client
-            .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            .await;
+        let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
         return;
     }
 
@@ -498,10 +490,7 @@ mod tests {
 
     #[test]
     fn resolve_target_ipv6_default_port() {
-        assert_eq!(
-            resolve_target("[::1]", 443),
-            Some("[::1]:443".to_string())
-        );
+        assert_eq!(resolve_target("[::1]", 443), Some("[::1]:443".to_string()));
     }
 
     #[test]

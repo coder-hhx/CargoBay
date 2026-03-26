@@ -73,18 +73,26 @@ function PullTaskRow({ task, onRemove }: { task: PullTask; onRemove: () => void 
     <div className="flex items-center justify-between gap-3 px-4 py-2">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-primary" />
-        <span className="truncate text-sm font-mono text-foreground">{task.image}</span>
+        <span className="truncate text-sm text-foreground">{task.image}</span>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-300"
-            style={{ width: `${Math.max(task.progress, 2)}%` }}
-          />
-        </div>
-        <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-right">
-          {task.progress}%
-        </span>
+        {task.progress > 0 ? (
+          <>
+            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300"
+                style={{ width: `${task.progress}%` }}
+              />
+            </div>
+            <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-right">
+              {task.progress}%
+            </span>
+          </>
+        ) : (
+          <span className="truncate text-xs text-muted-foreground max-w-[160px]">
+            {task.status || "准备中..."}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -42,10 +42,7 @@ pub async fn status() -> Result<()> {
         }
     }
 
-    println!(
-        "Socket: {}",
-        runtime.docker_socket_path().display()
-    );
+    println!("Socket: {}", runtime.docker_socket_path().display());
 
     Ok(())
 }

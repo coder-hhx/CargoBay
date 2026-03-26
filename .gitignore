@@ -47,3 +47,6 @@ assets/node_modules/
 
 # Tauri sidecar binaries (generated per-target)
 crates/cratebay-gui/src-tauri/bin/
+crates/cratebay-gui/test-results/
+crates/cratebay-gui/src-tauri/runtime-images/cratebay-runtime-aarch64/
+crates/cratebay-gui/src-tauri/bin/cratebay-vz-aarch64-apple-darwin

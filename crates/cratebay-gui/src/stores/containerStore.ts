@@ -211,11 +211,11 @@ export const useContainerStore = create<ContainerState>()((set, get) => ({
         const pullResult = await new Promise<{ success: boolean; error?: string }>((resolve) => {
           let unlistenFn: (() => void) | null = null;
 
-          // 120-second overall timeout for pull
+          // 5-minute overall timeout for pull
           const timeoutId = setTimeout(() => {
             unlistenFn?.();
-            resolve({ success: false, error: "镜像拉取超时（120秒）" });
-          }, 120000);
+            resolve({ success: false, error: "镜像拉取超时（5分钟）" });
+          }, 300000);
 
           void listen<{
             status: string;

@@ -24,10 +24,10 @@ use crate::models::{
 };
 
 const DOCKER_LIST_TIMEOUT: Duration = Duration::from_secs(8);
-const DOCKER_CREATE_TIMEOUT: Duration = Duration::from_secs(15);
-const DOCKER_START_TIMEOUT: Duration = Duration::from_secs(15);
-const DOCKER_STOP_TIMEOUT: Duration = Duration::from_secs(15);
-const DOCKER_DELETE_TIMEOUT: Duration = Duration::from_secs(15);
+const DOCKER_CREATE_TIMEOUT: Duration = Duration::from_secs(60);
+const DOCKER_START_TIMEOUT: Duration = Duration::from_secs(60);
+const DOCKER_STOP_TIMEOUT: Duration = Duration::from_secs(30);
+const DOCKER_DELETE_TIMEOUT: Duration = Duration::from_secs(30);
 const DOCKER_INSPECT_TIMEOUT: Duration = Duration::from_secs(8);
 const DOCKER_STATS_TIMEOUT: Duration = Duration::from_secs(8);
 const DOCKER_EXEC_SETUP_TIMEOUT: Duration = Duration::from_secs(12);
@@ -1157,7 +1157,7 @@ pub async fn image_pull(
     let mut last_progress_time = std::time::Instant::now();
 
     // 60-second overall timeout for the pull stream
-    let pull_timeout = std::time::Duration::from_secs(60);
+    let pull_timeout = std::time::Duration::from_secs(300);
     let start = std::time::Instant::now();
 
     loop {
@@ -1172,7 +1172,7 @@ pub async fn image_pull(
 
         // Wait for next stream item with per-chunk timeout (15s)
         let chunk_timeout =
-            tokio::time::timeout(std::time::Duration::from_secs(15), stream.next()).await;
+            tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
 
         match chunk_timeout {
             Ok(Some(Ok(info))) => {
@@ -1189,9 +1189,7 @@ pub async fn image_pull(
                     };
 
                     // Throttle progress callbacks to max once per 500ms
-                    if last_progress_time.elapsed() > std::time::Duration::from_millis(500)
-                        || total > 0
-                    {
+                    if last_progress_time.elapsed() > std::time::Duration::from_millis(500) {
                         cb(PullProgress {
                             status,
                             progress_detail: if progress.is_empty() {
@@ -1258,7 +1256,11 @@ pub async fn image_pull_with_mirrors(
                     } else {
                         // Remove the mirror-specific tag (best-effort)
                         let _ = image_remove(docker, &mirror_ref, false).await;
-                        tracing::info!("Re-tagged '{}' → '{}' and removed mirror tag", mirror_ref, image);
+                        tracing::info!(
+                            "Re-tagged '{}' → '{}' and removed mirror tag",
+                            mirror_ref,
+                            image
+                        );
                     }
                 }
                 return Ok(());
