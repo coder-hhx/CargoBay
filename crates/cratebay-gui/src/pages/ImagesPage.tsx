@@ -95,11 +95,11 @@ export function ImagesPage() {
             <Globe className="h-3 w-3" />
             {t("images", "searchImages")}
           </button>
+
+          {/* Pull tasks indicator */}
+          <PullTaskList />
         </div>
       </div>
-
-      {/* 全局拉取任务列表 — 在两个 tab 之间始终可见 */}
-      <PullTaskList />
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
@@ -443,7 +443,6 @@ function SearchImagesTab() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const startPull = usePullStore((s) => s.startPull);
-  const isPulling = usePullStore((s) => s.isPulling);
 
   const handleSearch = useCallback(async () => {
     if (query.trim().length === 0) return;
@@ -534,7 +533,6 @@ function SearchImagesTab() {
             <SearchResultCard
               key={`${result.source}-${result.reference}-${idx}`}
               result={result}
-              pulling={isPulling(result.reference)}
               onPull={() => handlePull(result.reference)}
             />
           ))}
@@ -546,41 +544,37 @@ function SearchImagesTab() {
 
 function SearchResultCard({
   result,
-  pulling,
   onPull,
 }: {
   result: ImageSearchResult;
-  pulling: boolean;
   onPull: () => void;
 }) {
   const { t } = useI18n();
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/30">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <Badge
-              variant="outline"
-              className="text-[10px]"
-            >
-              {result.source}
+    <div className="flex flex-col justify-between rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/30">
+      <div>
+        <div className="flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className="text-[10px]"
+          >
+            {result.source}
+          </Badge>
+          {result.official && (
+            <Badge className="border-primary/15 bg-primary/10 text-primary text-[10px]">
+              {t("images", "official")}
             </Badge>
-            {result.official && (
-              <Badge className="border-primary/15 bg-primary/10 text-primary text-[10px]">
-                {t("images", "official")}
-              </Badge>
-            )}
-          </div>
-          <span className="truncate text-sm font-semibold text-foreground">
-            {result.reference}
-          </span>
-          {result.description.length > 0 && (
-            <p className="line-clamp-2 text-xs text-muted-foreground">
-              {result.description}
-            </p>
           )}
         </div>
+        <span className="mt-1 block truncate text-sm font-semibold text-foreground">
+          {result.reference}
+        </span>
+        {result.description.length > 0 && (
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+            {result.description}
+          </p>
+        )}
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">
@@ -594,22 +588,15 @@ function SearchResultCard({
             {formatPulls(result.pulls)}
           </span>
         </div>
-        {pulling ? (
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-            <span className="text-xs text-muted-foreground">拉取中</span>
-          </div>
-        ) : (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1 px-2 text-xs"
-            onClick={onPull}
-          >
-            <Download className="h-3 w-3" />
-            {t("images", "pull")}
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 px-2 text-xs"
+          onClick={onPull}
+        >
+          <Download className="h-3 w-3" />
+          {t("images", "pull")}
+        </Button>
       </div>
     </div>
   );

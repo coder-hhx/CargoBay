@@ -9,8 +9,12 @@ export interface PullTask {
   status: string;
   complete: boolean;
   error: string | null;
+  currentBytes: number;
+  totalBytes: number;
+  speed: number;
 }
 
+// Event payload from Tauri emit — serde keeps snake_case
 interface ImagePullProgress {
   current_layer: number;
   total_layers: number;
@@ -18,6 +22,8 @@ interface ImagePullProgress {
   status: string;
   complete: boolean;
   error: string | null;
+  current_bytes: number;
+  total_bytes: number;
 }
 
 interface PullState {
@@ -28,6 +34,9 @@ interface PullState {
   isPulling: (image: string) => boolean;
 }
 
+// Speed tracking — kept outside store to avoid unnecessary re-renders
+const speedState = new Map<string, { lastBytes: number; lastTime: number }>();
+
 export const usePullStore = create<PullState>()((set, get) => ({
   tasks: [],
 
@@ -35,102 +44,124 @@ export const usePullStore = create<PullState>()((set, get) => ({
     const trimmedImage = image.trim();
     if (trimmedImage.length === 0) return;
 
-    // 如果该镜像已在拉取中，不重复拉取
     if (get().tasks.some((t) => t.image === trimmedImage && !t.complete)) {
       return;
     }
 
-    const channelId = `pull-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempId = `pull-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const task: PullTask = {
-      id: channelId,
-      image: trimmedImage,
-      progress: 0,
-      status: "准备中...",
-      complete: false,
-      error: null,
-    };
-
-    set((state) => ({ tasks: [task, ...state.tasks] }));
+    set((state) => ({
+      tasks: [
+        {
+          id: tempId,
+          image: trimmedImage,
+          progress: 0,
+          status: "准备中...",
+          complete: false,
+          error: null,
+          currentBytes: 0,
+          totalBytes: 0,
+          speed: 0,
+        },
+        ...state.tasks,
+      ],
+    }));
 
     try {
       const mirrors = useSettingsStore.getState().settings.registryMirrors;
       const hasMirrors = Array.isArray(mirrors) && mirrors.length > 0;
 
-      // 先监听事件，再调用 invoke，防止丢失早期事件
-      const unlistenPromise = listen<ImagePullProgress>(
+      const invokeParams: Record<string, unknown> = {
+        image: trimmedImage,
+        channelId: tempId,
+      };
+      if (hasMirrors) {
+        invokeParams.mirrors = mirrors;
+      }
+
+      const channelId = await invoke<string>("image_pull", invokeParams);
+
+      set((state) => ({
+        tasks: state.tasks.map((t) =>
+          t.id === tempId ? { ...t, id: channelId } : t,
+        ),
+      }));
+
+      speedState.set(channelId, { lastBytes: 0, lastTime: Date.now() });
+
+      let unlisten: (() => void) | null = null;
+      const cleanup = () => {
+        if (unlisten) unlisten();
+        speedState.delete(channelId);
+      };
+
+      unlisten = await listen<ImagePullProgress>(
         `image:pull:${channelId}`,
-        (progress) => {
+        (p) => {
+          const existing = get().tasks.find((t) => t.id === channelId);
+          const prevBytes = existing?.currentBytes ?? 0;
+          const prevTotal = existing?.totalBytes ?? 0;
+          let speed = existing?.speed ?? 0;
+
+          // Backend guarantees: current never goes backwards, total is frozen after first download
+          // But status-change events may carry 0 bytes — keep previous values
+          const curBytes = p.current_bytes > 0 ? p.current_bytes : prevBytes;
+          const totBytes = p.total_bytes > 0 ? p.total_bytes : prevTotal;
+
+          // Calculate speed (EMA smoothing)
+          const prev = speedState.get(channelId);
+          if (prev && curBytes > prev.lastBytes) {
+            const now = Date.now();
+            const elapsed = (now - prev.lastTime) / 1000;
+            if (elapsed > 0.3) {
+              const instant = (curBytes - prev.lastBytes) / elapsed;
+              speed = speed > 0 ? speed * 0.7 + instant * 0.3 : instant;
+              speedState.set(channelId, { lastBytes: curBytes, lastTime: now });
+            }
+          }
+
           set((state) => ({
             tasks: state.tasks.map((t) =>
               t.id === channelId
                 ? {
                     ...t,
-                    progress: progress.progress_percent,
-                    status: progress.status,
-                    complete: progress.complete,
-                    error: progress.error,
+                    progress: p.progress_percent,
+                    status: p.status,
+                    complete: p.complete,
+                    error: p.error,
+                    currentBytes: curBytes,
+                    totalBytes: totBytes,
+                    speed: p.complete ? 0 : speed,
                   }
                 : t,
             ),
           }));
+
+          if (p.complete) cleanup();
         },
       );
-
-      await invoke<string>("image_pull", {
-        image: trimmedImage,
-        mirrors: hasMirrors ? mirrors : null,
-        channel_id: channelId,
-      });
-
-      // invoke 返回后，保持监听直到收到 complete 事件
-      // 设置超时保护
-      const unlisten = await unlistenPromise;
-      const timeoutId = window.setTimeout(() => {
-        unlisten();
-        set((state) => ({
-          tasks: state.tasks.map((t) =>
-            t.id === channelId && !t.complete
-              ? { ...t, complete: true, error: "拉取超时 (5min)" }
-              : t,
-          ),
-        }));
-      }, 300000);
-
-      // 轮询检查完成状态，清理超时和监听
-      const checkInterval = window.setInterval(() => {
-        const task = get().tasks.find((t) => t.id === channelId);
-        if (task?.complete) {
-          window.clearTimeout(timeoutId);
-          window.clearInterval(checkInterval);
-          unlisten();
-        }
-      }, 500);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       set((state) => ({
         tasks: state.tasks.map((t) =>
-          t.id === channelId
-            ? {
-                ...t,
-                complete: true,
-                error: message.length > 0 ? message : `拉取 ${trimmedImage} 失败`,
-              }
+          t.id === tempId || (!t.complete && t.image === trimmedImage)
+            ? { ...t, complete: true, error: message.length > 0 ? message : `拉取 ${trimmedImage} 失败` }
             : t,
         ),
       }));
     }
   },
 
-  removeTask: (id: string) => {
+  removeTask: (id) => {
     set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }));
+    speedState.delete(id);
   },
 
   clearCompleted: () => {
     set((state) => ({ tasks: state.tasks.filter((t) => !t.complete) }));
   },
 
-  isPulling: (image: string) => {
+  isPulling: (image) => {
     return get().tasks.some((t) => t.image === image && !t.complete);
   },
 }));

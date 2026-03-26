@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useI18n } from "@/lib/i18n";
+import { APP_VERSION } from "@/lib/constants";
 import {
   MessageSquare,
   Box,
@@ -33,6 +34,8 @@ export function Sidebar() {
   const { t } = useI18n();
   const currentPage = useAppStore((s) => s.currentPage);
   const setCurrentPage = useAppStore((s) => s.setCurrentPage);
+  const dockerConnected = useAppStore((s) => s.dockerConnected);
+  const runtimeStatus = useAppStore((s) => s.runtimeStatus);
   const sessions = useChatStore((s) => s.sessions);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
@@ -55,6 +58,7 @@ export function Sidebar() {
         >
           CrateBay
         </span>
+        <span className="text-[10px] tabular-nums text-muted-foreground">v{APP_VERSION}</span>
       </div>
 
       {/* Navigation items */}
@@ -160,8 +164,37 @@ export function Sidebar() {
 
       {/* Spacer */}
       {currentPage !== "chat" && <div className="flex-1" />}
+
+      {/* Engine status at bottom */}
+      <div className="flex items-center gap-1.5 px-4 py-2.5 text-[11px] text-muted-foreground">
+        <EngineStatusDot connected={dockerConnected} status={runtimeStatus} />
+        <span>{getEngineLabel(dockerConnected, runtimeStatus)}</span>
+      </div>
     </div>
   );
+}
+
+function EngineStatusDot({ connected, status }: { connected: boolean; status: string }) {
+  let colorClass = "bg-zinc-400";
+  let pulse = false;
+  if (connected) {
+    colorClass = "bg-emerald-400 shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]";
+  } else if (status === "starting") {
+    colorClass = "bg-yellow-400 shadow-[0_0_6px_2px_rgba(250,204,21,0.5)]";
+    pulse = true;
+  } else if (status === "error") {
+    colorClass = "bg-red-400 shadow-[0_0_6px_2px_rgba(248,113,113,0.5)]";
+  }
+  return (
+    <span className={cn("inline-block h-2 w-2 rounded-full", colorClass, pulse && "animate-pulse")} />
+  );
+}
+
+function getEngineLabel(connected: boolean, status: string): string {
+  if (connected) return "引擎就绪";
+  if (status === "starting") return "启动中…";
+  if (status === "error") return "引擎异常";
+  return "未连接";
 }
 
 function formatSessionTime(isoString: string): string {

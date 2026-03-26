@@ -2,7 +2,6 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
-import { StatusBar } from "./StatusBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface AppLayoutProps {
@@ -32,8 +31,6 @@ export function AppLayout({ children }: AppLayoutProps) {
           <TopBar />
 
           <main className="flex-1 overflow-hidden">{children}</main>
-
-          <StatusBar />
         </div>
       </div>
     </TooltipProvider>

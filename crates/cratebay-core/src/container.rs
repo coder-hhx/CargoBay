@@ -1155,50 +1155,98 @@ pub async fn image_pull(
 
     let mut stream = docker.create_image(options, None, None);
     let mut last_progress_time = std::time::Instant::now();
+    let mut last_status = String::new();
 
-    // 60-second overall timeout for the pull stream
-    let pull_timeout = std::time::Duration::from_secs(300);
-    let start = std::time::Instant::now();
+    // Per-layer byte tracking
+    let mut layer_current: std::collections::HashMap<String, u64> =
+        std::collections::HashMap::new();
+    let mut layer_total: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    // Once we see the first "Downloading" event, freeze total (no new layers after that)
+    let mut frozen_total: Option<u64> = None;
+    // Track the highest sum_current we've ever sent (never go backwards)
+    let mut max_current_sent: u64 = 0;
+
+    let chunk_timeout_secs = 60;
 
     loop {
-        // Check overall timeout
-        if start.elapsed() > pull_timeout {
-            return Err(AppError::Runtime(format!(
-                "Image pull timed out after {}s for '{}'",
-                pull_timeout.as_secs(),
-                pull_image
-            )));
-        }
-
-        // Wait for next stream item with per-chunk timeout (15s)
-        let chunk_timeout =
-            tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
+        let chunk_timeout = tokio::time::timeout(
+            std::time::Duration::from_secs(chunk_timeout_secs),
+            stream.next(),
+        )
+        .await;
 
         match chunk_timeout {
             Ok(Some(Ok(info))) => {
-                // Report progress
                 if let Some(ref cb) = on_progress {
                     let status = info.status.unwrap_or_default();
-                    let progress = info.progress.unwrap_or_default();
-                    let (current, total) = match info.progress_detail {
-                        Some(detail) => (
+                    let progress_text = info.progress.unwrap_or_default();
+                    let layer_id = info.id.clone().unwrap_or_default();
+
+                    let (cur, tot) = if let Some(detail) = &info.progress_detail {
+                        (
                             detail.current.unwrap_or(0) as u64,
                             detail.total.unwrap_or(0) as u64,
-                        ),
-                        None => (0, 0),
+                        )
+                    } else {
+                        (0u64, 0u64)
                     };
 
-                    // Throttle progress callbacks to max once per 500ms
-                    if last_progress_time.elapsed() > std::time::Duration::from_millis(500) {
+                    if !layer_id.is_empty() {
+                        // Always record layer total when we first see it
+                        if tot > 0 {
+                            layer_total.entry(layer_id.clone()).or_insert(tot);
+                        }
+
+                        // Update current bytes based on status
+                        match status.as_str() {
+                            "Downloading" => {
+                                // Freeze total on first download event
+                                if frozen_total.is_none() {
+                                    frozen_total = Some(layer_total.values().sum());
+                                }
+                                if cur > 0 {
+                                    layer_current.insert(layer_id.clone(), cur);
+                                }
+                            }
+                            "Download complete" | "Pull complete" | "Already exists"
+                            | "Verifying Checksum" | "Extracting" => {
+                                // Lock current = total for completed layers
+                                if let Some(&t) = layer_total.get(&layer_id) {
+                                    layer_current.insert(layer_id.clone(), t);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Compute sums
+                    let sum_current: u64 = layer_current.values().sum();
+                    let sum_total: u64 = layer_total.values().sum();
+
+                    // Use frozen total if available; otherwise use live sum
+                    let report_total = frozen_total.unwrap_or(sum_total);
+                    // Ensure total never < current, and if new layers added after freeze, expand
+                    let report_total = report_total.max(sum_total).max(sum_current);
+                    // Current never goes backwards
+                    if sum_current > max_current_sent {
+                        max_current_sent = sum_current;
+                    }
+
+                    let status_changed = status != last_status;
+                    let throttle_ok =
+                        last_progress_time.elapsed() > std::time::Duration::from_millis(200);
+
+                    if status_changed || throttle_ok {
+                        last_status.clone_from(&status);
                         cb(PullProgress {
                             status,
-                            progress_detail: if progress.is_empty() {
+                            progress_detail: if progress_text.is_empty() {
                                 None
                             } else {
-                                Some(progress)
+                                Some(progress_text)
                             },
-                            current_bytes: current,
-                            total_bytes: total,
+                            current_bytes: max_current_sent,
+                            total_bytes: report_total,
                         });
                         last_progress_time = std::time::Instant::now();
                     }
@@ -1208,14 +1256,12 @@ pub async fn image_pull(
                 return Err(e.into());
             }
             Ok(None) => {
-                // Stream finished successfully
                 break;
             }
             Err(_) => {
-                // Per-chunk timeout: no data in 15 seconds
                 return Err(AppError::Runtime(format!(
-                    "Image pull stalled (no data for 15s) for '{}'",
-                    pull_image
+                    "Image pull stalled (no data for {}s) for '{}'",
+                    chunk_timeout_secs, pull_image
                 )));
             }
         }
@@ -1244,7 +1290,16 @@ pub async fn image_pull_with_mirrors(
             image
         );
 
-        // For mirrors, we don't pass the progress callback since it might be a transient attempt
+        // Notify progress: trying mirror
+        if let Some(ref cb) = on_progress {
+            cb(PullProgress {
+                status: format!("尝试镜像站 {}/{}: {}", i + 1, mirrors.len(), mirror),
+                progress_detail: None,
+                current_bytes: 0,
+                total_bytes: 0,
+            });
+        }
+
         match image_pull(docker, image, Some(mirror), on_progress.clone()).await {
             Ok(()) => {
                 tracing::info!("Successfully pulled '{}' via mirror '{}'", image, mirror);
@@ -1267,6 +1322,14 @@ pub async fn image_pull_with_mirrors(
             }
             Err(e) => {
                 tracing::warn!("Mirror '{}' failed for '{}': {}", mirror, image, e);
+                if let Some(ref cb) = on_progress {
+                    cb(PullProgress {
+                        status: format!("镜像站 {} 失败，尝试下一个...", mirror),
+                        progress_detail: None,
+                        current_bytes: 0,
+                        total_bytes: 0,
+                    });
+                }
                 continue;
             }
         }
@@ -1274,6 +1337,14 @@ pub async fn image_pull_with_mirrors(
 
     // Fallback: direct pull without mirror (with progress callback)
     tracing::info!("All mirrors failed, attempting direct pull for '{}'", image);
+    if let Some(ref cb) = on_progress {
+        cb(PullProgress {
+            status: "所有镜像站失败，尝试直连...".to_string(),
+            progress_detail: None,
+            current_bytes: 0,
+            total_bytes: 0,
+        });
+    }
     image_pull(docker, image, None, on_progress).await
 }
 

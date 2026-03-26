@@ -1,43 +1,106 @@
+import { useState, useRef, useEffect } from "react";
 import { usePullStore } from "@/stores/pullStore";
 import type { PullTask } from "@/stores/pullStore";
 import { Button } from "@/components/ui/button";
-import { X, CheckCircle2, XCircle, Download, Loader2 } from "lucide-react";
+import { X, CheckCircle2, XCircle, Download, Loader2, ChevronDown } from "lucide-react";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const val = bytes / Math.pow(1024, i);
+  return `${val.toFixed(i > 1 ? 1 : 0)} ${units[i]}`;
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec <= 0) return "";
+  return `${formatBytes(bytesPerSec)}/s`;
+}
 
 export function PullTaskList() {
   const tasks = usePullStore((s) => s.tasks);
   const removeTask = usePullStore((s) => s.removeTask);
   const clearCompleted = usePullStore((s) => s.clearCompleted);
+  const [expanded, setExpanded] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Auto-expand when new task starts or a task completes
+  const prevCountRef = useRef(tasks.length);
+  const prevCompletedRef = useRef(0);
+  useEffect(() => {
+    const completed = tasks.filter((t) => t.complete).length;
+    if (tasks.length > prevCountRef.current || completed > prevCompletedRef.current) {
+      setExpanded(true);
+    }
+    prevCountRef.current = tasks.length;
+    prevCompletedRef.current = completed;
+  }, [tasks]);
+
+  // Click outside to close
+  useEffect(() => {
+    if (!expanded) return;
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setExpanded(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [expanded]);
 
   if (tasks.length === 0) return null;
 
+  const activeTasks = tasks.filter((t) => !t.complete);
   const completedCount = tasks.filter((t) => t.complete).length;
+  const hasError = tasks.some((t) => t.complete && t.error !== null);
 
   return (
-    <div className="mx-6 mt-3 rounded-lg border border-border bg-card">
-      {/* 标题栏 */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <Download className="h-3.5 w-3.5 text-primary" />
-          <span>拉取任务 ({tasks.length})</span>
-        </div>
-        {completedCount > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs text-muted-foreground"
-            onClick={clearCompleted}
-          >
-            清除已完成
-          </Button>
+    <div className="relative" ref={panelRef}>
+      {/* Trigger badge */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none bg-primary/10 text-primary hover:bg-primary/20"
+      >
+        {activeTasks.length > 0 ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : hasError ? (
+          <XCircle className="h-3 w-3 text-destructive" />
+        ) : (
+          <CheckCircle2 className="h-3 w-3 text-green-500" />
         )}
-      </div>
+        <Download className="h-3 w-3" />
+        <span>{tasks.length}</span>
+        <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
 
-      {/* 任务列表 */}
-      <div className="divide-y divide-border">
-        {tasks.map((task) => (
-          <PullTaskRow key={task.id} task={task} onRemove={() => removeTask(task.id)} />
-        ))}
-      </div>
+      {/* Dropdown panel */}
+      {expanded && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded-lg border border-border bg-card shadow-lg">
+          {/* Header */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+            <span className="text-xs font-medium text-foreground">
+              拉取任务 ({activeTasks.length} 进行中{completedCount > 0 ? ` / ${completedCount} 已完成` : ""})
+            </span>
+            {completedCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 px-1.5 text-[10px] text-muted-foreground"
+                onClick={clearCompleted}
+              >
+                清除
+              </Button>
+            )}
+          </div>
+
+          {/* Task list */}
+          <div className="max-h-60 overflow-y-auto divide-y divide-border">
+            {tasks.map((task) => (
+              <PullTaskRow key={task.id} task={task} onRemove={() => removeTask(task.id)} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -45,54 +108,69 @@ export function PullTaskList() {
 function PullTaskRow({ task, onRemove }: { task: PullTask; onRemove: () => void }) {
   if (task.complete) {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {task.error !== null ? (
-            <XCircle className="h-3.5 w-3.5 flex-shrink-0 text-destructive" />
+            <XCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
           ) : (
-            <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
+            <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
           )}
-          <span className="truncate text-sm font-mono text-foreground">{task.image}</span>
-          {task.error !== null ? (
-            <span className="truncate text-xs text-destructive">{task.error}</span>
-          ) : (
-            <span className="text-xs text-muted-foreground">已完成</span>
-          )}
+          <span className="truncate text-xs text-foreground">{task.image}</span>
+          <span className={`text-[10px] flex-shrink-0 ${task.error !== null ? "text-destructive" : "text-green-600"}`}>
+            {task.error !== null ? "失败" : "完成"}
+          </span>
         </div>
         <button
           onClick={onRemove}
           className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-3 w-3" />
         </button>
       </div>
     );
   }
 
+  const speedStr = formatSpeed(task.speed);
+  const hasBytes = task.totalBytes > 0;
+  const pct = hasBytes ? Math.min(100, Math.round((task.currentBytes / task.totalBytes) * 100)) : 0;
+  const bytesStr = hasBytes
+    ? `${formatBytes(task.currentBytes)} / ${formatBytes(task.totalBytes)}`
+    : "";
+
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-2">
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-primary" />
-        <span className="truncate text-sm text-foreground">{task.image}</span>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {task.progress > 0 ? (
-          <>
-            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-300"
-                style={{ width: `${task.progress}%` }}
-              />
-            </div>
-            <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-right">
-              {task.progress}%
-            </span>
-          </>
-        ) : (
-          <span className="truncate text-xs text-muted-foreground max-w-[160px]">
-            {task.status || "准备中..."}
+    <div className="px-3 py-2 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />
+          <span className="truncate text-xs font-medium text-foreground">{task.image}</span>
+        </div>
+        {hasBytes && (
+          <span className="text-[10px] tabular-nums text-muted-foreground flex-shrink-0">
+            {pct}%
           </span>
         )}
+      </div>
+
+      {/* Progress bar: determinate when bytes available, indeterminate otherwise */}
+      {hasBytes ? (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      ) : (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div className="h-full w-1/3 rounded-full bg-primary animate-indeterminate" />
+        </div>
+      )}
+
+      {/* Stats line */}
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+        <span className="truncate">
+          {bytesStr || task.status || "准备中..."}
+        </span>
+        {speedStr && <span className="flex-shrink-0 tabular-nums ml-2">{speedStr}</span>}
       </div>
     </div>
   );

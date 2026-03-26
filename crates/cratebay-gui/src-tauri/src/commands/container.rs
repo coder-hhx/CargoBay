@@ -258,6 +258,7 @@ pub async fn image_pull(
     let channel_id = channel_id.unwrap_or_else(|| format!("pull-{}", uuid::Uuid::new_v4()));
     let ch_id = channel_id.clone();
     let app_handle = app.clone();
+    let image_clone = image.clone();
 
     // Emit start event
     let _ = app.emit(
@@ -269,6 +270,8 @@ pub async fn image_pull(
             status: format!("开始拉取镜像 {}", &image),
             complete: false,
             error: None,
+            current_bytes: 0,
+            total_bytes: 0,
         },
     );
 
@@ -286,24 +289,28 @@ pub async fn image_pull(
             } else {
                 0
             };
+            let status = translate_pull_status(&progress.status);
             let _ = app_for_progress.emit(
                 &event_for_progress,
                 &crate::events::ImagePullProgress {
                     current_layer: 0,
                     total_layers: 0,
                     progress_percent: percent,
-                    status: progress.status.clone(),
+                    status,
                     complete: false,
                     error: None,
+                    current_bytes: progress.current_bytes,
+                    total_bytes: progress.total_bytes,
                 },
             );
         });
 
         let result = match mirrors {
             Some(ref m) if !m.is_empty() => {
-                container::image_pull_with_mirrors(&docker, &image, m, Some(progress_cb)).await
+                container::image_pull_with_mirrors(&docker, &image_clone, m, Some(progress_cb))
+                    .await
             }
-            _ => container::image_pull(&docker, &image, None, Some(progress_cb)).await,
+            _ => container::image_pull(&docker, &image_clone, None, Some(progress_cb)).await,
         };
 
         match result {
@@ -314,22 +321,28 @@ pub async fn image_pull(
                         current_layer: 0,
                         total_layers: 0,
                         progress_percent: 100,
-                        status: format!("镜像 {} 拉取完成", &image),
+                        status: format!("镜像 {} 拉取完成", &image_clone),
                         complete: true,
                         error: None,
+                        current_bytes: 0,
+                        total_bytes: 0,
                     },
                 );
             }
             Err(e) => {
+                let error_msg = e.to_string();
+                tracing::error!("Image pull failed for {}: {}", image_clone, error_msg);
                 let _ = app.emit(
                     &event_name,
                     &crate::events::ImagePullProgress {
                         current_layer: 0,
                         total_layers: 0,
                         progress_percent: 0,
-                        status: format!("镜像拉取失败: {}", e),
+                        status: format!("镜像拉取失败: {}", error_msg),
                         complete: true,
-                        error: Some(e.to_string()),
+                        error: Some(error_msg),
+                        current_bytes: 0,
+                        total_bytes: 0,
                     },
                 );
             }
@@ -338,4 +351,30 @@ pub async fn image_pull(
 
     // Return immediately with the channel_id
     Ok(channel_id)
+}
+
+/// Translate Docker pull status messages to Chinese.
+fn translate_pull_status(status: &str) -> String {
+    // Docker API status messages are like "Downloading", "Extracting",
+    // "Pull complete", "Pulling fs layer", "Verifying Checksum", "Download complete",
+    // "Already exists", "Waiting", "Digest: sha256:...", "Pulling from library/xxx"
+    let s = status.trim();
+    if s.starts_with("Pulling from ") {
+        return format!("正在拉取 {}", &s["Pulling from ".len()..]);
+    }
+    if s.starts_with("Digest:") {
+        return s.to_string(); // Keep digest as-is
+    }
+    match s {
+        "Downloading" => "下载中".to_string(),
+        "Extracting" => "解压中".to_string(),
+        "Download complete" => "下载完成".to_string(),
+        "Pull complete" => "拉取完成".to_string(),
+        "Pulling fs layer" => "拉取层".to_string(),
+        "Verifying Checksum" => "校验中".to_string(),
+        "Already exists" => "已存在".to_string(),
+        "Waiting" => "等待中".to_string(),
+        "Retrying" => "重试中".to_string(),
+        _ => s.to_string(),
+    }
 }

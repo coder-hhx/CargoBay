@@ -43,4 +43,8 @@ pub struct ImagePullProgress {
     pub complete: bool,
     /// Error message if pull failed. None means success (when complete=true).
     pub error: Option<String>,
+    /// Bytes downloaded so far (current chunk/layer).
+    pub current_bytes: u64,
+    /// Total bytes expected (current chunk/layer).
+    pub total_bytes: u64,
 }
