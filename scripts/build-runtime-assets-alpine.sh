@@ -757,7 +757,10 @@ sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
 sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
 
 runtime_http_proxy="$(cmdline_value cratebay_http_proxy || true)"
-docker_proxy_port="${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}"
+docker_proxy_port="$(cmdline_value cratebay_docker_proxy_port || true)"
+if [ -z "$docker_proxy_port" ]; then
+  docker_proxy_port="${CRATEBAY_DOCKER_PROXY_PORT:-${CRATEBAY_DOCKER_VSOCK_PORT:-6237}}"
+fi
 docker_api_port="${CRATEBAY_GUEST_DOCKER_API_PORT:-2375}"
 if [ -n "$runtime_http_proxy" ]; then
   export HTTP_PROXY="http://${runtime_http_proxy}"

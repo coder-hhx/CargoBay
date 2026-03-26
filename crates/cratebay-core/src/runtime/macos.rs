@@ -602,6 +602,14 @@ impl MacOSRuntime {
             }
         }
 
+        if !cmdline
+            .split_whitespace()
+            .any(|arg| arg.starts_with("cratebay_docker_proxy_port="))
+        {
+            cmdline.push_str(" cratebay_docker_proxy_port=");
+            cmdline.push_str(&common::docker_proxy_port().to_string());
+        }
+
         cmdline
     }
 
@@ -867,21 +875,35 @@ impl MacOSRuntime {
             common::docker_proxy_port(),
             sock_path.to_string_lossy()
         );
-        // Default to TCP forwarding mode.
-        //
-        // The current CrateBay runtime image includes a guest agent that dials
-        // back to the host over TCP to proxy Docker. Vsock forwarding is kept
-        // as an opt-in path for future runtime images that support it.
+
+        // Architecture-based default socket forwarding mode:
+        // - Apple Silicon (aarch64): vsock is reliable and lower latency
+        // - Intel (x86_64): reverse TCP is more stable on Intel Macs
+        let default_forward_mode = if cfg!(target_arch = "aarch64") {
+            "vsock"
+        } else {
+            "tcp"
+        };
+
         let forward_mode = std::env::var("CRATEBAY_RUNTIME_SOCKET_FORWARD")
             .ok()
             .map(|v| v.trim().to_ascii_lowercase())
-            .unwrap_or_else(|| "tcp".to_string());
+            .filter(|v| matches!(v.as_str(), "vsock" | "tcp"))
+            .unwrap_or_else(|| default_forward_mode.to_string());
+
+        tracing::info!(
+            "Docker socket forwarding mode: {} (arch: {}, default: {})",
+            forward_mode,
+            std::env::consts::ARCH,
+            default_forward_mode
+        );
+
         match forward_mode.as_str() {
-            "tcp" => {
-                cmd.arg("--tcp-forward").arg(&forward_spec);
+            "vsock" => {
+                cmd.arg("--vsock-forward").arg(&forward_spec);
             }
             _ => {
-                cmd.arg("--vsock-forward").arg(&forward_spec);
+                cmd.arg("--tcp-forward").arg(&forward_spec);
             }
         }
 

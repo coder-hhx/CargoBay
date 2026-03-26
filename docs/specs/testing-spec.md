@@ -1,6 +1,6 @@
 # Testing Strategy & Specification
 
-> Version: 1.1.0 | Last Updated: 2026-03-20 | Author: frontend-architect
+> Version: 1.1.1 | Last Updated: 2026-03-26 | Author: frontend-architect
 
 ---
 
@@ -1334,8 +1334,8 @@ All 41 Tauri commands are tested per group. Each command has at minimum one happ
 | Command | Happy Path | Error Path |
 |---------|-----------|------------|
 | `system_info` | Returns OS, arch, memory, disk, app version | N/A (always succeeds) |
-| `docker_status` | Returns Docker connection status and version | Docker not running returns `{ available: false }` (not an error) |
-| `runtime_status` | Returns container runtime status per platform | Runtime not available returns `{ available: false }` (not an error) |
+| `docker_status` | Returns Docker connection status and version | Docker not running returns `DockerStatus { connected: false, source: "none", ... }` (not an error) |
+| `runtime_status` | Returns container runtime status per platform | Runtime not available returns `RuntimeStatusInfo { state: "none", docker_responsive: false, ... }` (not an error) |
 
 ### 9.3 Platform-Specific Test Cases
 

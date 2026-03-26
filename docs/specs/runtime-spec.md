@@ -1,6 +1,6 @@
 # Built-in Container Runtime Specification
 
-> Version: 1.2.5 | Last Updated: 2026-03-25 | Author: architect
+> Version: 1.3.0 | Last Updated: 2026-03-26 | Author: runtime-dev
 
 ---
 
@@ -303,7 +303,9 @@ CrateBay must support **GUI + CLI** being used concurrently. To avoid two proces
 provisioning or starting the same VM at the same time, all runtime bring-up is
 guarded by a **cross-process lock**:
 
-- Lock file: `~/.cratebay/runtime/engine.lock` (under `CRATEBAY_DATA_DIR` if set)
+- Lock file: `<host_docker_socket_dir>/engine.lock` (colocated with the host-exposed Docker socket; see §4.1)
+
+When `CRATEBAY_DATA_DIR` is explicitly set, CrateBay uses a deterministic short socket path under the system temp directory (to avoid Unix socket path length limits and to isolate multiple runtimes). In that case, the lock file is colocated with that derived temp socket directory.
 - Scope: provision + start + initial Docker wait loop
 - Behavior: second process waits for the lock, then re-checks Docker availability
 
@@ -323,23 +325,66 @@ Users can stop the runtime explicitly via `runtime_stop` (or the equivalent CLI)
 
 ### 4.1 Socket Path Convention
 
-| Platform | Socket Location |
-|----------|----------------|
+| Platform | Default Socket Location |
+|----------|------------------------|
 | macOS | `~/.cratebay/runtime/docker.sock` |
 | Linux | `~/.cratebay/runtime/docker.sock` |
 | Windows | `\\.\pipe\cratebay-docker` or `localhost:2375` |
 
-### 4.2 macOS: Reverse TCP (default) / vsock (optional)
+**Socket path resolution (macOS/Linux):**
 
-#### Default: reverse TCP forwarding
+1. If `CRATEBAY_DOCKER_SOCKET_PATH` is set (non-empty), use it.
+2. Else, if `CRATEBAY_DATA_DIR` is explicitly set, use `/tmp/cratebay-runtime-<hash>/docker.sock` (deterministic hash derived from `CRATEBAY_DATA_DIR`).
+3. Else, use `$HOME/.cratebay/runtime/docker.sock`.
 
-On macOS, the runtime exposes the Docker API as a host Unix socket
-(`~/.cratebay/runtime/docker.sock`) by running a local proxy in the VZ runner:
+The canonical host socket (`docker.sock`) may be a symlink pointing to a per-VM socket (`docker-<vm_id>.sock` or `docker-<vm_id>-<hash>.sock` when `CRATEBAY_DATA_DIR` is set) so multiple isolated runtimes do not collide.
 
-- Host binds a TCP listener (default port `6237`)
-- Guest-side agent dials back to the host listener and proxies to
-  `/var/run/docker.sock` inside the VM
-- Host proxies bytes between the Unix socket and the guest TCP connection
+### 4.2 macOS: Docker Socket Forwarding Modes
+
+macOS uses Apple's Virtualization.framework (VZ) to run the guest VM. Docker
+API access is exposed as a host Unix socket (`~/.cratebay/runtime/docker.sock`)
+via one of the following forwarding modes:
+
+#### 4.2.1 Architecture-Based Default Selection
+
+| Architecture | Default Mode | Rationale |
+|--------------|--------------|-----------|
+| Apple Silicon (arm64) | **vsock** | VZ.framework has reliable vsock on arm64; lower latency |
+| Intel (x86_64) | **reverse TCP** | Vsock stability issues on Intel; fallback to proven TCP path |
+
+The mode can be overridden via `CRATEBAY_RUNTIME_SOCKET_FORWARD` environment
+variable.
+
+#### 4.2.2 Vsock Forwarding (Apple Silicon default)
+
+Vsock (Virtio Socket) provides a direct host-guest communication channel via
+`VZVirtioSocketDevice`. The host-side VZ runner listens on a vsock port and
+proxies to the host Unix socket.
+
+```
+VM (guest)                          Host (macOS)
+Docker Engine                       cratebay-vz runner
+/var/run/docker.sock                ~/.cratebay/runtime/docker.sock
+       │                                      │
+       └── cratebay-guest-agent ←── vsock ──→ host creates Unix socket
+           listens vsock:{port}    AF_VSOCK   proxies ↔ vsock
+```
+
+**Flow:**
+1. VZ runner creates a `VZVirtioSocketDevice` and starts listening on host vsock port
+2. Host-side: for each Unix socket connection, VZ runner connects to guest vsock port
+3. Guest-side: `cratebay-guest-agent --vsock --port {port}` listens on vsock
+4. Bidirectional proxy: host vsock ↔ guest Docker socket
+
+**Advantages:**
+- Lower latency than TCP (no network stack overhead)
+- No port conflicts with host network
+- Reliable connection multiplexing
+
+#### 4.2.3 Reverse TCP Forwarding (Intel default)
+
+On Intel Macs or when vsock is disabled, the runtime uses reverse TCP
+forwarding where the guest initiates the connection back to the host.
 
 ```
 VM (guest)                             Host (macOS)
@@ -347,36 +392,53 @@ Docker Engine                          cratebay-vz runner
 /var/run/docker.sock                   ~/.cratebay/runtime/docker.sock
        │                                       │
        └── cratebay-guest-agent ── TCP ─────→  tcp listener (0.0.0.0:6237)
-           proxies docker.sock                 proxies ↔ unix socket
+           connect mode                        proxies ↔ unix socket
 ```
 
-This mode is the default because the current runtime image includes a guest
-agent that implements the dial-back behavior.
+**Flow:**
+1. VZ runner binds TCP listener on host (default `0.0.0.0:6237`)
+2. VZ runner binds Unix socket at `~/.cratebay/runtime/docker.sock`
+3. Guest-side: `cratebay-guest-agent --connect {host_gateway}:{port}` dials host TCP
+4. Host-side: for each Unix socket client, wait for guest TCP connection (5s timeout)
+5. Proxy: Unix socket client ↔ guest TCP ↔ Docker socket
 
-#### Optional: vsock forwarding
+**Implementation Details (cratebay-vz `start_tcp_forward`):**
+- Host binds both Unix socket and TCP listener
+- Each Unix client acceptance triggers wait for guest reverse connection (30s timeout)
+- Guest agent uses **concurrent worker model**: multiple reverse-TCP workers connect back in parallel
+- HTTP request preface is rewritten with `Connection: close` so each reverse-TCP tunnel is single-shot and workers return to the pool after every request
+- Uses bidirectional copy threads for efficient byte shuffling
 
-Vsock forwarding is supported as an opt-in mode for future runtime images that
-support it. When enabled, the host connects to the guest via
-`VZVirtioSocketDevice` and proxies to the host Unix socket.
+**Concurrency Model (v1.3.0+):**
 
-**Configuration (environment variables):**
+| Component | Model | Description |
+|-----------|-------|-------------|
+| Guest agent (`run_connect`) | Concurrent worker pool | Multiple reverse-TCP workers connect back in parallel; no single-worker serialization |
+| Host VZ runner | Per-connection threads | Each Unix client + guest TCP pair handled in dedicated thread |
+| HTTP handling | Single-shot per tunnel | `Connection: close` is injected in reverse TCP mode so dockerd closes the upstream connection and frees the worker |
+
+#### 4.2.4 Configuration (environment variables)
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `CRATEBAY_RUNTIME_SOCKET_FORWARD` | Docker socket forwarding mode: `tcp` or `vsock` | `tcp` |
-| `CRATEBAY_DOCKER_PROXY_PORT` | Port used by `--tcp-forward` (host listener) or `--vsock-forward` (guest port) | `6237` |
+| `CRATEBAY_RUNTIME_SOCKET_FORWARD` | Docker socket forwarding mode: `vsock`, `tcp`, or `auto` | `auto` (arm64→vsock, x86_64→tcp) |
+| `CRATEBAY_DOCKER_PROXY_PORT` | Port used by vsock (guest port) or TCP (host listener) | `6237` (if `CRATEBAY_DATA_DIR` is set and no explicit override is provided, a deterministic high port in `42000-51999` is derived) |
 | `CRATEBAY_DOCKER_VSOCK_PORT` | Legacy alias for `CRATEBAY_DOCKER_PROXY_PORT` | — |
+| `CRATEBAY_DOCKER_SOCKET_PATH` | Override the host-exposed Docker Unix socket path (macOS/Linux). | — |
 
-```
-VM (guest)                          Host (macOS)
-Docker Engine                       CrateBay Backend
-/var/run/docker.sock                ~/.cratebay/runtime/docker.sock
-       │                                      │
-       └── (optional) vsock proxy   ←── vsock ──→ host creates Unix socket
-           (inside VM)                (AF_VSOCK) on host
-```
+#### 4.2.5 Guest Agent Modes
+
+`cratebay-guest-agent` supports three modes corresponding to host forwarding:
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| vsock (listen) | `--port {port}` | Default for vsock forwarding (arm64) |
+| tcp (listen) | `--tcp --listen 0.0.0.0:{port}` | Legacy TCP listen mode |
+| connect (dial-back) | `--connect {host}:{port}` | Reverse TCP for Intel Macs |
 
 In both modes, bollard connects to the host Unix socket path.
+
+**Kernel cmdline coupling (v1.3.0+):** The host passes `cratebay_docker_proxy_port=<port>` via the VM kernel cmdline so the guest init script can start `cratebay-guest-agent` with the exact same port (including derived ports when `CRATEBAY_DATA_DIR` is set).
 
 ### 4.3 Linux: QEMU Socket Forwarding
 
@@ -824,72 +886,107 @@ fn detect_external_docker() -> Option<PathBuf> {
 
 ### 11.1 macOS: VZ.framework Implementation
 
+The macOS runtime uses Apple's Virtualization.framework via an external Swift
+binary (`cratebay-vz`). The Rust code spawns and manages this process.
+
+#### Architecture-Specific Socket Forwarding
+
 ```rust
 // cratebay-core/src/runtime/macos.rs
+
+/// Determine the default socket forwarding mode based on CPU architecture.
+fn default_socket_forward_mode() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    { "vsock" }  // Apple Silicon: vsock is reliable
+    #[cfg(target_arch = "x86_64")]
+    { "tcp" }    // Intel: fallback to reverse TCP
+}
+
+/// Resolve the socket forwarding mode from environment or architecture default.
+fn resolve_socket_forward_mode() -> String {
+    std::env::var("CRATEBAY_RUNTIME_SOCKET_FORWARD")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| matches!(v.as_str(), "vsock" | "tcp"))
+        .unwrap_or_else(|| default_socket_forward_mode().to_string())
+}
+```
+
+#### MacOSRuntime Structure
+
+```rust
 #[cfg(target_os = "macos")]
 pub struct MacOSRuntime {
     config: RuntimeConfig,
-    data_dir: PathBuf,       // ~/.cratebay/runtime/
-    vm_handle: Option<VmHandle>,
+    state: Arc<Mutex<RuntimeState>>,
+    runner: Arc<Mutex<Option<Child>>>,      // VZ runner child process
+    runner_pid: Arc<Mutex<Option<u32>>>,    // For PID file recovery
+    started_at: Arc<Mutex<Option<Instant>>>,
+    consecutive_health_failures: Arc<Mutex<u8>>,
 }
 
 impl MacOSRuntime {
     pub fn new() -> Self {
-        Self {
-            config: RuntimeConfig::default(),
-            data_dir: dirs::home_dir().unwrap().join(".cratebay/runtime"),
-            vm_handle: None,
-        }
+        // ... initialization with PID file recovery
     }
 
-    /// Create VZ virtual machine configuration
-    fn create_vm_config(&self) -> Result<VmConfiguration, AppError> {
-        // Boot loader
-        let kernel = self.data_dir.join("vmlinuz");
-        let initrd = self.data_dir.join("initrd");
-        let boot_loader = VZLinuxBootLoader::new(&kernel, &initrd)?;
+    /// Spawn the VZ runner process with appropriate forwarding mode
+    fn spawn_runner(&self) -> Result<Child, AppError> {
+        let runner_path = vz_runner_path();
+        let forward_mode = resolve_socket_forward_mode();
 
-        // Storage
-        let rootfs = self.data_dir.join("rootfs.img");
-        let disk = VZVirtioBlockStorageDevice::new(&rootfs)?;
+        let mut cmd = Command::new(&runner_path);
+        cmd.arg("--kernel").arg(&paths.kernel_path)
+           .arg("--disk").arg(&disk)
+           .arg("--cpus").arg(self.config.cpu_cores.to_string())
+           .arg("--memory-mb").arg(self.config.memory_mb.to_string())
+           .arg("--cmdline").arg(&cmdline)
+           .arg("--ready-file").arg(&ready_file);
 
-        // Shared directories (VirtioFS)
-        let shared = VZVirtioFileSystemDevice::new("shared", &self.config.shared_dirs)?;
+        // Set up Docker socket forwarding based on mode
+        let forward_spec = format!("{}:{}", port, sock_path.to_string_lossy());
+        match forward_mode.as_str() {
+            "vsock" => {
+                cmd.arg("--vsock-forward").arg(&forward_spec);
+            }
+            _ => {
+                cmd.arg("--tcp-forward").arg(&forward_spec);
+            }
+        }
 
-        // Network (NAT)
-        let network = VZNATNetworkDeviceAttachment::new();
-
-        // Socket forwarding for Docker:
-        // - default: reverse TCP dial-back (no vsock device required)
-        // - optional: vsock forwarding (CRATEBAY_RUNTIME_SOCKET_FORWARD=vsock)
-        let vsock = VZVirtioSocketDevice::new();
-
-        Ok(VmConfiguration {
-            boot_loader,
-            cpu_count: self.config.cpu_cores,
-            memory_size: self.config.memory_mb * 1024 * 1024,
-            devices: vec![disk, shared, network, vsock], // vsock only when forwarding mode is vsock
-        })
+        // ... spawn and return
     }
 }
 
 impl RuntimeManager for MacOSRuntime {
     async fn start(&self) -> Result<(), AppError> {
-        let config = self.create_vm_config()?;
-        let vm = VZVirtualMachine::new(config)?;
-        vm.start().await?;
-
-        // Wait for Docker inside VM to be ready
-        self.wait_for_docker(Duration::from_secs(30)).await?;
-
-        // Set up Docker socket forwarding (default: reverse TCP; optional: vsock)
-        self.setup_socket_bridge().await?;
-
-        Ok(())
+        // ... check state, cleanup stray processes
+        let child = self.spawn_runner()?;
+        // ... wait for ready file, wait for Docker
     }
 
     // ... other trait methods
 }
+```
+
+#### VZ Runner Binary (`cratebay-vz`)
+
+The Swift-based VZ runner handles all Virtualization.framework API calls and
+socket forwarding:
+
+```
+cratebay-vz
+  --kernel <path>           Kernel image (vmlinuz)
+  --initrd <path>           Initial ramdisk
+  --disk <path>             VM disk image
+  --cpus <n>                CPU cores
+  --memory-mb <n>           Memory in MB
+  --cmdline <str>           Kernel command line
+  --ready-file <path>       Written when VM is ready
+  --console-log <path>      Console output log
+  --vsock-forward <spec>    guest_port:unix_socket_path (vsock mode)
+  --tcp-forward <spec>      guest_port:unix_socket_path (reverse TCP mode)
+  --share <spec>            tag:host_path[:ro] (VirtioFS share)
 ```
 
 ### 11.2 Linux: KVM/QEMU Implementation
@@ -1109,9 +1206,19 @@ impl RuntimeManager for WindowsRuntime {
 | Memory overhead | ~200 MB | ~200 MB | ~150 MB (shared) |
 | File sharing perf | Excellent (VirtioFS) | Excellent (VirtioFS) | Good (9P) |
 | Port forwarding | Automatic (NAT) | Manual (hostfwd) | Automatic (Win11) |
-| Docker socket | reverse TCP (default) / vsock → Unix | chardev → Unix | socat → pipe |
+| Docker socket (arm64) | **vsock → Unix** | chardev → Unix | socat → pipe |
+| Docker socket (x86_64) | **reverse TCP → Unix** | chardev → Unix | socat → pipe |
 | First-run download | ~400 MB | ~400 MB | ~350 MB |
 | Min OS version | macOS 13 | Kernel 5.10 | Win10 21H2 |
+
+#### macOS Socket Forwarding Mode Selection
+
+| Condition | Mode Used |
+|-----------|-----------|
+| Apple Silicon + default | vsock |
+| Apple Silicon + `CRATEBAY_RUNTIME_SOCKET_FORWARD=tcp` | reverse TCP |
+| Intel x86_64 + default | reverse TCP |
+| Intel x86_64 + `CRATEBAY_RUNTIME_SOCKET_FORWARD=vsock` | vsock (may have issues) |
 
 ---
 

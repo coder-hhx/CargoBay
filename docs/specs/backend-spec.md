@@ -1,6 +1,6 @@
 # Backend Specification
 
-> Version: 1.3.3 | Last Updated: 2026-03-25 | Author: architect
+> Version: 1.3.5 | Last Updated: 2026-03-26 | Author: architect
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### 1.1 Overview
 
-The backend is organized as a Cargo workspace with 4 crates:
+The backend is organized as a Cargo workspace with 6 crates:
 
 ```
 crates/
@@ -30,8 +30,12 @@ crates/
 │   └── src/
 │       ├── lib.rs           # Public API exports
 │       ├── engine.rs        # Container engine ensure (runtime auto-start + locking)
+│       ├── engine/          # Engine provider backends
+│       │   └── podman.rs    # Podman fallback implementation
 │       ├── docker.rs        # Docker connection management
 │       ├── container.rs     # Container CRUD operations
+│       ├── images.rs        # OS image catalog and download management
+│       ├── fsutil.rs        # Filesystem utilities (fast copy, clonefile on macOS)
 │       ├── llm_proxy.rs     # LLM request proxy with streaming
 │       ├── storage.rs       # SQLite storage layer
 │       ├── mcp/             # MCP Client (stdio + SSE)
@@ -46,6 +50,7 @@ crates/
 │       ├── models.rs        # Shared data models
 │       └── runtime/         # Built-in runtime management
 │           ├── mod.rs       # Platform dispatch
+│           ├── common.rs    # Shared infrastructure (platform-agnostic)
 │           ├── macos.rs     # VZ.framework implementation
 │           ├── linux.rs     # KVM/QEMU implementation
 │           └── windows.rs   # WSL2 implementation
@@ -77,12 +82,22 @@ crates/
 │           ├── image.rs
 │           └── system.rs
 │
-└── cratebay-mcp/            # MCP Server binary
+├── cratebay-mcp/            # MCP Server binary
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs          # MCP Server entry, tool registration
+│       ├── tools.rs         # Tool implementations
+│       └── sandbox.rs       # Sandbox-specific logic
+│
+├── cratebay-guest-agent/    # Guest VM agent (proxies Docker socket)
+│   ├── Cargo.toml
+│   └── src/
+│       └── main.rs          # Agent entry point
+│
+└── cratebay-vz/             # macOS VZ runner (host-side proxy/bridge)
     ├── Cargo.toml
     └── src/
-        ├── main.rs          # MCP Server entry, tool registration
-        ├── tools.rs         # Tool implementations
-        └── sandbox.rs       # Sandbox-specific logic
+        └── main.rs          # Runner entry point
 ```
 
 ### 1.2 Dependency Direction
@@ -356,7 +371,7 @@ Operational behavior:
 
 - Prefer **external Docker** when available (including `DOCKER_HOST`)
 - Otherwise **provision + start built-in runtime**, then wait for Docker
-- Use a **cross-process lock** (`~/.cratebay/runtime/engine.lock`) so GUI + CLI
+- Use a **cross-process lock** (the `engine.lock` file colocated with the host-exposed Docker socket; see runtime-spec.md §3.4/§4.1) so GUI + CLI
   don't start/provision concurrently
 - Runtime is **not** automatically stopped when the GUI exits
 - Provider override via `CRATEBAY_ENGINE_PROVIDER`:
@@ -959,15 +974,29 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
+use cratebay_core::engine::EnsureOptions;
+use cratebay_core::error::AppError;
 use cratebay_core::mcp::McpManager;
+use cratebay_core::models::DockerSource;
 use cratebay_core::runtime::RuntimeManager;
+use cratebay_core::MutexExt;
 
 pub struct AppState {
     /// Docker client (optional — Docker may not be available).
     /// Wrapped in `Arc<Mutex<...>>` so it can be updated dynamically
     /// after the built-in runtime starts Docker.
     pub docker: Arc<Mutex<Option<Arc<Docker>>>>,
+
+    /// Which backend the current Docker client is connected through.
+    pub docker_source: Arc<Mutex<Option<DockerSource>>>,
+
+    /// In-process single-flight guard for Docker initialisation.
+    /// The first caller runs `engine::ensure_docker()`; concurrent callers
+    /// await the same future instead of spawning duplicate start sequences.
+    pub docker_init: Arc<OnceCell<Result<Arc<Docker>, String>>>,
 
     /// SQLite database connection
     pub db: Arc<Mutex<Connection>>,
@@ -997,19 +1026,49 @@ impl AppState {
             .ok_or_else(|| AppError::Docker(/* connection unavailable */))
     }
 
-    /// Ensure Docker is available.
+    /// Ensure Docker is available, with in-process single-flight deduplication.
     ///
-    /// If no external Docker is reachable, this will auto-start the built-in runtime
-    /// via `cratebay_core::engine::ensure_docker` and then cache the connected client
-    /// into `AppState.docker`.
-    pub async fn ensure_docker(&self) -> Result<Arc<Docker>, AppError> {
+    /// Reads the `allowExternalDocker` setting to decide whether Colima /
+    /// Docker Desktop fallback is allowed when the built-in runtime is unavailable.
+    pub async fn ensure_docker_once(&self) -> Result<Arc<Docker>, AppError> {
         if let Ok(d) = self.require_docker() {
             return Ok(d);
         }
 
-        let docker = cratebay_core::engine::ensure_docker(self.runtime.as_ref(), Default::default())
-            .await?;
+        let allow_external = self
+            .db
+            .lock_or_recover()
+            .ok()
+            .and_then(|db| cratebay_core::storage::get_setting(&db, "allowExternalDocker").ok().flatten())
+            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
+            .unwrap_or(false);
+
+        let result = self
+            .docker_init
+            .get_or_init(|| async {
+                let options = EnsureOptions {
+                    lock_wait_timeout: Duration::from_secs(60),
+                    allow_external_docker: allow_external,
+                    ..Default::default()
+                };
+
+                match cratebay_core::engine::ensure_docker(self.runtime.as_ref(), options).await {
+                    Ok(docker) => Ok(docker),
+                    Err(e) => Err(e.to_string()),
+                }
+            })
+            .await;
+
+        let docker = result
+            .as_ref()
+            .map_err(|msg| AppError::Runtime(msg.clone()))?
+            .clone();
         self.set_docker(Some(docker.clone()));
+        self.set_docker_source(Some(if allow_external {
+            DockerSource::External
+        } else {
+            DockerSource::BuiltinRuntime
+        }));
         Ok(docker)
     }
 
@@ -1017,6 +1076,13 @@ impl AppState {
     pub fn set_docker(&self, docker: Option<Arc<Docker>>) {
         if let Ok(mut guard) = self.docker.lock() {
             *guard = docker;
+        }
+    }
+
+    /// Update the Docker connection source.
+    pub fn set_docker_source(&self, source: Option<DockerSource>) {
+        if let Ok(mut guard) = self.docker_source.lock() {
+            *guard = source;
         }
     }
 
@@ -1039,7 +1105,7 @@ pub async fn container_list(
     state: State<'_, AppState>,
     filters: Option<ContainerListFilters>,
 ) -> Result<Vec<ContainerInfo>, AppError> {
-    let docker = state.ensure_docker().await?;
+    let docker = state.ensure_docker_once().await?;
     cratebay_core::container::list(&docker, true, filters).await
 }
 

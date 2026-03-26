@@ -1,6 +1,6 @@
 # Frontend Specification
 
-> Version: 1.2.5 | Last Updated: 2026-03-25 | Author: frontend-architect
+> Version: 1.2.7 | Last Updated: 2026-03-26 | Author: frontend-architect
 
 ---
 
@@ -272,6 +272,8 @@ CrateBay uses 6 Zustand stores, one per domain. Stores are independent — no di
 Manages application-level state: theme, sidebar, current page, global status.
 
 ```typescript
+type DockerSource = "builtin" | "colima" | "other" | null;
+
 interface AppState {
   // Navigation
   currentPage: "chat" | "containers" | "images" | "mcp" | "settings";
@@ -292,6 +294,14 @@ interface AppState {
   runtimeStatus: "starting" | "running" | "stopped" | "error";
   setDockerConnected: (connected: boolean) => void;
   setRuntimeStatus: (status: AppState["runtimeStatus"]) => void;
+
+  // Built-in runtime status (decoupled from external Docker)
+  builtinRuntimeReady: boolean;
+  setBuiltinRuntimeReady: (ready: boolean) => void;
+
+  // Which Docker backend is currently connected
+  dockerSource: DockerSource;
+  setDockerSource: (source: DockerSource) => void;
 
   // Runtime control operations
   runtimeLoading: boolean;
@@ -316,8 +326,10 @@ interface Notification {
 **Runtime status handling**
 
 - Initial values come from `docker_status` + `runtime_status` on app startup.
-- Ongoing updates come from the global `runtime:health` event (every ~30s).
-- `docker_status.source = "built-in"` is the normal product path. `docker_status.source = "podman"` indicates fallback / explicit override semantics and should not be presented as a separate first-class runtime mode in the UI.
+- Ongoing updates come from the global `runtime:health` event (every ~20s).
+- The frontend normalizes backend Docker source signals into `appStore.dockerSource`: `"builtin"` for CrateBay Runtime, `"colima"` for Colima fallback, `"other"` for other external Docker-compatible backends, and `null` when unavailable or unknown.
+- `builtinRuntimeReady` becomes `true` only when Docker is responsive and `dockerSource === "builtin"`.
+- External Docker / Podman fallback must not be presented as a separate first-class runtime mode in the UI.
 - To avoid transient UI flicker (e.g., brief ping misses), the UI applies a downgrade grace window (`RUNTIME_HEALTH_DOWNGRADE_GRACE_MS`, default 90s) before showing `running → starting`.
 
 ### 4.2 chatStore
@@ -636,6 +648,7 @@ interface AppSettings {
   runtimeHttpProxyBindHost: string;
   runtimeHttpProxyBindPort: number;
   runtimeHttpProxyGuestHost: string;
+  allowExternalDocker: boolean; // Allow Colima / Docker Desktop fallback when built-in runtime is unavailable
 }
 ```
 
@@ -940,9 +953,11 @@ Application configuration with 6 tabs: General, Providers, Appearance, Runtime, 
 │                                                              │
 │  Runtime:                                                    │
 │  - VM Status (running/starting/stopped/error indicator)      │
-│  - Docker Connection status indicator                        │
+│  - Docker Connection status + backend source label           │
 │  - Runtime Control: Start / Stop / Restart buttons           │
 │    (calls runtime_start / runtime_stop Tauri commands)        │
+│  - Allow External Docker toggle                              │
+│    (Colima / Docker Desktop fallback, restart required)      │
 │  - Runtime HTTP Proxy settings + bridge options              │
 │    (persisted via settings_get/settings_update)              │
 │  - CPU Cores slider (1-16)                                   │

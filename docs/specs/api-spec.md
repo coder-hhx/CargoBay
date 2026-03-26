@@ -1,6 +1,6 @@
 # Tauri Commands API Specification
 
-> Version: 1.5.3 | Last Updated: 2026-03-25 | Author: architect
+> Version: 1.5.4 | Last Updated: 2026-03-25 | Author: architect
 
 ---
 
@@ -1346,6 +1346,7 @@ pub async fn settings_update(
 | `runtimeHttpProxyBindHost` | `String` | Bridge bind host (default `0.0.0.0`) |
 | `runtimeHttpProxyBindPort` | `String` (number) | Bridge bind port (default `3128`) |
 | `runtimeHttpProxyGuestHost` | `String` | Guest-visible host IP (default `192.168.64.1`) |
+| `allowExternalDocker` | `"true" \| "false"` | Allow Colima / Docker Desktop fallback when the built-in runtime is unavailable (restart recommended) |
 
 ---
 

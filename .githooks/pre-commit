@@ -286,10 +286,10 @@ if [ "$CORE_CHANGED" -gt 0 ]; then
   fi
 
   echo ""
-  echo "→ cargo test -p cratebay-cli --lib"
-  if ! cargo test -p cratebay-cli --lib 2>&1; then
+  echo "→ cargo test -p cratebay-cli --bins"
+  if ! cargo test -p cratebay-cli --bins 2>&1; then
     echo ""
-    echo "❌ FAILED: cratebay-cli unit tests did not pass."
+    echo "❌ FAILED: cratebay-cli binary target tests did not pass."
     exit 1
   fi
 
@@ -357,7 +357,7 @@ if [ "$CORE_CHANGED" -gt 0 ]; then
       echo ""
       # In AI Agent context, this blocks the commit.
       # For human developers, the CI on push will catch failures.
-      if [ -n "$CODEBUDDY_AGENT" ] || [ -n "$CLAUDE_AGENT" ] || [ -n "$CURSOR_AGENT" ]; then
+      if [ -n "${CODEBUDDY_AGENT:-}" ] || [ -n "${CLAUDE_AGENT:-}" ] || [ -n "${CURSOR_AGENT:-}" ]; then
         echo "❌ BLOCKED: Agent-driven commit requires all 3 platform test results."
         echo "   Spawn platform testers and wait for PASS before committing."
         exit 1

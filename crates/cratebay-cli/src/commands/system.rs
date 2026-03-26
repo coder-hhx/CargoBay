@@ -1,4 +1,8 @@
 use anyhow::Result;
+use std::time::Duration;
+
+const DOCKER_STATUS_RETRIES: usize = 3;
+const DOCKER_STATUS_RETRY_DELAY_MS: u64 = 250;
 
 /// Show system information.
 pub fn info() -> Result<()> {
@@ -10,7 +14,18 @@ pub fn info() -> Result<()> {
 
 /// Show Docker connection status without starting the built-in runtime.
 pub async fn docker_status() -> Result<()> {
-    let Some(docker) = cratebay_core::docker::try_connect().await else {
+    let mut docker = None;
+    for attempt in 0..DOCKER_STATUS_RETRIES {
+        docker = cratebay_core::docker::try_connect().await;
+        if docker.is_some() {
+            break;
+        }
+        if attempt + 1 < DOCKER_STATUS_RETRIES {
+            tokio::time::sleep(Duration::from_millis(DOCKER_STATUS_RETRY_DELAY_MS)).await;
+        }
+    }
+
+    let Some(docker) = docker else {
         println!("Docker: not connected");
         return Ok(());
     };

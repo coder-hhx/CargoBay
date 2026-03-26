@@ -720,7 +720,9 @@ fn start_tcp_forward(
                         addr
                     );
                     let accepted = {
-                        let deadline = Instant::now() + Duration::from_secs(5);
+                        // Increased timeout from 5s to 30s to handle concurrent connections
+                        // when guest agent is processing multiple requests
+                        let deadline = Instant::now() + Duration::from_secs(30);
                         loop {
                             if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
                                 break None;
@@ -738,7 +740,7 @@ fn start_tcp_forward(
                                     break Some((tcp, guest_addr));
                                 }
                                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                                    std::thread::sleep(Duration::from_millis(100));
+                                    std::thread::sleep(Duration::from_millis(50));
                                 }
                                 Err(error) => {
                                     tracing::warn!(
@@ -964,6 +966,9 @@ fn rewrite_http_request_preface(request: &[u8]) -> Option<Vec<u8>> {
     if !has_content_length && !has_transfer_encoding {
         rewritten.extend_from_slice(b"Content-Length: 0\r\n");
     }
+    // Reverse TCP mode still uses one tunnel per accepted Unix client.
+    // Force connection close so dockerd releases the upstream TCP connection
+    // and guest-agent workers can return to the pool for the next request.
     rewritten.extend_from_slice(b"Connection: close\r\n");
     rewritten.extend_from_slice(b"\r\n");
     rewritten.extend_from_slice(&request[header_end..]);
@@ -975,7 +980,7 @@ mod tests {
     use super::rewrite_http_request_preface;
 
     #[test]
-    fn rewrites_plain_http_request_for_single_shot_proxying() {
+    fn rewrites_plain_http_request_for_connection_close_proxying() {
         let request = b"GET /version HTTP/1.1\r\nHost: docker\r\nUser-Agent: test\r\n\r\n";
         let rewritten = rewrite_http_request_preface(request).expect("request should rewrite");
         let text = String::from_utf8(rewritten).expect("valid utf-8");

@@ -96,7 +96,9 @@ pub fn runtime_vm_name() -> &'static str {
 /// The guest port for the Docker API proxy inside the runtime VM.
 ///
 /// Override via `CRATEBAY_DOCKER_PROXY_PORT` or the legacy
-/// `CRATEBAY_DOCKER_VSOCK_PORT`. Defaults to [`DEFAULT_DOCKER_PROXY_PORT`].
+/// `CRATEBAY_DOCKER_VSOCK_PORT`. When `CRATEBAY_DATA_DIR` is set and no port
+/// override is provided, derive a deterministic high port from the data dir so
+/// isolated runtimes do not all collide on the global default port.
 pub fn docker_proxy_port() -> u32 {
     *DOCKER_PROXY_PORT.get_or_init(|| {
         std::env::var("CRATEBAY_DOCKER_PROXY_PORT")
@@ -109,13 +111,28 @@ pub fn docker_proxy_port() -> u32 {
                     .and_then(|v| v.parse::<u32>().ok())
                     .filter(|v| *v > 0)
             })
+            .or_else(|| {
+                std::env::var("CRATEBAY_DATA_DIR").ok().and_then(|dir| {
+                    let dir = dir.trim();
+                    if dir.is_empty() {
+                        return None;
+                    }
+                    let hash = dir.bytes().fold(0_u32, |acc, byte| {
+                        acc.wrapping_mul(131).wrapping_add(byte as u32)
+                    });
+                    Some(42000 + (hash % 10000))
+                })
+            })
             .unwrap_or(DEFAULT_DOCKER_PROXY_PORT)
     })
 }
 
 /// The host-side Docker-compatible Unix socket path exposed by CrateBay.
 ///
-/// Defaults to `$HOME/.cratebay/runtime/docker.sock`.
+/// Defaults to `$HOME/.cratebay/runtime/docker.sock`. When `CRATEBAY_DATA_DIR`
+/// is explicitly set, derive a short, isolated socket path under the system
+/// temp directory so isolated runtimes do not share the global socket path and
+/// do not hit macOS Unix socket path length limits.
 ///
 /// Override via `CRATEBAY_DOCKER_SOCKET_PATH`.
 pub fn host_docker_socket_path() -> &'static Path {
@@ -124,6 +141,18 @@ pub fn host_docker_socket_path() -> &'static Path {
             if let Ok(p) = std::env::var("CRATEBAY_DOCKER_SOCKET_PATH") {
                 if !p.trim().is_empty() {
                     return PathBuf::from(p);
+                }
+            }
+
+            if let Ok(dir) = std::env::var("CRATEBAY_DATA_DIR") {
+                let dir = dir.trim();
+                if !dir.is_empty() {
+                    let hash = dir.bytes().fold(0_u32, |acc, byte| {
+                        acc.wrapping_mul(131).wrapping_add(byte as u32)
+                    });
+                    return std::env::temp_dir()
+                        .join(format!("cratebay-runtime-{}", hash))
+                        .join("docker.sock");
                 }
             }
 
@@ -143,14 +172,29 @@ pub fn host_docker_socket_path() -> &'static Path {
 
 /// Per-VM Docker socket path on the host.
 ///
-/// Located alongside `host_docker_socket_path()` but named
-/// `docker-<vm_id>.sock` to avoid collisions with multiple VMs.
+/// Located alongside `host_docker_socket_path()` and includes an additional
+/// suffix when `CRATEBAY_DATA_DIR` is explicitly set, so isolated runtimes do
+/// not collide on the same `/tmp/docker-<vm>.sock` path.
 pub fn runtime_host_docker_socket_path(vm_id: &str) -> PathBuf {
     let base = host_docker_socket_path()
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| crate::storage::data_dir().join("runtime"));
-    base.join(format!("docker-{}.sock", vm_id))
+
+    let suffix = std::env::var("CRATEBAY_DATA_DIR")
+        .ok()
+        .map(|dir| dir.trim().to_string())
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| {
+            dir.bytes().fold(0_u32, |acc, byte| {
+                acc.wrapping_mul(131).wrapping_add(byte as u32)
+            })
+        });
+
+    match suffix {
+        Some(hash) => base.join(format!("docker-{}-{}.sock", vm_id, hash)),
+        None => base.join(format!("docker-{}.sock", vm_id)),
+    }
 }
 
 /// Create a symlink from the canonical `host_docker_socket_path()` to the
