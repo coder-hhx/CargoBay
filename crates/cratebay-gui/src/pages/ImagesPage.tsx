@@ -54,6 +54,7 @@ export function ImagesPage() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<"local" | "search">("local");
   const refreshLocalRef = useRef<(() => void) | null>(null);
+  const [toolbarRight, setToolbarRight] = useState<React.ReactNode>(null);
 
   // 当有拉取任务完成时，自动刷新本地镜像列表
   const tasks = usePullStore((s) => s.tasks);
@@ -95,17 +96,20 @@ export function ImagesPage() {
           <Globe className="h-3 w-3" />
           {t("images", "searchImages")}
         </button>
-        <div className="ml-auto flex items-center gap-2">
-          <PullTaskList />
+        <div className="h-4 w-px bg-border" />
+        {/* Dynamic right-side controls injected by active tab */}
+        <div className="flex flex-1 items-center gap-2">
+          {toolbarRight}
         </div>
+        <PullTaskList />
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === "local" ? (
-          <LocalImagesTab onRefreshRef={refreshLocalRef} />
+          <LocalImagesTab onRefreshRef={refreshLocalRef} onToolbar={setToolbarRight} />
         ) : (
-          <SearchImagesTab />
+          <SearchImagesTab onToolbar={setToolbarRight} />
         )}
       </div>
     </div>
@@ -114,7 +118,7 @@ export function ImagesPage() {
 
 /* ========== Local Images Tab ========== */
 
-function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject<(() => void) | null> }) {
+function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.MutableRefObject<(() => void) | null>; onToolbar: (node: React.ReactNode) => void }) {
   const { t } = useI18n();
   const [images, setImages] = useState<LocalImageInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -255,10 +259,10 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
 
   const allVisibleSelected = filteredImages.length > 0 && filteredImages.every((i) => selectedIds.has(i.id));
 
-  return (
-    <div className="px-6 py-4">
-      {/* Toolbar */}
-      <div className="mb-4 flex items-center gap-3">
+  // Inject toolbar controls into parent
+  useEffect(() => {
+    onToolbar(
+      <>
         <div className="relative w-56">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -268,31 +272,38 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
             className="h-8 pl-8 text-xs"
           />
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void fetchImages()}
-          disabled={loading}
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-          {t("common", "refresh")}
-        </Button>
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={selectedIds.size === 0}
-          onClick={() => setBatchRemoveConfirm(true)}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          {t("images", "batchRemove")}
-          {selectedIds.size > 0 && (
-            <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
-              {selectedIds.size}
-            </Badge>
-          )}
-        </Button>
-      </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void fetchImages()}
+            disabled={loading}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            {t("common", "refresh")}
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={selectedIds.size === 0}
+            onClick={() => setBatchRemoveConfirm(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t("images", "batchRemove")}
+            {selectedIds.size > 0 && (
+              <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
+                {selectedIds.size}
+              </Badge>
+            )}
+          </Button>
+        </div>
+      </>
+    );
+    return () => onToolbar(null);
+  }, [filter, loading, selectedIds, t, fetchImages, onToolbar]);
 
+  return (
+    <div className="px-6 py-4">
       {/* Image count with select all */}
       <div className="mb-3 flex items-center gap-2">
         <Checkbox
@@ -602,7 +613,7 @@ function isLikelyProxyOrNetworkBlocked(message: string): boolean {
   return timedOut && registryRelated;
 }
 
-function SearchImagesTab() {
+function SearchImagesTab({ onToolbar }: { onToolbar: (node: React.ReactNode) => void }) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ImageSearchResult[]>([]);
@@ -651,33 +662,41 @@ function SearchImagesTab() {
     [handleSearch],
   );
 
-  return (
-    <div className="px-6 py-4">
-      {/* Search bar */}
-      <div className="mb-4 flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+  // Inject toolbar controls into parent
+  useEffect(() => {
+    onToolbar(
+      <>
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={t("images", "searchPlaceholder")}
-            className="pl-9"
+            className="h-8 pl-8 text-xs"
           />
         </div>
-        <Button
-          size="sm"
-          onClick={() => void handleSearch()}
-          disabled={searching || query.trim().length === 0}
-        >
-          {searching ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Search className="h-3.5 w-3.5" />
-          )}
-          {t("common", "search")}
-        </Button>
-      </div>
+        <div className="ml-auto">
+          <Button
+            size="sm"
+            onClick={() => void handleSearch()}
+            disabled={searching || query.trim().length === 0}
+          >
+            {searching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Search className="h-3.5 w-3.5" />
+            )}
+            {t("common", "search")}
+          </Button>
+        </div>
+      </>
+    );
+    return () => onToolbar(null);
+  }, [query, searching, t, handleSearch, handleKeyDown, onToolbar]);
+
+  return (
+    <div className="px-6 py-4">
 
       {/* Search error */}
       {searchError !== null && (
