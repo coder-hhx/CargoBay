@@ -82,18 +82,14 @@ describe("ContainerList", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders container table with headers", () => {
+  it("renders container rows with name and image", () => {
     useContainerStore.setState({
       containers: [makeContainer()],
     });
     render(<ContainerList />);
 
-    expect(screen.getByText("Name")).toBeInTheDocument();
-    expect(screen.getByText("Image")).toBeInTheDocument();
-    expect(screen.getByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("CPU")).toBeInTheDocument();
-    expect(screen.getByText("Memory")).toBeInTheDocument();
-    expect(screen.getByText("Actions")).toBeInTheDocument();
+    expect(screen.getByText("node-01")).toBeInTheDocument();
+    expect(screen.getByText("node:20-slim")).toBeInTheDocument();
   });
 
   it("renders container name and shortId", () => {
@@ -115,22 +111,23 @@ describe("ContainerList", () => {
     expect(screen.getByText("python:3.12-slim")).toBeInTheDocument();
   });
 
-  it("renders Running badge for running containers", () => {
+  it("renders status label for running containers", () => {
     useContainerStore.setState({
       containers: [makeContainer({ status: "running" })],
     });
     render(<ContainerList />);
 
-    expect(screen.getByText("Running")).toBeInTheDocument();
+    // Status shown as Chinese label in the row
+    expect(screen.getByText("运行中")).toBeInTheDocument();
   });
 
-  it("renders Stopped badge for stopped containers", () => {
+  it("renders status label for stopped containers", () => {
     useContainerStore.setState({
       containers: [makeContainer({ status: "stopped" })],
     });
     render(<ContainerList />);
 
-    expect(screen.getByText("Stopped")).toBeInTheDocument();
+    expect(screen.getByText("已停止")).toBeInTheDocument();
   });
 
   it("renders CPU and memory info", () => {
@@ -139,7 +136,7 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByText("4 cores")).toBeInTheDocument();
+    expect(screen.getByText("4 CPU")).toBeInTheDocument();
     expect(screen.getByText("4096 MB")).toBeInTheDocument();
   });
 
@@ -164,8 +161,8 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByLabelText("Stop")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Start")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Stop")).toBeInTheDocument();
+    expect(screen.queryByTitle("Start")).not.toBeInTheDocument();
   });
 
   it("shows start button for stopped containers", () => {
@@ -174,8 +171,8 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByLabelText("Start")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Stop")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Start")).toBeInTheDocument();
+    expect(screen.queryByTitle("Stop")).not.toBeInTheDocument();
   });
 
   it("always shows delete button", () => {
@@ -184,25 +181,17 @@ describe("ContainerList", () => {
     });
     render(<ContainerList />);
 
-    expect(screen.getByLabelText("Delete")).toBeInTheDocument();
+    expect(screen.getByTitle("Delete")).toBeInTheDocument();
   });
 
-  it("always shows view details button", () => {
-    useContainerStore.setState({
-      containers: [makeContainer()],
-    });
-    render(<ContainerList />);
-
-    expect(screen.getByLabelText("View details")).toBeInTheDocument();
-  });
-
-  it("clicking view details selects the container", () => {
+  it("clicking a row selects the container", () => {
     useContainerStore.setState({
       containers: [makeContainer({ id: "c-42" })],
     });
     render(<ContainerList />);
 
-    fireEvent.click(screen.getByLabelText("View details"));
+    const cards = screen.getAllByTestId("container-card");
+    fireEvent.click(cards[0]);
     expect(useContainerStore.getState().selectedContainerId).toBe("c-42");
   });
 
