@@ -101,7 +101,6 @@ export function ImagesPage() {
         <div className="flex flex-1 items-center gap-2">
           {toolbarRight}
         </div>
-        <PullTaskList />
       </div>
 
       {/* Content */}
@@ -273,6 +272,7 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
           />
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <PullTaskList />
           <Button
             variant="ghost"
             size="sm"
@@ -676,7 +676,8 @@ function SearchImagesTab({ onToolbar }: { onToolbar: (node: React.ReactNode) => 
             className="h-8 pl-8 text-xs"
           />
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <PullTaskList />
           <Button
             size="sm"
             onClick={() => void handleSearch()}
