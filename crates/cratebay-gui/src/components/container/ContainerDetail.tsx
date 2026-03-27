@@ -1,27 +1,39 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useContainerStore, type ContainerInfo } from "@/stores/containerStore";
 import { useI18n } from "@/lib/i18n";
 import { useAppStore } from "@/stores/appStore";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ContainerLogs } from "./ContainerLogs";
-import { ContainerMonitoring } from "./ContainerMonitoring";
-import { TerminalView } from "./TerminalView";
-import { Play, Square, Trash2, Copy, Check, X } from "lucide-react";
+import { Play, Square, Trash2, Copy, Check, X, Terminal } from "lucide-react";
 
 /**
- * Container detail panel — absolute-positioned overlay on the right side.
- * Floats above the container list without displacing it.
+ * Container detail panel — fixed-positioned overlay on the right side.
+ * Uses React Portal to render outside ContainersPage's overflow-hidden,
+ * positioned relative to the <main> content area.
  */
-const PANEL_WIDTH = 420;
+const PANEL_WIDTH = 400;
 
 export function ContainerDetail() {
   const selectedContainerId = useContainerStore((s) => s.selectedContainerId);
   const containers = useContainerStore((s) => s.containers);
   const selectContainer = useContainerStore((s) => s.selectContainer);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   const container = containers.find((c) => c.id === selectedContainerId) ?? null;
   const isOpen = container !== null;
+
+  // Find the <main> element as portal mount point
+  useEffect(() => {
+    const main = document.querySelector("main");
+    if (main) {
+      // Ensure main is a positioning context
+      if (getComputedStyle(main).position === "static") {
+        main.style.position = "relative";
+      }
+      setPortalTarget(main);
+    }
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -37,9 +49,11 @@ export function ContainerDetail() {
     }
   }, [isOpen, handleKeyDown]);
 
-  return (
+  if (!portalTarget) return null;
+
+  return createPortal(
     <>
-      {/* Click-away area — transparent, does not obscure the list */}
+      {/* Click-away backdrop — transparent */}
       {isOpen && (
         <div
           className="absolute inset-0 z-40"
@@ -47,7 +61,7 @@ export function ContainerDetail() {
         />
       )}
 
-      {/* Panel — slides in from the right, floats above the list */}
+      {/* Panel — slides in from the right */}
       <div
         className={cn(
           "absolute bottom-0 right-0 top-0 z-50 flex flex-col border-l border-border bg-card shadow-2xl transition-transform duration-300 ease-in-out",
@@ -55,17 +69,15 @@ export function ContainerDetail() {
         )}
         style={{ width: `${PANEL_WIDTH}px` }}
       >
-        {/* Header: title + action buttons + close */}
         {container !== null && (
           <DetailHeader container={container} onClose={() => selectContainer(null)} />
         )}
-
-        {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
           {container !== null && <DetailContent container={container} />}
         </div>
       </div>
-    </>
+    </>,
+    portalTarget,
   );
 }
 
@@ -119,12 +131,10 @@ function DetailHeader({
 
   return (
     <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-      {/* Title */}
       <h2 className="flex-1 truncate text-sm font-semibold text-foreground">
         {container.name}
       </h2>
 
-      {/* Inline icon action buttons */}
       {isRunning ? (
         <button
           onClick={() => void handleAction(() => stopContainer(container.id), "容器已停止", "停止失败")}
@@ -154,7 +164,6 @@ function DetailHeader({
         <Trash2 className="h-3.5 w-3.5" />
       </button>
 
-      {/* Separator + Close */}
       <div className="mx-1 h-4 w-px bg-border" />
       <button
         onClick={onClose}
@@ -170,12 +179,14 @@ function DetailContent({ container }: { container: ContainerInfo }) {
   const { t } = useI18n();
   const isRunning = container.status === "running" || container.status === "paused";
 
+  const execCmd = `docker exec -it ${container.shortId} /bin/sh`;
+
   return (
     <div className="flex flex-col gap-5 p-4">
       {/* Status badge */}
       <StatusBadge status={container.status} />
 
-      {/* Overview section */}
+      {/* Overview */}
       <section>
         <SectionTitle>{t("containers", "overview") ?? "概览"}</SectionTitle>
         <div className="space-y-3">
@@ -188,35 +199,20 @@ function DetailContent({ container }: { container: ContainerInfo }) {
         </div>
       </section>
 
-      {/* Specs section (limits) */}
+      {/* Specs — plain text, no cards */}
       <section>
         <SectionTitle>规格</SectionTitle>
-        <div className="grid grid-cols-2 gap-3">
-          <SpecCard
-            label={t("containers", "cpuCores")}
-            value={container.cpuCores !== undefined ? `${container.cpuCores}` : "—"}
-            unit="核心"
-          />
-          <SpecCard
-            label={t("containers", "memoryMb")}
-            value={container.memoryMb !== undefined ? `${container.memoryMb}` : "—"}
-            unit="MB"
-          />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+          <DetailField label={t("containers", "cpuCores")}>
+            {container.cpuCores !== undefined ? `${container.cpuCores} 核心` : "—"}
+          </DetailField>
+          <DetailField label={t("containers", "memoryMb")}>
+            {container.memoryMb !== undefined ? `${container.memoryMb} MB` : "—"}
+          </DetailField>
         </div>
       </section>
 
-      {/* Monitoring section (usage) */}
-      <section>
-        <SectionTitle>监控</SectionTitle>
-        <ContainerMonitoring
-          containerId={container.id}
-          cpuCores={container.cpuCores}
-          memoryMb={container.memoryMb}
-          enabled={isRunning}
-        />
-      </section>
-
-      {/* Ports section */}
+      {/* Ports */}
       {container.ports.length > 0 && (
         <section>
           <SectionTitle>{t("containers", "ports") ?? "端口映射"}</SectionTitle>
@@ -246,17 +242,22 @@ function DetailContent({ container }: { container: ContainerInfo }) {
         </section>
       )}
 
-      {/* Logs section */}
+      {/* Terminal — show exec command */}
       <section>
-        <SectionTitle>{t("containers", "logs") ?? "日志"}</SectionTitle>
-        <ContainerLogs containerId={container.id} />
-      </section>
-
-      {/* Terminal section */}
-      <section>
-        <SectionTitle>{t("containers", "terminal") ?? "终端"}</SectionTitle>
+        <SectionTitle>终端</SectionTitle>
         {isRunning ? (
-          <TerminalView containerId={container.id} />
+          <div className="rounded-md bg-zinc-900 p-3">
+            <div className="mb-2 flex items-center gap-1.5 text-[10px] text-zinc-400">
+              <Terminal className="h-3 w-3" />
+              连接终端
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <code className="flex-1 truncate font-mono text-xs text-emerald-400">
+                {execCmd}
+              </code>
+              <CopyButton value={execCmd} />
+            </div>
+          </div>
         ) : (
           <div className="text-xs text-muted-foreground">容器未运行</div>
         )}
@@ -280,16 +281,6 @@ function DetailField({ label, children }: { label: string; children: React.React
     <div className="flex flex-col gap-0.5">
       <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
       <span className="truncate text-sm text-foreground">{children}</span>
-    </div>
-  );
-}
-
-function SpecCard({ label, value, unit }: { label: string; value: string; unit: string }) {
-  return (
-    <div className="rounded-md border border-border bg-muted/30 p-3">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</div>
-      <div className="text-lg font-semibold text-foreground">{value}</div>
-      <div className="text-[10px] text-muted-foreground">{unit}</div>
     </div>
   );
 }
