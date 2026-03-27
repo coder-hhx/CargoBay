@@ -1166,7 +1166,7 @@ pub async fn image_pull(
     // Track the highest sum_current we've ever sent (never go backwards)
     let mut max_current_sent: u64 = 0;
 
-    let chunk_timeout_secs = 60;
+    let chunk_timeout_secs = 120;
 
     loop {
         let chunk_timeout = tokio::time::timeout(

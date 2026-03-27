@@ -35,6 +35,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Layers,
   Search,
@@ -125,6 +126,12 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
   const [removeConfirm, setRemoveConfirm] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
 
+  // Batch selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchRemoveConfirm, setBatchRemoveConfirm] = useState(false);
+  const [batchRemoving, setBatchRemoving] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0, failed: 0 });
+
   const fetchImages = useCallback(async () => {
     setLoading(true);
     try {
@@ -196,6 +203,60 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
     setRemoveConfirm(null);
   }, [fetchImages]);
 
+  // Clear selection when images list changes (after refresh)
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const imageIdSet = new Set(images.map((i) => i.id));
+      const next = new Set([...prev].filter((id) => imageIdSet.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [images]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    const visibleIds = filteredImages.map((i) => i.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleIds));
+    }
+  }, [filteredImages, selectedIds]);
+
+  const handleBatchRemove = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setBatchRemoving(true);
+    setBatchProgress({ done: 0, total: ids.length, failed: 0 });
+    let failed = 0;
+    for (let i = 0; i < ids.length; i++) {
+      try {
+        await invoke("image_remove", { id: ids[i], force: true });
+      } catch {
+        failed++;
+      }
+      setBatchProgress({ done: i + 1, total: ids.length, failed });
+    }
+    await fetchImages();
+    setSelectedIds(new Set());
+    setBatchRemoving(false);
+    setBatchRemoveConfirm(false);
+    setBatchProgress({ done: 0, total: 0, failed: 0 });
+  }, [selectedIds, fetchImages]);
+
+  const allVisibleSelected = filteredImages.length > 0 && filteredImages.every((i) => selectedIds.has(i.id));
+
   return (
     <div className="px-6 py-4">
       {/* Toolbar */}
@@ -218,12 +279,38 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           {t("common", "refresh")}
         </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={selectedIds.size === 0}
+          onClick={() => setBatchRemoveConfirm(true)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {t("images", "batchRemove")}
+          {selectedIds.size > 0 && (
+            <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
+              {selectedIds.size}
+            </Badge>
+          )}
+        </Button>
       </div>
 
-      {/* Image count */}
-      <p className="mb-3 text-xs text-muted-foreground">
-        {filteredImages.length} {t("images", "imageCount")}
-      </p>
+      {/* Image count with select all */}
+      <div className="mb-3 flex items-center gap-2">
+        <Checkbox
+          checked={allVisibleSelected}
+          onCheckedChange={() => toggleSelectAll()}
+          disabled={filteredImages.length === 0}
+        />
+        <p className="text-xs text-muted-foreground">
+          {filteredImages.length} {t("images", "imageCount")}
+          {selectedIds.size > 0 && (
+            <span className="ml-1.5 text-foreground font-medium">
+              ({t("images", "selectedCount").replace("{count}", String(selectedIds.size))})
+            </span>
+          )}
+        </p>
+      </div>
 
       {/* Image list */}
       {loading ? (
@@ -243,6 +330,8 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
             <LocalImageRow
               key={img.id}
               image={img}
+              selected={selectedIds.has(img.id)}
+              onToggleSelect={() => toggleSelect(img.id)}
               onInspect={() => void handleInspect(img.id)}
               onRemove={() => setRemoveConfirm(img.id)}
             />
@@ -340,16 +429,85 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Batch Remove Confirm Dialog */}
+      <Dialog
+        open={batchRemoveConfirm}
+        onOpenChange={(open) => {
+          if (!open && !batchRemoving) setBatchRemoveConfirm(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>{t("images", "batchRemove")}</DialogTitle>
+            <DialogDescription>
+              {t("images", "confirmBatchRemove").replace("{count}", String(selectedIds.size))}
+            </DialogDescription>
+          </DialogHeader>
+          {batchRemoving ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{t("images", "batchProgress").replace("{done}", String(batchProgress.done)).replace("{total}", String(batchProgress.total))}</span>
+                {batchProgress.failed > 0 && (
+                  <span className="text-destructive">
+                    {t("images", "batchFailed").replace("{count}", String(batchProgress.failed))}
+                  </span>
+                )}
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${batchProgress.total > 0 ? (batchProgress.done / batchProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[200px]">
+              <div className="space-y-1">
+                {images
+                  .filter((i) => selectedIds.has(i.id))
+                  .map((img) => (
+                    <div key={img.id} className="rounded-md border bg-muted px-2 py-1 text-xs font-mono text-foreground break-all">
+                      {img.repoTags[0] ?? img.id.slice(7, 19)}
+                    </div>
+                  ))}
+              </div>
+            </ScrollArea>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={batchRemoving}
+              onClick={() => setBatchRemoveConfirm(false)}
+            >
+              {t("common", "cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={batchRemoving}
+              onClick={() => void handleBatchRemove()}
+            >
+              {batchRemoving
+                ? `${batchProgress.done}/${batchProgress.total}`
+                : t("images", "confirmBatchRemoveBtn").replace("{count}", String(selectedIds.size))}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 function LocalImageRow({
   image,
+  selected,
+  onToggleSelect,
   onInspect,
   onRemove,
 }: {
   image: LocalImageInfo;
+  selected: boolean;
+  onToggleSelect: () => void;
   onInspect: () => void;
   onRemove: () => void;
 }) {
@@ -359,7 +517,17 @@ function LocalImageRow({
   const createdDate = new Date(image.created * 1000);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:border-primary/30">
+    <div className={cn(
+      "flex items-center gap-3 rounded-lg border bg-card px-4 py-3 transition-colors hover:border-primary/30",
+      selected ? "border-primary/40 bg-primary/5" : "border-border",
+    )}>
+      {/* Checkbox */}
+      <Checkbox
+        checked={selected}
+        onCheckedChange={onToggleSelect}
+        className="flex-shrink-0"
+      />
+
       {/* Icon */}
       <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
         <Layers className="h-[18px] w-[18px]" />

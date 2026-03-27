@@ -181,6 +181,12 @@ export interface Translations {
     layers: string;
     removeImage: string;
     confirmRemove: string;
+    selectedCount: string;
+    batchRemove: string;
+    confirmBatchRemove: string;
+    confirmBatchRemoveBtn: string;
+    batchProgress: string;
+    batchFailed: string;
     tags: string;
     searchPlaceholder: string;
     searchHint: string;

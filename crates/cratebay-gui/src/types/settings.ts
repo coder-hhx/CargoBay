@@ -88,8 +88,10 @@ export interface AppSettings {
 /**
  * Built-in registry mirrors for China mainland users.
  * Users can add/remove custom mirrors in settings.
+ * Ordered by reliability and speed for optimal pull performance.
  */
 export const DEFAULT_REGISTRY_MIRRORS: string[] = [
   "docker.1ms.run",
   "docker.xuanyuan.me",
+  "dockerhub.icu",
 ];

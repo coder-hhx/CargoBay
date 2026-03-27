@@ -131,44 +131,24 @@ function PullTaskRow({ task, onRemove }: { task: PullTask; onRemove: () => void 
   }
 
   const speedStr = formatSpeed(task.speed);
-  const hasBytes = task.totalBytes > 0;
-  const pct = hasBytes ? Math.min(100, Math.round((task.currentBytes / task.totalBytes) * 100)) : 0;
-  const bytesStr = hasBytes
-    ? `${formatBytes(task.currentBytes)} / ${formatBytes(task.totalBytes)}`
-    : "";
+  const downloadedStr = task.currentBytes > 0 ? formatBytes(task.currentBytes) : "";
 
   return (
     <div className="px-3 py-2 space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />
-          <span className="truncate text-xs font-medium text-foreground">{task.image}</span>
-        </div>
-        {hasBytes && (
-          <span className="text-[10px] tabular-nums text-muted-foreground flex-shrink-0">
-            {pct}%
-          </span>
-        )}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />
+        <span className="truncate text-xs font-medium text-foreground">{task.image}</span>
       </div>
 
-      {/* Progress bar: determinate when bytes available, indeterminate otherwise */}
-      {hasBytes ? (
-        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-300"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      ) : (
-        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-          <div className="h-full w-1/3 rounded-full bg-primary animate-indeterminate" />
-        </div>
-      )}
+      {/* Indeterminate progress bar */}
+      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+        <div className="h-full w-1/3 rounded-full bg-primary animate-indeterminate" />
+      </div>
 
-      {/* Stats line */}
+      {/* Stats: downloaded size + speed */}
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <span className="truncate">
-          {bytesStr || task.status || "准备中..."}
+          {downloadedStr || task.status || "准备中..."}
         </span>
         {speedStr && <span className="flex-shrink-0 tabular-nums ml-2">{speedStr}</span>}
       </div>
