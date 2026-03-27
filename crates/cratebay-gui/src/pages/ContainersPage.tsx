@@ -56,14 +56,11 @@ export function ContainersPage() {
   const setFilter = useContainerStore((s) => s.setFilter);
   const loading = useContainerStore((s) => s.loading);
   const error = useContainerStore((s) => s.error);
-  const selectedContainerId = useContainerStore((s) => s.selectedContainerId);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
   // Read builtin runtime ready state from appStore
   const builtinRuntimeReady = useAppStore((s) => s.builtinRuntimeReady);
   const dockerConnected = useAppStore((s) => s.dockerConnected);
-
-  const isDetailOpen = selectedContainerId !== null;
 
   useEffect(() => {
     void fetchContainers();
@@ -101,12 +98,7 @@ export function ContainersPage() {
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Main content — shrinks when detail panel opens */}
-      <div className={cn(
-        "flex flex-1 flex-col overflow-hidden transition-all duration-300",
-        isDetailOpen ? "min-w-0" : "",
-      )}>
+    <div className="relative flex h-full flex-col overflow-hidden">
         {/* Header — stats + actions */}
         <div className="flex items-center justify-between px-6 py-3">
           <p className="text-xs text-muted-foreground">
@@ -224,9 +216,7 @@ export function ContainersPage() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* Detail panel — inline flex sibling, not absolute */}
+      {/* Detail panel — absolute overlay on the right */}
       <ContainerDetail />
     </div>
   );

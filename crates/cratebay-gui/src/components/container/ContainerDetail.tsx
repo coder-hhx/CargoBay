@@ -10,9 +10,8 @@ import { TerminalView } from "./TerminalView";
 import { Play, Square, Trash2, Copy, Check, X } from "lucide-react";
 
 /**
- * Container detail panel — inline flex sibling of the container list.
- * Opens from the right side with smooth width transition.
- * No overlay, no absolute positioning — the list shrinks naturally.
+ * Container detail panel — absolute-positioned overlay on the right side.
+ * Floats above the container list without displacing it.
  */
 const PANEL_WIDTH = 420;
 
@@ -39,11 +38,23 @@ export function ContainerDetail() {
   }, [isOpen, handleKeyDown]);
 
   return (
-    <div
-      className="flex-shrink-0 overflow-hidden border-l border-border bg-card transition-[width] duration-300 ease-in-out"
-      style={{ width: isOpen ? `${PANEL_WIDTH}px` : 0, borderLeftWidth: isOpen ? 1 : 0 }}
-    >
-      <div className="flex h-full flex-col" style={{ width: `${PANEL_WIDTH}px` }}>
+    <>
+      {/* Click-away area — transparent, does not obscure the list */}
+      {isOpen && (
+        <div
+          className="absolute inset-0 z-40"
+          onClick={() => selectContainer(null)}
+        />
+      )}
+
+      {/* Panel — slides in from the right, floats above the list */}
+      <div
+        className={cn(
+          "absolute bottom-0 right-0 top-0 z-50 flex flex-col border-l border-border bg-card shadow-2xl transition-transform duration-300 ease-in-out",
+          isOpen ? "translate-x-0" : "translate-x-full",
+        )}
+        style={{ width: `${PANEL_WIDTH}px` }}
+      >
         {/* Header: title + action buttons + close */}
         {container !== null && (
           <DetailHeader container={container} onClose={() => selectContainer(null)} />
@@ -54,7 +65,7 @@ export function ContainerDetail() {
           {container !== null && <DetailContent container={container} />}
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
