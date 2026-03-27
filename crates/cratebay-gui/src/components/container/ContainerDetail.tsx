@@ -1,82 +1,84 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useContainerStore, type ContainerInfo } from "@/stores/containerStore";
 import { useI18n } from "@/lib/i18n";
 import { useAppStore } from "@/stores/appStore";
-import { SlidePanel } from "@/components/common/SlidePanel";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ContainerLogs } from "./ContainerLogs";
 import { ContainerMonitoring } from "./ContainerMonitoring";
 import { TerminalView } from "./TerminalView";
-import { Play, Square, Trash2, Copy, Check } from "lucide-react";
+import { Play, Square, Trash2, Copy, Check, X } from "lucide-react";
 
 /**
- * Container detail slide panel — opens from the right side.
- * Shows: overview info, ports, logs, terminal.
- * Matches the reference project's SlidePanel pattern.
+ * Container detail panel — inline flex sibling of the container list.
+ * Opens from the right side with smooth width transition.
+ * No overlay, no absolute positioning — the list shrinks naturally.
  */
+const PANEL_WIDTH = 420;
+
 export function ContainerDetail() {
   const selectedContainerId = useContainerStore((s) => s.selectedContainerId);
   const containers = useContainerStore((s) => s.containers);
   const selectContainer = useContainerStore((s) => s.selectContainer);
 
   const container = containers.find((c) => c.id === selectedContainerId) ?? null;
+  const isOpen = container !== null;
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") selectContainer(null);
+    },
+    [selectContainer],
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+      return () => document.removeEventListener("keydown", handleKeyDown);
+    }
+  }, [isOpen, handleKeyDown]);
 
   return (
-    <SlidePanel
-      isOpen={container !== null}
-      onClose={() => selectContainer(null)}
-      title={container?.name}
+    <div
+      className="flex-shrink-0 overflow-hidden border-l border-border bg-card transition-[width] duration-300 ease-in-out"
+      style={{ width: isOpen ? `${PANEL_WIDTH}px` : 0, borderLeftWidth: isOpen ? 1 : 0 }}
     >
-      {container !== null && <DetailContent container={container} />}
-    </SlidePanel>
+      <div className="flex h-full flex-col" style={{ width: `${PANEL_WIDTH}px` }}>
+        {/* Header: title + action buttons + close */}
+        {container !== null && (
+          <DetailHeader container={container} onClose={() => selectContainer(null)} />
+        )}
+
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto">
+          {container !== null && <DetailContent container={container} />}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function DetailContent({ container }: { container: ContainerInfo }) {
-  const { t } = useI18n();
-  const { startContainer, stopContainer, deleteContainer } = useContainerStore();
+function DetailHeader({
+  container,
+  onClose,
+}: {
+  container: ContainerInfo;
+  onClose: () => void;
+}) {
+  const { startContainer, stopContainer, deleteContainer, selectContainer } = useContainerStore();
   const { addNotification } = useAppStore();
   const isRunning = container.status === "running" || container.status === "paused";
   const [operating, setOperating] = useState(false);
 
-  const handleStart = async () => {
+  const handleAction = async (action: () => Promise<void>, successMsg: string, errorTitle: string) => {
     setOperating(true);
     try {
-      await startContainer(container.id);
-      addNotification({
-        type: "success",
-        title: "容器已启动",
-        message: `${container.name} 启动成功`,
-        dismissable: true,
-      });
+      await action();
+      addNotification({ type: "success", title: successMsg, message: container.name, dismissable: true });
     } catch (error) {
       addNotification({
         type: "error",
-        title: "启动失败",
-        message: error instanceof Error ? error.message : "未知错误",
-        dismissable: true,
-      });
-    } finally {
-      setOperating(false);
-    }
-  };
-
-  const handleStop = async () => {
-    setOperating(true);
-    try {
-      await stopContainer(container.id);
-      addNotification({
-        type: "success",
-        title: "容器已停止",
-        message: `${container.name} 停止成功`,
-        dismissable: true,
-      });
-    } catch (error) {
-      addNotification({
-        type: "error",
-        title: "停止失败",
+        title: errorTitle,
         message: error instanceof Error ? error.message : "未知错误",
         dismissable: true,
       });
@@ -86,18 +88,12 @@ function DetailContent({ container }: { container: ContainerInfo }) {
   };
 
   const handleDelete = async () => {
-    const confirmed = confirm(`确定要删除容器 "${container.name}" 吗？`);
-    if (!confirmed) return;
-
+    if (!confirm(`确定要删除容器 "${container.name}" 吗？`)) return;
     setOperating(true);
     try {
       await deleteContainer(container.id);
-      addNotification({
-        type: "success",
-        title: "容器已删除",
-        message: `${container.name} 已删除`,
-        dismissable: true,
-      });
+      selectContainer(null);
+      addNotification({ type: "success", title: "容器已删除", message: container.name, dismissable: true });
     } catch (error) {
       addNotification({
         type: "error",
@@ -108,26 +104,70 @@ function DetailContent({ container }: { container: ContainerInfo }) {
     } finally {
       setOperating(false);
     }
-  }
+  };
 
   return (
-    <div className="flex flex-col gap-6 p-5">
-      {/* Action buttons bar */}
-      <ActionButtonBar
-        isRunning={isRunning}
-        operating={operating}
-        onStart={handleStart}
-        onStop={handleStop}
-        onDelete={handleDelete}
-      />
+    <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+      {/* Title */}
+      <h2 className="flex-1 truncate text-sm font-semibold text-foreground">
+        {container.name}
+      </h2>
 
+      {/* Inline icon action buttons */}
+      {isRunning ? (
+        <button
+          onClick={() => void handleAction(() => stopContainer(container.id), "容器已停止", "停止失败")}
+          disabled={operating}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+          title="停止"
+        >
+          <Square className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <button
+          onClick={() => void handleAction(() => startContainer(container.id), "容器已启动", "启动失败")}
+          disabled={operating}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-emerald-600 disabled:opacity-40"
+          title="启动"
+        >
+          <Play className="h-3.5 w-3.5" />
+        </button>
+      )}
+
+      <button
+        onClick={() => void handleDelete()}
+        disabled={operating}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+        title="删除"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+
+      {/* Separator + Close */}
+      <div className="mx-1 h-4 w-px bg-border" />
+      <button
+        onClick={onClose}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function DetailContent({ container }: { container: ContainerInfo }) {
+  const { t } = useI18n();
+  const isRunning = container.status === "running" || container.status === "paused";
+
+  return (
+    <div className="flex flex-col gap-5 p-4">
       {/* Status badge */}
       <StatusBadge status={container.status} />
 
       {/* Overview section */}
       <section>
         <SectionTitle>{t("containers", "overview") ?? "概览"}</SectionTitle>
-        <div className="flex flex-col gap-4">
+        <div className="space-y-3">
           <CopyableField label="ID" value={container.shortId} />
           <DetailField label={t("containers", "image")}>{container.image}</DetailField>
           <DetailField label={t("containers", "created")}>
@@ -141,30 +181,22 @@ function DetailContent({ container }: { container: ContainerInfo }) {
       <section>
         <SectionTitle>规格</SectionTitle>
         <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-md border border-border bg-muted/30 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-              {t("containers", "cpuCores")}
-            </div>
-            <div className="text-lg font-semibold text-foreground">
-              {container.cpuCores !== undefined ? `${container.cpuCores}` : "—"}
-            </div>
-            <div className="text-[10px] text-muted-foreground">核心</div>
-          </div>
-          <div className="rounded-md border border-border bg-muted/30 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-              {t("containers", "memoryMb")}
-            </div>
-            <div className="text-lg font-semibold text-foreground">
-              {container.memoryMb !== undefined ? `${container.memoryMb}` : "—"}
-            </div>
-            <div className="text-[10px] text-muted-foreground">MB</div>
-          </div>
+          <SpecCard
+            label={t("containers", "cpuCores")}
+            value={container.cpuCores !== undefined ? `${container.cpuCores}` : "—"}
+            unit="核心"
+          />
+          <SpecCard
+            label={t("containers", "memoryMb")}
+            value={container.memoryMb !== undefined ? `${container.memoryMb}` : "—"}
+            unit="MB"
+          />
         </div>
       </section>
 
       {/* Monitoring section (usage) */}
       <section>
-        <SectionTitle>Monitoring</SectionTitle>
+        <SectionTitle>监控</SectionTitle>
         <ContainerMonitoring
           containerId={container.id}
           cpuCores={container.cpuCores}
@@ -177,34 +209,26 @@ function DetailContent({ container }: { container: ContainerInfo }) {
       {container.ports.length > 0 && (
         <section>
           <SectionTitle>{t("containers", "ports") ?? "端口映射"}</SectionTitle>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {container.ports.map((port) => (
               <div
                 key={`${port.hostPort}-${port.containerPort}`}
-                className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2"
+                className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-1.5"
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm font-medium text-foreground">
+                  <span className="font-mono text-xs font-medium text-foreground">
                     {port.hostPort}:{port.containerPort}
                   </span>
                   <span className={cn(
-                    "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                    "rounded px-1 py-0.5 text-[10px] font-medium uppercase",
                     port.protocol === "tcp"
-                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-                      : "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200"
+                      ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                      : "bg-purple-500/10 text-purple-600 dark:text-purple-400"
                   )}>
                     {port.protocol}
                   </span>
                 </div>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${port.hostPort}:${port.containerPort}`);
-                  }}
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  title="复制端口"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
+                <CopyButton value={`${port.hostPort}:${port.containerPort}`} />
               </div>
             ))}
           </div>
@@ -223,16 +247,18 @@ function DetailContent({ container }: { container: ContainerInfo }) {
         {isRunning ? (
           <TerminalView containerId={container.id} />
         ) : (
-          <div className="text-sm text-muted-foreground">Container is not running.</div>
+          <div className="text-xs text-muted-foreground">容器未运行</div>
         )}
       </section>
     </div>
   );
 }
 
+/* ─── Helper Components ─── */
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
       {children}
     </h3>
   );
@@ -242,7 +268,57 @@ function DetailField({ label, children }: { label: string; children: React.React
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="truncate text-sm font-medium text-foreground">{children}</span>
+      <span className="truncate text-sm text-foreground">{children}</span>
+    </div>
+  );
+}
+
+function SpecCard({ label, value, unit }: { label: string; value: string; unit: string }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</div>
+      <div className="text-lg font-semibold text-foreground">{value}</div>
+      <div className="text-[10px] text-muted-foreground">{unit}</div>
+    </div>
+  );
+}
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      title="复制"
+    >
+      {copied ? (
+        <Check className="h-3 w-3 text-emerald-500" />
+      ) : (
+        <Copy className="h-3 w-3" />
+      )}
+    </button>
+  );
+}
+
+function CopyableField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
+        <span className="truncate font-mono text-sm text-foreground">{value}</span>
+      </div>
+      <CopyButton value={value} />
     </div>
   );
 }
@@ -327,104 +403,4 @@ function formatRelativeTime(isoString: string): string {
   } catch {
     return "—";
   }
-}
-
-function ActionButtonBar({
-  isRunning,
-  operating,
-  onStart,
-  onStop,
-  onDelete,
-}: {
-  isRunning: boolean;
-  operating: boolean;
-  onStart: () => Promise<void>;
-  onStop: () => Promise<void>;
-  onDelete: () => Promise<void>;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2 rounded-lg border border-border bg-muted/30 p-3">
-      {isRunning ? (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onStop}
-          disabled={operating}
-          className="flex items-center gap-2"
-        >
-          <Square className="h-3.5 w-3.5" />
-          停止
-        </Button>
-      ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onStart}
-          disabled={operating}
-          className="flex items-center gap-2"
-        >
-          <Play className="h-3.5 w-3.5" />
-          启动
-        </Button>
-      )}
-
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={onDelete}
-        disabled={operating}
-        className="flex items-center gap-2 text-destructive hover:text-destructive"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        删除
-      </Button>
-    </div>
-  );
-}
-
-function CopyableField({
-  label,
-  value,
-  onCopySuccess,
-}: {
-  label: string;
-  value: string | React.ReactNode;
-  onCopySuccess?: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const isString = typeof value === "string";
-
-  const handleCopy = async () => {
-    if (!isString) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      onCopySuccess?.();
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      console.error("Failed to copy");
-    }
-  };
-
-  return (
-    <div className="flex items-start justify-between gap-2">
-      <div className="flex flex-col gap-0.5 flex-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
-        <span className="truncate font-mono text-sm text-foreground">{value}</span>
-      </div>
-      {isString && (
-        <button
-          onClick={handleCopy}
-          className="mt-5 flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title="复制"
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-emerald-500" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </button>
-      )}
-    </div>
-  );
 }

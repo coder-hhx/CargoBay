@@ -1309,8 +1309,8 @@ pub async fn image_pull_with_mirrors(
                     if let Err(e) = image_tag(docker, &mirror_ref, image).await {
                         tracing::warn!("Failed to re-tag '{}' → '{}': {}", mirror_ref, image, e);
                     } else {
-                        // Remove the mirror-specific tag (best-effort)
-                        let _ = image_remove(docker, &mirror_ref, false).await;
+                        // Remove the mirror-specific tag (best-effort, use force=true to ensure removal)
+                        let _ = image_remove(docker, &mirror_ref, true).await;
                         tracing::info!(
                             "Re-tagged '{}' → '{}' and removed mirror tag",
                             mirror_ref,
