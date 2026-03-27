@@ -1146,10 +1146,14 @@ pub async fn image_pull(
         _ => image.to_string(),
     };
 
-    tracing::info!("Pulling image: {} (original: {})", pull_image, image);
+    // Split into repo + tag so Docker daemon doesn't pull ALL tags when tag is omitted.
+    let (repo, tag) = split_repo_and_tag(&pull_image);
+
+    tracing::info!("Pulling image: {}:{} (original: {})", repo, tag, image);
 
     let options = Some(CreateImageOptions {
-        from_image: pull_image.as_str(),
+        from_image: repo.as_str(),
+        tag: tag.as_str(),
         ..Default::default()
     });
 
