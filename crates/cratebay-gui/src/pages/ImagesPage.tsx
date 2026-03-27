@@ -68,36 +68,34 @@ export function ImagesPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar — matches ContainersPage style */}
-      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
+      {/* Unified toolbar */}
+      <div className="flex items-center gap-3 border-b border-border px-6 py-2.5">
         {/* Tab pills */}
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setActiveTab("local")}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
-              activeTab === "local"
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <HardDrive className="h-3 w-3" />
-            {t("images", "localImages")}
-          </button>
-          <button
-            onClick={() => setActiveTab("search")}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
-              activeTab === "search"
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <Globe className="h-3 w-3" />
-            {t("images", "searchImages")}
-          </button>
-
-          {/* Pull tasks indicator */}
+        <button
+          onClick={() => setActiveTab("local")}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
+            activeTab === "local"
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
+        >
+          <HardDrive className="h-3 w-3" />
+          {t("images", "localImages")}
+        </button>
+        <button
+          onClick={() => setActiveTab("search")}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
+            activeTab === "search"
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
+        >
+          <Globe className="h-3 w-3" />
+          {t("images", "searchImages")}
+        </button>
+        <div className="ml-auto flex items-center gap-2">
           <PullTaskList />
         </div>
       </div>
@@ -261,13 +259,13 @@ function LocalImagesTab({ onRefreshRef }: { onRefreshRef: React.MutableRefObject
     <div className="px-6 py-4">
       {/* Toolbar */}
       <div className="mb-4 flex items-center gap-3">
-        <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t("images", "filterPlaceholder")}
-            className="pl-9"
+            className="h-8 pl-8 text-xs"
           />
         </div>
         <Button

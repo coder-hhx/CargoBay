@@ -6,6 +6,7 @@ import type { McpServerConfig } from "@/types/mcp";
 import type { McpToolInfo } from "@/types/mcp";
 import { McpServerConfigDialog } from "@/components/mcp/McpServerConfig";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -23,6 +24,7 @@ import {
   Square,
   Trash2,
   Settings,
+  Search,
 } from "lucide-react";
 
 /** Icon mapping based on server name keywords */
@@ -57,6 +59,7 @@ export function McpPage() {
   const loading = useMcpStore((s) => s.loading);
 
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
+  const [searchFilter, setSearchFilter] = useState("");
   const [editingServer, setEditingServer] = useState<McpServerInfo | undefined>(undefined);
 
   // Fetch servers and tools on mount
@@ -98,17 +101,35 @@ export function McpPage() {
     [servers],
   );
 
+  const filteredServers = useMemo(() => {
+    if (searchFilter.length === 0) return servers;
+    const q = searchFilter.toLowerCase();
+    return servers.filter((s) => s.name.toLowerCase().includes(q));
+  }, [servers, searchFilter]);
+
   return (
     <div className="flex h-full flex-col">
-      {/* Actions bar */}
-      <div className="flex items-center justify-between border-b border-border px-6 py-3">
+      {/* Unified toolbar */}
+      <div className="flex items-center gap-3 border-b border-border px-6 py-2.5">
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+            placeholder="搜索服务器..."
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <div className="h-4 w-px bg-border" />
         <p className="text-xs text-muted-foreground">
           {servers.length} {t("mcp", "serversCount")} &middot; {connectedCount} {t("mcp", "connected").toLowerCase()} &middot; {totalTools} {t("mcp", "toolsAvailable")}
         </p>
-        <Button size="sm" onClick={handleAddServer} data-testid="add-mcp-server">
-          <Plus className="mr-1 h-4 w-4" />
-          {t("mcp", "addServer")}
-        </Button>
+        <div className="ml-auto">
+          <Button size="sm" onClick={handleAddServer} data-testid="add-mcp-server">
+            <Plus className="mr-1 h-4 w-4" />
+            {t("mcp", "addServer")}
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
@@ -127,7 +148,7 @@ export function McpPage() {
           </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-4">
-            {servers.map((server) => (
+            {filteredServers.map((server) => (
               <McpServerCard
                 key={server.id}
                 server={server}

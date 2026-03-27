@@ -99,72 +99,49 @@ export function ContainersPage() {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-        {/* Header — stats + actions */}
-        <div className="flex items-center justify-between px-6 py-3">
-          <p className="text-xs text-muted-foreground">
-            {containers.length} {t("containers", "containerCount")} &middot;{" "}
-            {containers.filter((c) => c.status === "running").length} {t("containers", "running")}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void fetchContainers()}
-              disabled={loading}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-              {t("common", "refresh")}
-            </Button>
-            <div data-testid="create-container">
-              <ContainerCreate />
-            </div>
-          </div>
+      {/* Error alerts */}
+      {error !== null && (
+        <div className="mx-6 mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
         </div>
+      )}
+      {!builtinRuntimeReady && dockerConnected && (
+        <div className="mx-6 mt-2 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-400">
+          {t("containers", "builtinRuntimeNotReady")}
+        </div>
+      )}
 
-        {error !== null && (
-          <div className="mx-6 mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {error}
-          </div>
-        )}
-
-        {/* Builtin runtime not ready notice — info level, not blocking */}
-        {!builtinRuntimeReady && dockerConnected && (
-          <div className="mx-6 mt-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-400">
-            {t("containers", "builtinRuntimeNotReady")}
-          </div>
-        )}
-
-        {/* Filters */}
-        <div className="flex items-center gap-3 border-b border-border px-6 py-2.5">
-          <div className="relative w-56">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              data-testid="search-input"
-              value={filter.search}
-              onChange={(e) => setFilter({ search: e.target.value })}
-              placeholder={t("containers", "searchPlaceholder")}
-              className="h-8 pl-8 text-xs"
-            />
-          </div>
-          <div className="h-4 w-px bg-border" />
-          <div className="flex items-center gap-1" data-testid="status-filter">
-            {(["all", "running", "stopped", "creating"] as FilterStatus[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => handleChipClick(f)}
-                className={cn(
-                  "rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
-                  currentChipFilter === f
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                {t("containers", FILTER_LABEL_KEYS[f])} ({counts[f]})
-              </button>
-            ))}
-          </div>
-          {/* View mode toggle */}
-          <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border p-0.5">
+      {/* Unified toolbar */}
+      <div className="flex items-center gap-3 border-b border-border px-6 py-2.5">
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            data-testid="search-input"
+            value={filter.search}
+            onChange={(e) => setFilter({ search: e.target.value })}
+            placeholder={t("containers", "searchPlaceholder")}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <div className="h-4 w-px bg-border" />
+        <div className="flex items-center gap-1" data-testid="status-filter">
+          {(["all", "running", "stopped", "creating"] as FilterStatus[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => handleChipClick(f)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none",
+                currentChipFilter === f
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {t("containers", FILTER_LABEL_KEYS[f])} ({counts[f]})
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
             <button
               onClick={() => setViewMode("grid")}
               className={cn(
@@ -190,7 +167,20 @@ export function ContainersPage() {
               <List className="h-3.5 w-3.5" />
             </button>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void fetchContainers()}
+            disabled={loading}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            {t("common", "refresh")}
+          </Button>
+          <div data-testid="create-container">
+            <ContainerCreate />
+          </div>
         </div>
+      </div>
 
         {/* Container content area */}
         <div className="flex-1 overflow-auto px-6 py-4" data-testid="container-list">
