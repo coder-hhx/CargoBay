@@ -38,14 +38,13 @@ export function SlidePanel({
 
   return (
     <>
-      {/* Overlay — covers the content area only (relative to parent) */}
-      <div
-        className={cn(
-          "absolute inset-0 z-40 bg-black/30 transition-opacity duration-300",
-          isOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
-        )}
-        onClick={onClose}
-      />
+      {/* Minimal overlay — allows background interaction, transparent */}
+      {isOpen && (
+        <div
+          className="absolute inset-0 z-40 pointer-events-none"
+          aria-hidden="true"
+        />
+      )}
 
       {/* Panel — slides in from the right within the content area */}
       <div
