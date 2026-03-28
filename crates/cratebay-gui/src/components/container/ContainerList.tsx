@@ -29,7 +29,7 @@ export function ContainerList() {
   }
 
   return (
-    <div className="space-y-1" data-testid="container-list">
+    <div className="space-y-0" data-testid="container-list">
       {containers.map((container) => (
         <ContainerRow key={container.id} container={container} />
       ))}
@@ -51,7 +51,7 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
     <div
       onClick={() => selectContainer(container.id)}
       data-testid="container-card"
-      className="group flex cursor-pointer items-center gap-4 rounded-lg px-4 py-3 transition-colors hover:bg-muted/50"
+      className="group flex cursor-pointer items-center gap-4 border-b border-border/50 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/50"
     >
       {/* Status dot */}
       <div className="flex-shrink-0">
@@ -101,8 +101,8 @@ function ContainerRow({ container }: { container: ContainerInfo }) {
         )}
       </div>
 
-      {/* Actions — visible on hover */}
-      <div className="flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      {/* Actions — always visible */}
+      <div className="flex flex-shrink-0 items-center gap-0.5">
         {isRunning ? (
           <Button
             variant="ghost"
