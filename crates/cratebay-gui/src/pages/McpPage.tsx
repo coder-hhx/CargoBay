@@ -147,7 +147,7 @@ export function McpPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-4">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
             {filteredServers.map((server) => (
               <McpServerCard
                 key={server.id}
@@ -231,7 +231,7 @@ function McpServerCard({
             </span>
             <ServerStatusBadge status={server.status} />
             <span className="text-[10px] text-muted-foreground">
-              {server.toolCount} {t("mcp", "tools")}
+            {server.toolCount ?? 0} {t("mcp", "tools")}
             </span>
           </div>
         </div>
@@ -288,7 +288,7 @@ function McpServerCard({
         <div className="border-t border-border px-4 pb-3 pt-2" data-testid="mcp-tool-list">
           {/* Server command info */}
           <p className="mb-2 truncate font-mono text-[11px] text-muted-foreground">
-            {server.command} {server.args.join(" ")}
+            {[server.command, ...(server.args ?? [])].filter(Boolean).join(" ") || "—"}
           </p>
 
           {server.error && (
