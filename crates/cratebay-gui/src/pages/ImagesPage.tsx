@@ -804,8 +804,8 @@ function formatRelativeTime(date: Date): string {
   const diffHour = Math.floor(diffMs / 3600000);
   const diffDay = Math.floor(diffMs / 86400000);
 
-  if (diffHour < 1) return "< 1h ago";
-  if (diffHour < 24) return `${diffHour}h ago`;
-  if (diffDay < 30) return `${diffDay}d ago`;
-  return date.toLocaleDateString();
+  if (diffHour < 1) return "1 小时内";
+  if (diffHour < 24) return `${diffHour} 小时前`;
+  if (diffDay < 30) return `${diffDay} 天前`;
+  return date.toLocaleDateString("zh-CN");
 }

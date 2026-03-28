@@ -97,7 +97,7 @@ export function McpPage() {
     [servers],
   );
   const totalTools = useMemo(
-    () => servers.reduce((sum, s) => sum + s.toolCount, 0),
+    () => servers.reduce((sum, s) => sum + (s.toolCount ?? 0), 0),
     [servers],
   );
 

@@ -206,11 +206,11 @@ function formatSessionTime(isoString: string): string {
     const diffHour = Math.floor(diffMs / 3600000);
     const diffDay = Math.floor(diffMs / 86400000);
 
-    if (diffMin < 1) return "Just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    if (diffHour < 24) return `${diffHour}h ago`;
-    if (diffDay < 7) return `${diffDay}d ago`;
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    if (diffMin < 1) return "刚刚";
+    if (diffMin < 60) return `${diffMin} 分钟前`;
+    if (diffHour < 24) return `${diffHour} 小时前`;
+    if (diffDay < 7) return `${diffDay} 天前`;
+    return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
   } catch {
     return "";
   }
