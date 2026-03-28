@@ -1,8 +1,8 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **阶段**: 开发阶段 (Phase 2) — Runtime 架构重构完成，自研 runtime 端到端可用
-- **日期**: 2026-03-26
+- **阶段**: 开发阶段 (Phase 2) — GUI 打磨第一轮完成
+- **日期**: 2026-03-28
 - **团队模式**: 开发阶段 6 人团队（见 agent-team-workflow.md §1.1）
 - **Git HEAD**: `rewrite/v2` 分支
 
@@ -267,12 +267,53 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - ✅ `api-spec.md` 补齐 `allowExternalDocker` 设置键说明
 - ✅ `.githooks/pre-commit` 将 `cargo test -p cratebay-cli --lib` 修正为 `cargo test -p cratebay-cli --bins`
 
+### GUI 打磨（2026-03-28）✅
+
+**容器页面**
+- ✅ 容器详情面板改用 React Portal，不再推走容器列表
+- ✅ 操作按钮移到面板 header 标题栏（图标按钮：停止/启动/删除）
+- ✅ 日志区域删除，终端改为展示 `docker exec -it <id> /bin/sh` 登录指令
+- ✅ 规格/监控去掉独立边框，改为普通文本行
+- ✅ 容器列表（table 模式）改为 OrbStack 风格行卡片
+  - 左侧状态圆点（运行中绿色发光）
+  - 名称 + ID + 镜像 + 端口紧凑排列
+  - 状态标签/CPU/内存响应式显示
+  - 操作按钮常显（停止/启动/删除）
+  - 行之间 border 分隔线
+
+**镜像页面**
+- ✅ 搜索框和操作按钮提升到顶部统一工具栏
+- ✅ 根据 Tab 切换右侧显示不同控件（本地：筛选+刷新+批删 / 搜索：搜索框+搜索）
+- ✅ 拉取任务下拉框从 `left-0` 改为 `right-0`，不再溢出右边界
+- ✅ 镜像时间格式改为中文
+
+**MCP 页面**
+- ✅ 卡片网格最小宽度 380px → 300px
+- ✅ `toolCount ?? 0` 防止显示 NaN
+- ✅ 命令行展示加 `filter(Boolean)` 防 undefined 显示
+
+**统一头部风格**
+- ✅ 三个页面（容器/镜像/MCP）头部统一为单层工具栏
+- ✅ 容器页删除重复的统计行
+- ✅ Sidebar 对话时间改为中文（刚刚/X分钟前/X小时前/X天前）
+
+**Bug 修复**
+- ✅ `image_pull` 显式设置 `tag` 字段，防止拉取仓库所有 tag（redis 拉出几十个版本的问题）
+- ✅ mirror re-tag 后删除 mirror tag 改用 `force=true`，防止重复镜像
+- ✅ MCP `NaN 个工具可用` 问题修复
+
+**验证结果**
+- ✅ `cargo test --workspace`: 205 passed
+- ✅ `pnpm typecheck`: 0 errors
+- ✅ `pnpm test`: 216 passed / 2 skipped
+- ✅ 打包安装 `/Applications/CrateBay.app` 验证通过
+
 ## 待开始 📋
 
 ### 当前优先项
 1. **Apple Developer ID 签名** — 获取 com.apple.vm.networking entitlement 让 VZ NAT 原生工作，替代内置 HTTP 代理桥接
 2. **vsock 内核模块** — 将 vmw_vsock_virtio_transport 加入 initramfs，恢复 vsock 低延迟转发模式
-3. **GUI 打磨** — 容器详情面板、端口映射 UI、Volume 管理
+3. **GUI 打磨（继续）** — 容器端口映射 UI、Volume 管理、容器创建流程优化
 4. **Linux/Windows Runtime 验证** — 在对应平台上运行端到端测试
 
 ## 阻塞/问题 ⚠️
@@ -330,28 +371,27 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：Runtime 重构完成，自研 runtime 端到端可用（2026-03-26）
+### 当前阶段：GUI 打磨完成第一轮（2026-03-28）
 
-Step 0-7 基础骨架 + Runtime 架构重构全部完成。GUI 已打包安装可用，容器管理和镜像搜索/拉取端到端验证通过。
+Step 0-7 基础骨架 + Runtime 架构重构全部完成。GUI 已完成第一轮打磨，页面风格统一、交互改善。
 
 **执行约束：** built-in runtime 是唯一路径。外部 Docker 支持已完全移除。
 
-### 已解决问题（本次会话 2026-03-26）
-- ✅ 移除所有外部 Docker 支持（Colima/OrbStack/Docker Desktop/Podman）
-- ✅ RuntimeManager trait 规范化（`detect()` → `get_state()`，状态机简化）
-- ✅ CLI `cratebay runtime start/stop/status/provision` 命令
-- ✅ aarch64 runtime 镜像构建 + 国内镜像加速（`CRATEBAY_ALPINE_MIRROR`）
-- ✅ VZ runner 签名 + 执行权限修复
-- ✅ vsock 不可用 → 默认 TCP 转发
-- ✅ VZ NAT 出口不通 → VZ runner 内置 HTTP CONNECT 代理桥接
-- ✅ GUI 重启不杀容器 → adopt 已运行的 VZ runner
-- ✅ Mirror 拉取 re-tag + 全局拉取任务列表
-- ✅ GUI 多处 UI 修复（对话框宽度、卡片对齐、主题翻译、设置简化等）
+### 已解决问题（本次会话 2026-03-28）
+- ✅ 容器列表改为 OrbStack 风格行卡片，操作按钮常显，行间分隔线
+- ✅ 容器详情面板用 Portal 浮层，不再推走列表
+- ✅ 三页面头部统一单层工具栏
+- ✅ 镜像搜索框提升到顶部工具栏，Tab 切换右侧控件变化
+- ✅ 拉取任务下拉框对齐修复（right-0）
+- ✅ image_pull 单 tag 修复（防止拉取仓库全部 tag）
+- ✅ mirror re-tag 清理修复（force=true）
+- ✅ MCP 卡片网格宽度优化 + NaN 修复
+- ✅ 时间显示全部中文化
 
 ### 剩余优先项
 1. **Apple Developer ID 签名** — 获取 `com.apple.vm.networking` entitlement
 2. **vsock 内核模块** — 恢复低延迟转发
-3. **GUI 打磨** — 容器详情面板、端口映射、Volume 管理
+3. **GUI 打磨（继续）** — 端口映射 UI、Volume 管理
 
 ### 可执行步骤
 
