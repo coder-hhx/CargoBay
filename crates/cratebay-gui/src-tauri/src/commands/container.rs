@@ -378,3 +378,96 @@ fn translate_pull_status(status: &str) -> String {
         _ => s.to_string(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Bundle image preloading
+// ---------------------------------------------------------------------------
+
+/// Definition of a bundle image that can be preloaded.
+pub struct BundleImageDef {
+    pub tar_filename: &'static str,
+    pub image_name: &'static str,
+}
+
+/// The set of images we bundle with the application.
+pub const BUNDLE_IMAGES: &[BundleImageDef] = &[
+    BundleImageDef {
+        tar_filename: "python-dev.tar.gz",
+        image_name: "cratebay-python-dev:v1",
+    },
+    BundleImageDef {
+        tar_filename: "node-dev.tar.gz",
+        image_name: "cratebay-node-dev:v1",
+    },
+    BundleImageDef {
+        tar_filename: "rust-dev.tar.gz",
+        image_name: "cratebay-rust-dev:v1",
+    },
+    BundleImageDef {
+        tar_filename: "ubuntu-base.tar.gz",
+        image_name: "cratebay-ubuntu-base:v1",
+    },
+];
+
+/// Load pre-packaged Docker images from the application bundle.
+///
+/// Checks each bundle image — if not already present in Docker, loads from the
+/// tar.gz file in the app's resource directory. Runs in the background on startup.
+pub async fn load_bundle_images(
+    docker: &bollard::Docker,
+    resource_dir: &std::path::Path,
+) -> Vec<String> {
+    let mut loaded = Vec::new();
+    let bundle_dir = resource_dir.join("bundle-images");
+
+    if !bundle_dir.exists() {
+        tracing::debug!(
+            "No bundle-images directory found at {:?}, skipping preload",
+            bundle_dir
+        );
+        return loaded;
+    }
+
+    for def in BUNDLE_IMAGES {
+        // Check if image already exists
+        match cratebay_core::container::image_exists(docker, def.image_name).await {
+            Ok(true) => {
+                tracing::debug!("Bundle image {} already present, skipping", def.image_name);
+                continue;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("Failed to check image {}: {}", def.image_name, e);
+                continue;
+            }
+        }
+
+        let tar_path = bundle_dir.join(def.tar_filename);
+        if !tar_path.exists() {
+            tracing::debug!("Bundle image file {:?} not found, skipping", tar_path);
+            continue;
+        }
+
+        tracing::info!(
+            "Loading bundle image {} from {:?}",
+            def.image_name,
+            tar_path
+        );
+        match cratebay_core::container::image_load_from_tar(
+            docker,
+            tar_path.to_string_lossy().as_ref(),
+        )
+        .await
+        {
+            Ok(names) => {
+                tracing::info!("Loaded bundle image: {:?}", names);
+                loaded.extend(names);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load bundle image {:?}: {}", tar_path, e);
+            }
+        }
+    }
+
+    loaded
+}

@@ -575,6 +575,169 @@ pub async fn exec(
     })
 }
 
+/// Execute a command inside a running container with a custom timeout.
+///
+/// Unlike [`exec`], this function allows the caller to specify a total timeout
+/// for the entire operation (create + start + output collection + inspect).
+pub async fn exec_with_timeout(
+    docker: &Docker,
+    id: &str,
+    cmd: Vec<String>,
+    working_dir: Option<String>,
+    timeout_secs: u64,
+) -> Result<ExecResult, AppError> {
+    let timeout = Duration::from_secs(timeout_secs);
+
+    let exec_options = CreateExecOptions {
+        cmd: Some(cmd),
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        working_dir,
+        ..Default::default()
+    };
+
+    let exec_instance = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.create_exec(id, exec_options),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec create timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
+
+    let start_result = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.start_exec(&exec_instance.id, None),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec start timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
+    if let StartExecResults::Attached { mut output, .. } = start_result {
+        let collect_result = tokio::time::timeout(timeout, async {
+            while let Some(chunk) = output.next().await {
+                match chunk? {
+                    bollard::container::LogOutput::StdOut { message } => {
+                        stdout.push_str(&String::from_utf8_lossy(&message));
+                    }
+                    bollard::container::LogOutput::StdErr { message } => {
+                        stderr.push_str(&String::from_utf8_lossy(&message));
+                    }
+                    _ => {}
+                }
+            }
+            Ok::<(), bollard::errors::Error>(())
+        })
+        .await;
+
+        if collect_result.is_err() {
+            return Ok(ExecResult {
+                exit_code: -1,
+                stdout,
+                stderr: format!(
+                    "{}Execution timed out after {}s",
+                    if stderr.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}\n", stderr)
+                    },
+                    timeout_secs
+                ),
+            });
+        }
+        collect_result.unwrap()?;
+    }
+
+    let inspect_result = tokio::time::timeout(
+        DOCKER_EXEC_SETUP_TIMEOUT,
+        docker.inspect_exec(&exec_instance.id),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Runtime(format!(
+            "Docker exec inspect timed out after {:?}",
+            DOCKER_EXEC_SETUP_TIMEOUT
+        ))
+    })??;
+    let exit_code = inspect_result.exit_code.unwrap_or(-1);
+
+    Ok(ExecResult {
+        exit_code,
+        stdout,
+        stderr,
+    })
+}
+
+/// Write text content to a file inside a running container.
+///
+/// Uses `exec` to run a shell command that writes content via heredoc.
+/// Suitable for source code and text files. For binary files, use
+/// the MCP layer's base64-based `put_path`.
+pub async fn exec_put_text(
+    docker: &Docker,
+    container_id: &str,
+    container_path: &str,
+    content: &str,
+) -> Result<(), AppError> {
+    // Use a heredoc with a unique delimiter to avoid conflicts with content
+    let delimiter = "CRATEBAY_EOF_MARKER";
+    let cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "mkdir -p \"$(dirname '{}')\" && cat > '{}' << '{}'
+{}
+{}",
+            container_path, container_path, delimiter, content, delimiter
+        ),
+    ];
+
+    let result = exec(docker, container_id, cmd, None).await?;
+    if result.exit_code != 0 {
+        return Err(AppError::Runtime(format!(
+            "Failed to write file '{}': {}",
+            container_path,
+            result.stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Read a text file from a running container.
+///
+/// Returns the file content as a string.
+pub async fn exec_get_file(
+    docker: &Docker,
+    container_id: &str,
+    container_path: &str,
+) -> Result<String, AppError> {
+    let cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("cat '{}'", container_path),
+    ];
+
+    let result = exec(docker, container_id, cmd, None).await?;
+    if result.exit_code != 0 {
+        return Err(AppError::Runtime(format!(
+            "Failed to read file '{}': {}",
+            container_path,
+            result.stderr.trim()
+        )));
+    }
+    Ok(result.stdout)
+}
+
 /// Execute a command with streaming output via callback.
 pub async fn exec_stream(
     docker: &Docker,
@@ -786,6 +949,57 @@ fn parse_log_time_filter(value: Option<&str>) -> Result<i64, AppError> {
 // ---------------------------------------------------------------------------
 // Docker Image operations
 // ---------------------------------------------------------------------------
+
+/// Load a Docker image from a tar or tar.gz file (equivalent to `docker load`).
+///
+/// Returns the list of image names that were loaded.
+pub async fn image_load_from_tar(docker: &Docker, tar_path: &str) -> Result<Vec<String>, AppError> {
+    use bollard::image::ImportImageOptions;
+    use bytes::Bytes;
+
+    let path = std::path::Path::new(tar_path);
+    if !path.exists() {
+        return Err(AppError::Validation(format!(
+            "Image tar file not found: {}",
+            tar_path
+        )));
+    }
+
+    // Read the file into memory
+    let file_bytes = tokio::fs::read(tar_path).await.map_err(|e| {
+        AppError::Runtime(format!(
+            "Failed to read image tar file '{}': {}",
+            tar_path, e
+        ))
+    })?;
+
+    let options = ImportImageOptions { quiet: false };
+
+    let mut stream = docker.import_image(options, Bytes::from(file_bytes), None);
+    let mut loaded_images = Vec::new();
+
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(info) => {
+                if let Some(stream_msg) = info.stream {
+                    let trimmed = stream_msg.trim();
+                    if !trimmed.is_empty() {
+                        tracing::info!("docker load: {}", trimmed);
+                    }
+                    // Parse "Loaded image: name:tag" messages
+                    if let Some(name) = trimmed.strip_prefix("Loaded image: ") {
+                        loaded_images.push(name.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(AppError::Docker(e));
+            }
+        }
+    }
+
+    Ok(loaded_images)
+}
 
 /// List local Docker images.
 pub async fn image_list(docker: &Docker) -> Result<Vec<LocalImageInfo>, AppError> {

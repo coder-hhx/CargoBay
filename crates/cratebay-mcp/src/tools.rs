@@ -13,9 +13,71 @@ use crate::sandbox;
 use crate::security;
 use crate::templates;
 
-/// Build the complete tool catalog (11 tools per mcp-spec.md §2.2).
+/// Build the complete tool catalog (13 sandbox tools).
 pub fn tool_catalog() -> Vec<McpToolDefinition> {
     vec![
+        // --- High-level AI sandbox tools ---
+        McpToolDefinition {
+            name: "cratebay_sandbox_run_code".to_string(),
+            description: "Create a sandbox, write code, execute it, and return stdout/stderr/exit_code in one call. This is the primary tool for AI agents to run code safely.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "enum": ["python", "javascript", "bash", "rust"],
+                        "description": "Programming language to use"
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "Source code to execute"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600,
+                        "description": "Execution timeout in seconds (default: 60)"
+                    },
+                    "environment": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Optional environment variables"
+                    },
+                    "cleanup": {
+                        "type": "boolean",
+                        "description": "Remove sandbox after execution (default: true). Set false to keep sandbox for follow-up operations."
+                    }
+                },
+                "required": ["language", "code"]
+            }),
+            confirmation_required: None,
+        },
+        McpToolDefinition {
+            name: "cratebay_sandbox_install".to_string(),
+            description: "Install packages in an existing sandbox using pip, npm, cargo, or apt.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "sandbox_id": {
+                        "type": "string",
+                        "description": "Target sandbox container ID"
+                    },
+                    "package_manager": {
+                        "type": "string",
+                        "enum": ["pip", "npm", "cargo", "apt"],
+                        "description": "Package manager to use"
+                    },
+                    "packages": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Package names to install (e.g., ['numpy', 'pandas'])"
+                    }
+                },
+                "required": ["sandbox_id", "package_manager", "packages"]
+            }),
+            confirmation_required: None,
+        },
+        // --- Low-level sandbox management tools ---
         McpToolDefinition {
             name: "cratebay_sandbox_templates".to_string(),
             description: "List available sandbox templates".to_string(),
@@ -246,6 +308,8 @@ pub async fn dispatch_tool_call(
     let start = Instant::now();
 
     let result = match tool_name {
+        "cratebay_sandbox_run_code" => handle_run_code(docker, arguments).await,
+        "cratebay_sandbox_install" => handle_install(docker, arguments).await,
         "cratebay_sandbox_templates" => handle_templates().await,
         "cratebay_sandbox_list" => handle_list(docker, arguments).await,
         "cratebay_sandbox_inspect" => handle_inspect(docker, arguments).await,
@@ -304,6 +368,82 @@ fn truncate_for_audit(text: &str) -> String {
 // ---------------------------------------------------------------------------
 // Tool handlers
 // ---------------------------------------------------------------------------
+
+async fn handle_run_code(
+    docker: &Docker,
+    arguments: &serde_json::Value,
+) -> Result<String, McpError> {
+    let language = arguments
+        .get("language")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpError::InvalidParams("language is required".to_string()))?;
+
+    let code = arguments
+        .get("code")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpError::InvalidParams("code is required".to_string()))?;
+
+    let timeout_seconds = arguments.get("timeout_seconds").and_then(|v| v.as_u64());
+
+    let environment = arguments.get("environment").and_then(|v| {
+        v.as_object().map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+    });
+
+    let cleanup = arguments.get("cleanup").and_then(|v| v.as_bool());
+
+    let params = sandbox::RunCodeParams {
+        language: language.to_string(),
+        code: code.to_string(),
+        timeout_seconds,
+        environment,
+        cleanup,
+    };
+
+    let result = sandbox::run_code(docker, params).await?;
+    serde_json::to_string_pretty(&result).map_err(McpError::Serialization)
+}
+
+async fn handle_install(
+    docker: &Docker,
+    arguments: &serde_json::Value,
+) -> Result<String, McpError> {
+    let sandbox_id = arguments
+        .get("sandbox_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpError::InvalidParams("sandbox_id is required".to_string()))?;
+
+    let package_manager = arguments
+        .get("package_manager")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpError::InvalidParams("package_manager is required".to_string()))?;
+
+    let packages = arguments
+        .get("packages")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| McpError::InvalidParams("packages array is required".to_string()))?
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect::<Vec<_>>();
+
+    if packages.is_empty() {
+        return Err(McpError::InvalidParams(
+            "packages array must not be empty".to_string(),
+        ));
+    }
+
+    let params = sandbox::InstallParams {
+        sandbox_id: sandbox_id.to_string(),
+        package_manager: package_manager.to_string(),
+        packages,
+    };
+
+    let result = sandbox::install_packages(docker, params).await?;
+    serde_json::to_string_pretty(&result).map_err(McpError::Serialization)
+}
 
 async fn handle_templates() -> Result<String, McpError> {
     let templates = templates::builtin_templates();
@@ -510,9 +650,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_catalog_has_11_tools() {
+    fn test_tool_catalog_has_13_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 11, "Expected 11 tools per mcp-spec.md §2.2");
+        assert_eq!(
+            catalog.len(),
+            13,
+            "Expected 13 tools (2 high-level + 11 low-level)"
+        );
     }
 
     #[test]
@@ -520,6 +664,8 @@ mod tests {
         let catalog = tool_catalog();
         let names: Vec<&str> = catalog.iter().map(|t| t.name.as_str()).collect();
         let expected_names = [
+            "cratebay_sandbox_run_code",
+            "cratebay_sandbox_install",
             "cratebay_sandbox_templates",
             "cratebay_sandbox_list",
             "cratebay_sandbox_inspect",
@@ -590,6 +736,8 @@ mod tests {
     fn test_non_destructive_tools_no_confirmation() {
         let catalog = tool_catalog();
         let non_destructive = [
+            "cratebay_sandbox_run_code",
+            "cratebay_sandbox_install",
             "cratebay_sandbox_templates",
             "cratebay_sandbox_list",
             "cratebay_sandbox_inspect",

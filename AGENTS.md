@@ -1,6 +1,6 @@
 # AGENTS.md — CrateBay v2 Project Guide
 
-> **Version**: 2.0.1-rewrite | **Branch**: `rewrite/v2` | **Last Updated**: 2026-03-25
+> **Version**: 2.1.0-alpha | **Branch**: `rewrite/v2` | **Last Updated**: 2026-03-29
 >
 > This file is the **entry point** for all AI Agents working on this project.
 > Detailed specs are in `docs/specs/` — load them on-demand based on your task (see Spec Loading Protocol below).
@@ -11,12 +11,17 @@
 
 ## Project Identity
 
-**CrateBay** is an open-source desktop AI development control plane.
+**CrateBay** is an open-source **local AI sandbox** — a secure, private container for AI agents to execute code.
 
-- **Chat-First interface** for managing containers, AI models, and MCP tools
-- **Built-in container runtime** — no external Docker installation required
+- **MCP Server** (`cratebay-mcp`) — let any AI (Claude, Cursor, Windsurf, your own) run code safely
+- **Zero cost** — runs locally in a lightweight VM, no cloud fees
+- **Built-in runtime** — no Docker installation required (macOS: VZ.framework, Linux: KVM, Windows: WSL2)
 - **Platforms**: macOS, Windows, Linux
 - **License**: MIT
+
+**Core value proposition**: CrateBay replaces cloud sandboxes (E2B, Modal) with a local, free, privacy-first alternative specifically designed for AI agents.
+
+**User journey**: Install → Configure MCP → Tell Claude "run this code" → CrateBay handles isolation, execution, result delivery.
 
 ---
 
@@ -42,6 +47,38 @@ Non-goals for routine development:
 - making Podman the default runtime,
 - building a second first-class product surface around Podman,
 - adding workarounds that increase long-term multi-engine complexity without clear user value.
+
+---
+
+## Product Direction (CRITICAL — AI Agents MUST follow)
+
+**CrateBay = Local AI Sandbox.** All development decisions must serve this positioning.
+
+### Primary user flow
+
+```
+User installs CrateBay → Configures MCP in Claude/Cursor/Windsurf
+→ AI says "sandbox_run_code(python, 'print(1+1)')" → CrateBay returns "2"
+```
+
+### Priority order for all development work
+
+1. **MCP Server (`cratebay-mcp`)** — the primary product interface. `sandbox_run_code` is the #1 feature.
+2. **Built-in Runtime** — zero-config VM that makes the sandbox work without Docker.
+3. **CLI (`cratebay-cli`)** — headless sandbox operations for CI/automation.
+4. **Desktop App (GUI)** — visual dashboard for sandbox monitoring and settings. **NOT the primary interface.**
+
+### What NOT to do
+
+- Do NOT treat the GUI ChatPage as the core product entry. MCP Server is the entry.
+- Do NOT spend time on GUI polish before MCP tools are complete.
+- Do NOT add features unrelated to code execution (e.g., UI theming, animation, cosmetic changes).
+- Do NOT optimize for "container management" — optimize for "AI runs code safely".
+
+### Execution plan
+
+See `docs/ROADMAP.md` for the v2.1-Alpha release plan (Phase 1-5).
+See `docs/progress.md` Quick Resume section for what to do next.
 
 ---
 
@@ -311,11 +348,11 @@ When a feature is completed, the responsible agent MUST check:
 
 ## Current Development Stage
 
-**Phase 1: Documentation** (started 2026-03-20) — **Completed**
+**Current**: v2.1-Alpha development — MCP Sandbox tools + offline images + release prep.
 
-All 16 specification documents created. Moving to Phase 2: Project Skeleton Initialization.
+**Completed**: Phase 1 (docs) + Phase 2 (skeleton + core + frontend + runtime + MCP + tests + GUI polish).
 
-See [docs/progress.md](docs/progress.md) for detailed progress and cross-machine recovery instructions.
+See [docs/progress.md](docs/progress.md) for detailed progress and [docs/ROADMAP.md](docs/ROADMAP.md) for the release plan.
 
 ---
 
@@ -352,7 +389,7 @@ This file is automatically loaded by 20+ AI coding tools:
 | **Platform Testing** | `docs/specs/testing-spec.md` §5-6, `docs/prompts/platform-test-pre-commit.md` | `docs/workflow/agent-team-workflow.md` §4.3 |
 | **Database changes** | `docs/specs/database-spec.md` | `docs/specs/backend-spec.md` |
 | **Architecture decisions** | `docs/specs/architecture.md`, `docs/references/tech-decisions.md` | |
-| **New to project** | This file → `docs/progress.md` → `docs/workflow/agent-team-workflow.md` | |
+| **New to project** | This file → `docs/ROADMAP.md` → `docs/progress.md` | `docs/workflow/agent-team-workflow.md` |
 | **Workflow questions** | `docs/workflow/dev-workflow.md`, `docs/workflow/knowledge-base.md` | |
 
 **How to use**: Before writing code, identify your task type above, then read the listed files using your IDE's file reading capability. The specs contain complete interface definitions, code patterns, SQL schemas, and API signatures you'll need.

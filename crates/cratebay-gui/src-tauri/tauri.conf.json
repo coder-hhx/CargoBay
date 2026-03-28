@@ -37,7 +37,9 @@
       "runtime-linux/README.md",
       "runtime-linux/**/*",
       "runtime-wsl/README.md",
-      "runtime-wsl/**/*"
+      "runtime-wsl/**/*",
+      "bundle-images/README.md",
+      "bundle-images/*"
     ],
     "icon": [
       "icons/32x32.png",

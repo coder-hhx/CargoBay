@@ -469,8 +469,29 @@ fn main() {
                             Ok(docker) => {
                                 tracing::info!("Docker connected via ensured container engine");
                                 let state = auto_start_handle.state::<AppState>();
-                                state.set_docker(Some(docker));
+                                state.set_docker(Some(docker.clone()));
                                 let _ = auto_start_handle.emit("docker:connected", true);
+
+                                // Preload bundle images in background
+                                let resource_dir = auto_start_handle
+                                    .path()
+                                    .resource_dir()
+                                    .unwrap_or_default();
+                                let preload_docker = docker.clone();
+                                tokio::spawn(async move {
+                                    let loaded = commands::container::load_bundle_images(
+                                        &preload_docker,
+                                        &resource_dir,
+                                    )
+                                    .await;
+                                    if !loaded.is_empty() {
+                                        tracing::info!(
+                                            "Preloaded {} bundle images: {:?}",
+                                            loaded.len(),
+                                            loaded
+                                        );
+                                    }
+                                });
                             }
                             Err(e) => {
                                 tracing::warn!("Engine auto-start failed: {}", e);

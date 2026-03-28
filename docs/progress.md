@@ -1,10 +1,21 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **阶段**: 开发阶段 (Phase 2) — GUI 打磨第一轮完成
-- **日期**: 2026-03-28
-- **团队模式**: 开发阶段 6 人团队（见 agent-team-workflow.md §1.1）
+- **阶段**: v2.1-Alpha 发布准备 — MCP Sandbox 工具扩展
+- **产品定位**: **本地 AI Sandbox** — 任何 AI Agent 的代码执行沙盒（2026-03-29 重新定位）
+- **日期**: 2026-03-29
 - **Git HEAD**: `rewrite/v2` 分支
+- **执行计划**: 见 `docs/ROADMAP.md`
+
+## 产品方向（AI 必读 — CRITICAL）
+
+> **CrateBay = Local AI Sandbox**。不是容器管理工具，不是 Docker Desktop 替代品。
+>
+> 主入口是 MCP Server (`cratebay-mcp`)，不是 GUI。
+> 核心工具是 `sandbox_run_code`（一键执行代码），不是 `container_create`（低级操作）。
+> 竞品是 E2B / Modal / Daytona，不是 Docker Desktop / OrbStack。
+>
+> **所有开发工作必须服务于这个定位。不要在 GUI 美化上浪费时间。**
 
 ## Runtime 策略（AI 必读）
 - **built-in runtime 是唯一路径**：已移除所有外部 Docker 支持（Colima/OrbStack/Docker Desktop/Podman）
@@ -308,13 +319,27 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - ✅ `pnpm test`: 216 passed / 2 skipped
 - ✅ 打包安装 `/Applications/CrateBay.app` 验证通过
 
-## 待开始 📋
+## 待开始 📋 — v2.1-Alpha 发布准备
 
-### 当前优先项
-1. **Apple Developer ID 签名** — 获取 com.apple.vm.networking entitlement 让 VZ NAT 原生工作，替代内置 HTTP 代理桥接
-2. **vsock 内核模块** — 将 vmw_vsock_virtio_transport 加入 initramfs，恢复 vsock 低延迟转发模式
-3. **GUI 打磨（继续）** — 容器端口映射 UI、Volume 管理、容器创建流程优化
-4. **Linux/Windows Runtime 验证** — 在对应平台上运行端到端测试
+**产品定位已调整**：从"Chat-First 控制面板"改为"本地 AI Sandbox"
+
+### v2.1-Alpha 优先项（用户可用版，18-22 天）
+
+🔴 **P0 必做**：
+1. **MCP Server 工具扩展** — `sandbox_run_code`, `sandbox_install`, 文件 API 增强 — 5-7 天
+2. **离线镜像打包与自动导入** — Python/Node/Rust/Ubuntu 镜像预装 — 3-4 天
+3. **QA 与跨平台验证** — e2e 测试、性能验收、发布准备 — 4-5 天
+
+🟡 **P1 应做**：
+4. **Desktop App 优化** — Sandbox 专属 Tab + Dashboard — 3 天
+5. **文档与示例** — Getting Started, Examples, Troubleshooting — 2-3 天
+
+详见 **ROADMAP.md** （新建）
+
+### 后续不做（v2.1+ 或不做）
+- ~~Apple Developer ID 签名~~（用户不关键，当前 HTTP 代理可用）
+- ~~vsock 内核模块~~（性能优化，非 MVP 必须）
+- ~~GUI 端口映射 UI~~（用户很少需要）
 
 ## 阻塞/问题 ⚠️
 - **VZ NAT 出口限制**: macOS VZ.framework 的 NAT 需要 Apple Developer ID 签名才能获取 `com.apple.vm.networking` entitlement。当前通过内置 HTTP CONNECT 代理桥接解决，正式发布需要 Developer ID 签名。
@@ -371,37 +396,64 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：GUI 打磨完成第一轮（2026-03-28）
+## 下次继续（Quick Resume）
 
-Step 0-7 基础骨架 + Runtime 架构重构全部完成。GUI 已完成第一轮打磨，页面风格统一、交互改善。
+> **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-**执行约束：** built-in runtime 是唯一路径。外部 Docker 支持已完全移除。
+### 当前阶段：产品重新定位 → v2.1-Alpha 发布准备（2026-03-29）
 
-### 已解决问题（本次会话 2026-03-28）
-- ✅ 容器列表改为 OrbStack 风格行卡片，操作按钮常显，行间分隔线
-- ✅ 容器详情面板用 Portal 浮层，不再推走列表
-- ✅ 三页面头部统一单层工具栏
-- ✅ 镜像搜索框提升到顶部工具栏，Tab 切换右侧控件变化
-- ✅ 拉取任务下拉框对齐修复（right-0）
-- ✅ image_pull 单 tag 修复（防止拉取仓库全部 tag）
-- ✅ mirror re-tag 清理修复（force=true）
-- ✅ MCP 卡片网格宽度优化 + NaN 修复
-- ✅ 时间显示全部中文化
+**重要：产品定位已改变**
 
-### 剩余优先项
-1. **Apple Developer ID 签名** — 获取 `com.apple.vm.networking` entitlement
-2. **vsock 内核模块** — 恢复低延迟转发
-3. **GUI 打磨（继续）** — 端口映射 UI、Volume 管理
+从：「Chat-First 桌面 AI 开发控制面板」
+改为：「本地 AI Sandbox — 任何 AI Agent 的代码执行沙盒」
 
-### 可执行步骤
+关键变化：
+- 主要入口改为 MCP Server (`cratebay-mcp`)，而非 GUI Chat
+- 核心工具：`sandbox_run_code` (一键执行代码)，而非 `container_*` (低级操作)
+- 用户体验：装好 CrateBay → 配置 Claude Desktop → 告诉 AI "run code" → 完成
+- 竞品对标：E2B/Modal/Daytona（云端沙盒），不是 Docker Desktop/OrbStack（容器管理）
 
+### 已完成（本次会话 2026-03-29）
+- ✅ README 重写（产品定位 → AI Sandbox）
+- ✅ ROADMAP.md 编写（v2.1-Alpha 发布计划，18-22 天）
+- ✅ AGENTS.md 更新（产品定位）
+- ✅ progress.md 更新（优先项调整）
+
+### 可执行步骤（按优先级）
+
+**第 1 周：MCP Server 核心工具扩展**
 ```
-1. 读取 AGENTS.md + 本文件（progress.md）
-2. 先确认并遵守 runtime 策略：built-in runtime 是唯一路径
-3. 运行 `cratebay runtime status` 确认 runtime 可用
-4. 根据用户需求继续 GUI 打磨或功能开发
-5. 完成后更新本文件
+1. 读取 ROADMAP.md Phase 1
+2. 创建 dev 团队（team-lead, backend-dev, mcp-dev, tester）
+3. 实现 sandbox_run_code 工具 (5-7 天)
+   - 支持 python/javascript/bash/rust 语言
+   - 一键：创建沙盒 → 写代码 → 执行 → 返回结果
+4. 运行 MCP 工具的 e2e 测试
 ```
+
+**第 2 周：离线镜像打包**
+```
+1. 制作 4 个 Sandbox 镜像 (Python/Node/Rust/Ubuntu) — 1.5 天
+2. 集成到 Tauri 打包 — 0.5 天
+3. 实现自动导入（启动时检测+导入）— 1.5 天
+4. 验证大小和启动时间
+```
+
+**第 3 周：QA + 文档 + 发布**
+```
+1. e2e 测试（Claude Desktop → MCP → 代码执行）— 2 天
+2. 跨平台验证 (macOS/Linux/Windows) — 1 day
+3. Getting Started 文档、示例代码 — 1.5 days
+4. 发布准备 (CHANGELOG, tag, release notes) — 0.5 day
+5. 发布 v2.1.0-alpha
+```
+
+### 团队组成（建议）
+- team-lead：协调、任务管理
+- backend-dev：MCP Server 工具实现、镜像打包集成
+- frontend-dev：GUI 优化（可选，P1 任务）
+- tester：e2e 测试、跨平台验证
+- doc-keeper：文档编写
 
 ### Runtime 移植方案概要（来自 runtime-dev 分析）
 

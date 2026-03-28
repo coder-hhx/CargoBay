@@ -44,6 +44,10 @@ enum Commands {
     /// System information
     #[command(subcommand)]
     System(SystemCommands),
+
+    /// MCP server operations
+    #[command(subcommand)]
+    Mcp(McpCommands),
 }
 
 #[derive(Subcommand)]
@@ -161,6 +165,16 @@ enum RuntimeCommands {
     Stop,
     /// Pre-download runtime image without starting
     Provision,
+}
+
+#[derive(Subcommand)]
+enum McpCommands {
+    /// Export MCP config for Claude Desktop, Cursor, or other MCP clients
+    Export {
+        /// Target client (claude, cursor, generic)
+        #[arg(default_value = "claude")]
+        target: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -288,6 +302,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::System(cmd) => match cmd {
             SystemCommands::Info => commands::system::info()?,
             SystemCommands::DockerStatus => commands::system::docker_status().await?,
+        },
+        Commands::Mcp(cmd) => match cmd {
+            McpCommands::Export { target } => commands::mcp::export_config(&target)?,
         },
     }
 
