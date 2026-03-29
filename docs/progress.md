@@ -397,64 +397,61 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-## 下次继续（Quick Resume）
+### 当前阶段：v0.9.0 已发布，准备 v1.0.0（2026-03-29）
 
-> **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
+**版本**: v0.9.0 | **分支**: master | **定位**: 本地 AI Sandbox
 
-### 当前阶段：产品重新定位 → v2.1-Alpha 发布准备（2026-03-29）
+### v0.9.0 已完成（本次会话 2026-03-29）
 
-**重要：产品定位已改变**
+**Phase 1: MCP Server 核心工具** ✅
+- ✅ `sandbox_run_code` MCP 工具（python/javascript/bash/rust，一键执行）
+- ✅ `sandbox_install` MCP 工具（pip/npm/cargo/apt）
+- ✅ Core 层：`exec_with_timeout`、`exec_put_text`、`exec_get_file`
+- ✅ E2E 验证通过（Python/JS/Bash，包括错误处理）
+- ✅ MCP 工具总数 11 → 13
 
-从：「Chat-First 桌面 AI 开发控制面板」
-改为：「本地 AI Sandbox — 任何 AI Agent 的代码执行沙盒」
+**Phase 2: 离线镜像打包** ✅
+- ✅ 4 个 Dockerfile + 构建脚本 `scripts/build-bundle-images.sh`
+- ✅ `image_load_from_tar` Core 函数
+- ✅ Tauri 资源打包配置（bundle-images/）
+- ✅ 启动时自动检测 + 后台加载
+- ✅ 镜像文件：python 43MB + node 67MB + rust 291MB + ubuntu 28MB
 
-关键变化：
-- 主要入口改为 MCP Server (`cratebay-mcp`)，而非 GUI Chat
-- 核心工具：`sandbox_run_code` (一键执行代码)，而非 `container_*` (低级操作)
-- 用户体验：装好 CrateBay → 配置 Claude Desktop → 告诉 AI "run code" → 完成
-- 竞品对标：E2B/Modal/Daytona（云端沙盒），不是 Docker Desktop/OrbStack（容器管理）
+**Phase 3/4: 文档 + CLI** ✅
+- ✅ README 重写（AI Sandbox 定位）
+- ✅ `cratebay mcp export claude` CLI 命令
+- ✅ Getting Started 文档
+- ✅ 官网更新（index.html + script.js）
+- ✅ 所有文档版本号和定位统一更新
+- ✅ CHANGELOG v0.9.0（中英文）
 
-### 已完成（本次会话 2026-03-29）
-- ✅ README 重写（产品定位 → AI Sandbox）
-- ✅ ROADMAP.md 编写（v2.1-Alpha 发布计划，18-22 天）
-- ✅ AGENTS.md 更新（产品定位）
-- ✅ progress.md 更新（优先项调整）
+**Phase 5: 验证** ✅
+- ✅ `cargo test --workspace`: 344 passed, 0 failed
+- ✅ `cratebay-mcp` 安装到系统并 E2E 验证通过
+- ✅ sandbox_run_code Python: `print(1+1)` → stdout=`2`, exit_code=0
+- ✅ sandbox_run_code JavaScript: `fib(10)` → stdout=`55`
+- ✅ sandbox_run_code Bash: `uname -a` → 完整系统信息
+- ✅ sandbox_install: `pip install requests` → 成功安装
 
-### 可执行步骤（按优先级）
+### v1.0.0 待开发
 
-**第 1 周：MCP Server 核心工具扩展**
+v1.0.0 = ChatPage 补齐 + UI 优化。以下是待做工作：
+
+1. **ChatPage 系统提示优化** — 强调 sandbox 代码执行，而非容器管理
+2. **GUI Sandbox Dashboard** — 运行中沙盒的可视化面板
+3. **GUI MCP 配置导出** — Settings 页面一键导出 Claude Desktop 配置
+4. **跨平台验证** — Linux/Windows 端到端测试
+5. **API Key 加密** — 集成系统密钥链（macOS Keychain / Windows DPAPI）
+
+### 可执行步骤
+
 ```
-1. 读取 ROADMAP.md Phase 1
-2. 创建 dev 团队（team-lead, backend-dev, mcp-dev, tester）
-3. 实现 sandbox_run_code 工具 (5-7 天)
-   - 支持 python/javascript/bash/rust 语言
-   - 一键：创建沙盒 → 写代码 → 执行 → 返回结果
-4. 运行 MCP 工具的 e2e 测试
+1. 读取 AGENTS.md（产品方向 + 技术栈）
+2. 读取本文件（当前进度）
+3. 确认 runtime 可用：cratebay runtime status
+4. 根据用户需求选择 v1.0.0 待开发项
+5. 完成后更新本文件
 ```
-
-**第 2 周：离线镜像打包**
-```
-1. 制作 4 个 Sandbox 镜像 (Python/Node/Rust/Ubuntu) — 1.5 天
-2. 集成到 Tauri 打包 — 0.5 天
-3. 实现自动导入（启动时检测+导入）— 1.5 天
-4. 验证大小和启动时间
-```
-
-**第 3 周：QA + 文档 + 发布**
-```
-1. e2e 测试（Claude Desktop → MCP → 代码执行）— 2 天
-2. 跨平台验证 (macOS/Linux/Windows) — 1 day
-3. Getting Started 文档、示例代码 — 1.5 days
-4. 发布准备 (CHANGELOG, tag, release notes) — 0.5 day
-5. 发布 v2.1.0-alpha
-```
-
-### 团队组成（建议）
-- team-lead：协调、任务管理
-- backend-dev：MCP Server 工具实现、镜像打包集成
-- frontend-dev：GUI 优化（可选，P1 任务）
-- tester：e2e 测试、跨平台验证
-- doc-keeper：文档编写
 
 ### Runtime 移植方案概要（来自 runtime-dev 分析）
 
