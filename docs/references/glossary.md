@@ -10,15 +10,15 @@ This glossary defines key terms used throughout CrateBay's documentation and cod
 
 ### CrateBay
 
-An open-source desktop AI development control plane. Provides a Chat-First interface for managing containers, AI models, and MCP tools. Built with Tauri v2, React, and Rust.
+An open-source local AI sandbox. Provides a secure, private environment for AI agents to execute code via MCP protocol, with a built-in container runtime. Built with Tauri v2, React, and Rust.
 
-### Control Plane
+### Sandbox
 
-A management layer that orchestrates and coordinates underlying resources. In CrateBay, the control plane manages containers, LLM providers, MCP tools, and development workflows through a unified desktop interface.
+An isolated container environment where AI agents can safely execute code, install packages, and manage files. CrateBay sandboxes run inside a lightweight VM (VZ/KVM/WSL2) with Docker.
 
-### Chat-First
+### MCP-First
 
-The primary interaction paradigm of CrateBay. Users interact with the application through a conversational chat interface, where an AI agent translates natural language requests into system operations (container management, file operations, etc.).
+The primary interaction paradigm of CrateBay. AI agents connect via the MCP protocol to execute code in sandboxes. The desktop GUI and CLI are secondary interfaces for management and monitoring.
 
 ---
 

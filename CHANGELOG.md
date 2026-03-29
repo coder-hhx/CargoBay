@@ -5,9 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-03-29
+
+Reposition CrateBay as a local AI sandbox. MCP Server core tools complete.
+
+### Added
+- `sandbox_run_code` MCP tool — one-shot create→write→exec→return→cleanup
+- `sandbox_install` MCP tool — install packages via pip/npm/cargo/apt
+- `exec_with_timeout`, `exec_put_text`, `exec_get_file` in cratebay-core
+- `image_load_from_tar` for offline image preloading from bundled tar.gz
+- Bundle images infrastructure with auto-load on app startup
+- CLI `cratebay mcp export` command for Claude Desktop/Cursor config generation
+- 4 Dockerfiles and build script for offline sandbox images (python/node/rust/ubuntu)
+- Getting Started documentation (`docs/getting-started.md`)
+- ROADMAP (`docs/ROADMAP.md`) for v1.0.0 release plan
+
+### Changed
+- Product positioning: "Chat-First control plane" → "Local AI Sandbox"
+- MCP Server tools: 11 → 13 (added run_code + install)
+- Template images updated to slim variants for smaller bundle size
+- Version scheme: 2.0.0-alpha.1 → 0.9.0 (v1.0.0 = ChatPage complete + UI polish)
+- README rewritten with AI Sandbox positioning and comparison table
+
 ## [2.0.0-alpha.1] — 2026-03-20
 
-Complete rewrite of CrateBay as a desktop AI development control plane.
+Complete rewrite of CrateBay as a local AI sandbox (originally named "control plane").
 
 ### Added
 

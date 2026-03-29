@@ -1,4 +1,4 @@
-# CrateBay v2 Spec 一致性检查清单
+# CrateBay Spec 一致性检查清单
 
 > 生成日期: 2026-03-20 | 作者: doc-keeper
 > 基于 9 个 spec 文档提取的关键检查点

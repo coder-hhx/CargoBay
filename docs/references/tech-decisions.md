@@ -2,7 +2,7 @@
 
 > Version: 1.1.1 | Last Updated: 2026-03-25 | Author: product-manager
 
-This document records Architecture Decision Records (ADRs) for the CrateBay v2 project. Each ADR captures a significant technical decision, the context that led to it, alternatives considered, and the consequences.
+This document records Architecture Decision Records (ADRs) for the CrateBay project. Each ADR captures a significant technical decision, the context that led to it, alternatives considered, and the consequences.
 
 ---
 

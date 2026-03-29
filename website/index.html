@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CrateBay · Coming Soon</title>
-  <meta name="description" content="CrateBay — open-source desktop AI development control plane with chat-first interface and built-in container runtime." />
-  <meta name="keywords" content="cratebay, ai development, chat-first, container runtime, mcp tools, desktop app, tauri" />
-  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=0700" />
-  <link rel="shortcut icon" href="favicon-32x32.png?v=0700" />
+  <title>CrateBay · Local AI Sandbox</title>
+  <meta name="description" content="CrateBay — open-source local AI sandbox. Run code safely on your machine. No cloud, no cost, no Docker required." />
+  <meta name="keywords" content="cratebay, ai sandbox, code execution, mcp server, container runtime, desktop app, tauri, local ai" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=0900" />
+  <link rel="shortcut icon" href="favicon-32x32.png?v=0900" />
   <link rel="apple-touch-icon" href="logo.png" />
-  <link rel="stylesheet" href="style.css?v=20260317a" />
-  <script src="script.js?v=20260321a" defer></script>
+  <link rel="stylesheet" href="style.css?v=20260329a" />
+  <script src="script.js?v=20260329a" defer></script>
 </head>
 <body>
   <main class="shell">
@@ -19,7 +19,7 @@
         <div class="hero-top">
           <div class="eyebrow">
             <span class="badge badge-primary" data-i18n="brand">CrateBay</span>
-            <span class="badge" data-i18n="comingSoon">Coming Soon</span>
+            <span class="badge" data-i18n="comingSoon">v0.9 Alpha</span>
           </div>
           <div class="lang-switch" aria-label="Language switcher">
             <button type="button" class="lang-btn" data-lang="en" aria-pressed="true">EN</button>
@@ -29,10 +29,10 @@
         <img class="hero-logo" src="logo.png" alt="CrateBay logo" />
         <h1 data-i18n="heroTitle">CrateBay</h1>
         <p class="hero-lead" data-i18n="heroLead">
-          Open-source desktop AI development control plane.
+          Local AI sandbox. Run code safely on your machine.
         </p>
         <p class="hero-sub" data-i18n="heroSub">
-          Chat-first interface for managing containers, AI models, and MCP tools. Built-in container runtime — no external Docker installation required.
+          Give any AI agent a secure sandbox to execute code — locally, privately, for free. Works with Claude, Cursor, Windsurf, and any MCP-compatible client. No Docker required.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/coder-hhx/CrateBay" target="_blank" rel="noreferrer" data-i18n="githubCta">GitHub</a>
@@ -41,46 +41,46 @@
 
       <div class="hero-summary">
         <article class="summary-card">
-          <span class="summary-label" data-i18n="summary1Label">Chat-First</span>
-          <strong data-i18n="summary1Title">Conversational AI development</strong>
-          <p data-i18n="summary1Body">Interact with an AI agent to manage containers, models, and tools through natural language chat.</p>
+          <span class="summary-label" data-i18n="summary1Label">AI Sandbox</span>
+          <strong data-i18n="summary1Title">One-shot code execution</strong>
+          <p data-i18n="summary1Body">AI agents call sandbox_run_code via MCP — CrateBay handles container creation, code execution, and result delivery automatically.</p>
         </article>
         <article class="summary-card">
-          <span class="summary-label" data-i18n="summary2Label">Container Runtime</span>
-          <strong data-i18n="summary2Title">Built-in, zero-install Docker</strong>
-          <p data-i18n="summary2Body">Embedded container runtime on every platform — no Docker Desktop required. macOS, Windows, and Linux supported.</p>
+          <span class="summary-label" data-i18n="summary2Label">Zero Config</span>
+          <strong data-i18n="summary2Title">Built-in runtime, no Docker needed</strong>
+          <p data-i18n="summary2Body">Embedded VM runtime on every platform. Install CrateBay and run code immediately — macOS, Windows, and Linux.</p>
         </article>
         <article class="summary-card">
-          <span class="summary-label" data-i18n="summary3Label">MCP Tools</span>
-          <strong data-i18n="summary3Title">Extensible tool ecosystem</strong>
-          <p data-i18n="summary3Body">Connect MCP servers, manage tool lifecycles, and extend agent capabilities without leaving the app.</p>
+          <span class="summary-label" data-i18n="summary3Label">MCP Native</span>
+          <strong data-i18n="summary3Title">Works with any AI client</strong>
+          <p data-i18n="summary3Body">Connect Claude Desktop, Cursor, Windsurf, or any MCP client. Your AI gets 13 sandbox tools out of the box.</p>
         </article>
       </div>
     </section>
 
     <section class="section">
       <div class="section-head">
-        <span class="section-kicker" data-i18n="sectionKicker">Core Features</span>
-        <h2 data-i18n="sectionTitle">Everything you need for AI development, in one app.</h2>
-        <p data-i18n="sectionBody">CrateBay combines a chat-first AI agent, built-in container runtime, and MCP tool management into a single desktop experience.</p>
+        <span class="section-kicker" data-i18n="sectionKicker">Why CrateBay</span>
+        <h2 data-i18n="sectionTitle">The local alternative to cloud sandboxes.</h2>
+        <p data-i18n="sectionBody">E2B and Modal charge per minute and send your code to the cloud. CrateBay runs everything locally — zero cost, full privacy, no limits.</p>
       </div>
 
       <div class="grid cards-4">
         <article class="card">
-          <h3 data-i18n="card1Title">Agent Engine</h3>
-          <p data-i18n="card1Body">Powered by pi-agent-core with streaming markdown rendering via Streamdown. Multi-provider LLM support built in.</p>
+          <h3 data-i18n="card1Title">Code Execution</h3>
+          <p data-i18n="card1Body">Python, JavaScript, Bash, Rust — run any code in isolated sandboxes. Install packages, transfer files, stream output.</p>
         </article>
         <article class="card">
-          <h3 data-i18n="card2Title">Container Management</h3>
-          <p data-i18n="card2Body">Full container lifecycle — create, start, stop, inspect, and manage images and volumes from the chat or GUI.</p>
+          <h3 data-i18n="card2Title">Privacy First</h3>
+          <p data-i18n="card2Body">Code never leaves your machine. Runs inside a lightweight VM with hardware isolation. API keys encrypted at rest.</p>
         </article>
         <article class="card">
           <h3 data-i18n="card3Title">Cross-Platform</h3>
-          <p data-i18n="card3Body">Built with Tauri v2 for macOS, Windows, and Linux. Native performance with a small binary footprint.</p>
+          <p data-i18n="card3Body">macOS (Virtualization.framework), Linux (KVM), Windows (WSL2). Built with Tauri v2 for native performance.</p>
         </article>
         <article class="card">
           <h3 data-i18n="card4Title">Open Source</h3>
-          <p data-i18n="card4Body">MIT licensed. Follow the repo for progress, contribute features, or extend with your own MCP tools.</p>
+          <p data-i18n="card4Body">MIT licensed. Free forever. Contribute features, add MCP tools, or self-host for your team.</p>
         </article>
       </div>
     </section>
@@ -89,8 +89,8 @@
       <div class="panel callout">
         <div>
           <span class="section-kicker" data-i18n="statusKicker">Status</span>
-          <h2 data-i18n="statusTitle">v2 rewrite in progress</h2>
-          <p data-i18n="statusBody">CrateBay v2 is being rebuilt from scratch with a chat-first architecture, built-in container runtime, and deep MCP integration.</p>
+          <h2 data-i18n="statusTitle">v0.9 — MCP Sandbox Ready</h2>
+          <p data-i18n="statusBody">Core sandbox infrastructure complete. MCP Server with 13 tools, built-in runtime, offline image bundling. Working toward v1.0 with full GUI polish.</p>
         </div>
       </div>
     </section>

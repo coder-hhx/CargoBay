@@ -709,7 +709,7 @@ describe.skipIf(!process.env.LLM_API_KEY)("Canary: Real LLM", () => {
 
 ### 5.1 ci.yml — Main CI Pipeline
 
-Triggered on: push to `rewrite/v2`, pull requests to `rewrite/v2` and `master`.
+Triggered on: push to `master`, pull requests to `master`.
 
 ```yaml
 # .github/workflows/ci.yml
@@ -717,9 +717,9 @@ name: CI
 
 on:
   push:
-    branches: [rewrite/v2]
+    branches: [master]
   pull_request:
-    branches: [rewrite/v2, master]
+    branches: [master]
 
 jobs:
   # Stage 1: Quick checks (parallel)

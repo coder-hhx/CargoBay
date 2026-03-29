@@ -1,4 +1,4 @@
-# AGENTS.md — CrateBay v2 Project Guide
+# AGENTS.md — CrateBay Project Guide
 
 > **Version**: 0.9.0 | **Branch**: `master` | **Last Updated**: 2026-03-29
 >
@@ -299,8 +299,8 @@ refactor: extract Docker connection logic to core
 
 ### Branch Strategy
 
-- `master` — stable releases
-- `rewrite/v2` — current v2 rewrite branch
+- `master` — main development branch
+- `master-backup-v1` — pre-rewrite backup
 - Feature branches: `feat/description`, `fix/description`
 
 ---
@@ -348,7 +348,7 @@ When a feature is completed, the responsible agent MUST check:
 
 ## Current Development Stage
 
-**Current**: v2.1-Alpha development — MCP Sandbox tools + offline images + release prep.
+**Current**: v0.9.0 — MCP Sandbox core complete. Next: ChatPage polish + UI optimization → v1.0.0.
 
 **Completed**: Phase 1 (docs) + Phase 2 (skeleton + core + frontend + runtime + MCP + tests + GUI polish).
 

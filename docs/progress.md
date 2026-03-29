@@ -1,10 +1,11 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **阶段**: v2.1-Alpha 发布准备 — MCP Sandbox 工具扩展
-- **产品定位**: **本地 AI Sandbox** — 任何 AI Agent 的代码执行沙盒（2026-03-29 重新定位）
+- **版本**: v0.9.0 — MCP Sandbox 核心完成
+- **产品定位**: **本地 AI Sandbox** — 任何 AI Agent 的代码执行沙盒
 - **日期**: 2026-03-29
-- **Git HEAD**: `rewrite/v2` 分支
+- **Git HEAD**: `master` 分支
+- **下一版本**: v1.0.0（ChatPage 补齐 + UI 优化完成后）
 - **执行计划**: 见 `docs/ROADMAP.md`
 
 ## 产品方向（AI 必读 — CRITICAL）

@@ -1,6 +1,6 @@
 # System Architecture
 
-> Version: 1.1.2 | Last Updated: 2026-03-25 | Author: architect
+> Version: 1.2.0 | Last Updated: 2026-03-29 | Author: architect
 
 ---
 
@@ -25,20 +25,20 @@
 
 ### 1.1 What is CrateBay?
 
-CrateBay is an open-source desktop AI development control plane. It provides a **Chat-First interface** for managing containers, AI models, and MCP (Model Context Protocol) tools — all from a single desktop application with a **built-in container runtime** that requires no external Docker installation.
+CrateBay is an open-source **local AI sandbox**. It provides a secure, private environment for AI agents to execute code — powered by a **built-in container runtime** that requires no external Docker installation. AI clients connect via the **MCP protocol** (Model Context Protocol) to run code, install packages, and manage sandboxes. A desktop GUI and CLI are also available for visual management and headless operations.
 
 ### 1.2 Design Principles
 
 | Principle | Description |
 |-----------|-------------|
-| **Chat-First** | The primary interface is a conversational AI chat. All operations — container management, model configuration, tool invocation — are accessible through natural language. |
+| **MCP-First** | The primary interface is the MCP Server (`cratebay-mcp`). AI agents connect via MCP protocol to execute code in isolated sandboxes. The desktop GUI and CLI are secondary interfaces for visual management. |
 | **Zero-Dependency Runtime** | Users should not need to install Docker, Colima, or any external container engine. CrateBay ships a built-in VM-based runtime per platform. |
 | **Hybrid Agent** | TypeScript handles AI orchestration (pi-agent-core); Rust handles tool execution, storage, and security. Each layer does what it does best. |
 | **Security by Architecture** | API keys never leave the Rust backend. Container operations are sandboxed. All sensitive data is encrypted at rest. |
 | **Spec-Driven Development** | Every feature starts with a specification document update before code is written. Documentation is the source of truth. |
 | **Cross-Platform Parity** | macOS, Windows, and Linux are first-class citizens. Platform-specific code is isolated behind `#[cfg]` gates. |
 | **Performance Budget** | Binary < 20 MB, startup < 3 s, idle RAM < 200 MB. These are CI-enforced constraints. |
-| **Extensibility** | MCP protocol support for external tools. Plugin architecture reserved for future expansion. gRPC daemon planned for v2.1+. |
+| **Extensibility** | MCP protocol support for external tools. Plugin architecture reserved for future expansion. gRPC daemon planned for future versions. |
 
 ---
 
