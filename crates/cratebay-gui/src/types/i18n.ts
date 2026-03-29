@@ -83,14 +83,14 @@ export interface Translations {
     failedToSend: string;
     welcomeTitle: string;
     welcomeDesc: string;
-    suggestionCreateContainer: string;
-    suggestionCreateContainerDesc: string;
-    suggestionQueryDb: string;
-    suggestionQueryDbDesc: string;
-    suggestionManageMcp: string;
-    suggestionManageMcpDesc: string;
-    suggestionDeploy: string;
-    suggestionDeployDesc: string;
+    suggestionPythonAnalysis: string;
+    suggestionPythonAnalysisDesc: string;
+    suggestionNodeServer: string;
+    suggestionNodeServerDesc: string;
+    suggestionBashSystem: string;
+    suggestionBashSystemDesc: string;
+    suggestionRustSort: string;
+    suggestionRustSortDesc: string;
     confirmTitle: string;
   };
   containers: {
