@@ -1,12 +1,11 @@
 # CrateBay 开发进度
 
 ## 当前状态
-- **版本**: v0.9.0 — MCP Sandbox 核心完成
-- **产品定位**: **本地 AI Sandbox** — 任何 AI Agent 的代码执行沙盒
-- **日期**: 2026-03-29
-- **Git HEAD**: `master` 分支
-- **下一版本**: v1.0.0（ChatPage 补齐 + UI 优化完成后）
-- **执行计划**: 见 `docs/ROADMAP.md`
+- **版本**: v0.9.0 → v1.0.0（ChatPage v1 开发中）
+- **产品定位**: **本地 AI Sandbox** — AI 聊天 + 开箱即用的代码执行沙盒
+- **日期**: 2026-03-30
+- **Git HEAD**: `feat/chatpage-v1` 分支（基于 master）
+- **执行计划**: 见 `docs/chatpage-v1-plan.md`
 
 ## 产品方向（AI 必读 — CRITICAL）
 
@@ -397,60 +396,55 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：v0.9.0 已发布，准备 v1.0.0（2026-03-29）
+### 当前阶段：ChatPage v1.0 开发（2026-03-30）
 
-**版本**: v0.9.0 | **分支**: master | **定位**: 本地 AI Sandbox
+**版本**: v0.9.0 → v1.0.0 | **分支**: feat/chatpage-v1 | **定位**: AI 聊天 + 沙盒
 
-### v0.9.0 已完成（本次会话 2026-03-29）
+### ChatPage v1.0 已完成（本次会话 2026-03-30）
 
-**Phase 1: MCP Server 核心工具** ✅
-- ✅ `sandbox_run_code` MCP 工具（python/javascript/bash/rust，一键执行）
-- ✅ `sandbox_install` MCP 工具（pip/npm/cargo/apt）
-- ✅ Core 层：`exec_with_timeout`、`exec_put_text`、`exec_get_file`
-- ✅ E2E 验证通过（Python/JS/Bash，包括错误处理）
-- ✅ MCP 工具总数 11 → 13
+**Phase A: 核心能力** ✅
+- ✅ 提取 sandbox 逻辑到 cratebay-core（run_code/install_packages/templates）
+- ✅ 新增 Tauri 命令：sandbox_run_code、sandbox_install
+- ✅ 新增 Sandbox Agent Tools（sandboxTools.ts）
+- ✅ 新增 sandboxStore（会话→沙盒绑定）
+- ✅ 重写 System Prompt（代码执行助手定位）
+- ✅ 升级 pi-agent-core + pi-ai → 0.63.2
+- ✅ MCP 层改为调用 core 共享逻辑
 
-**Phase 2: 离线镜像打包** ✅
-- ✅ 4 个 Dockerfile + 构建脚本 `scripts/build-bundle-images.sh`
-- ✅ `image_load_from_tar` Core 函数
-- ✅ Tauri 资源打包配置（bundle-images/）
-- ✅ 启动时自动检测 + 后台加载
-- ✅ 镜像文件：python 43MB + node 67MB + rust 291MB + ubuntu 28MB
+**Phase B: 供应商配置** ✅
+- ✅ settingsStore 增强（requestFormat、reasoning level 6 档）
+- ✅ Provider URL 自动推断 API 格式（completions/responses/anthropic）
+- ✅ ProviderForm 配置 UI 改进
+- ✅ ChatInput 模型选择器按 Provider 分组
+- ✅ 后端零改动（现有 llm 命令完全够用）
 
-**Phase 3/4: 文档 + CLI** ✅
-- ✅ README 重写（AI Sandbox 定位）
-- ✅ `cratebay mcp export claude` CLI 命令
-- ✅ Getting Started 文档
-- ✅ 官网更新（index.html + script.js）
-- ✅ 所有文档版本号和定位统一更新
-- ✅ CHANGELOG v0.9.0（中英文）
+**Phase C: UI 增强** ✅
+- ✅ ToolCallItem 组件（状态圆点、Bash 命令内联、参数截断、折叠展开）
+- ✅ ThinkingBlock 组件（可折叠思考过程、流式自动打开）
+- ✅ SandboxBar 组件（沙盒状态横条）
+- ✅ MessageBubble 集成新组件（替换旧的 AgentThinking/ToolCallCard）
+- ✅ 欢迎页改造（代码执行场景建议卡片）
+- ✅ i18n 更新（en + zh-CN）
 
-**Phase 5: 验证** ✅
-- ✅ `cargo test --workspace`: 344 passed, 0 failed
-- ✅ `cratebay-mcp` 安装到系统并 E2E 验证通过
-- ✅ sandbox_run_code Python: `print(1+1)` → stdout=`2`, exit_code=0
-- ✅ sandbox_run_code JavaScript: `fib(10)` → stdout=`55`
-- ✅ sandbox_run_code Bash: `uname -a` → 完整系统信息
-- ✅ sandbox_install: `pip install requests` → 成功安装
+**Phase D: 测试** ✅
+- ✅ cargo test --workspace: 348 passed, 0 failed
+- ✅ pnpm build: 0 errors
+- ✅ cargo check --workspace: clean
 
-### v1.0.0 待开发
+### v1.0.0 剩余工作
 
-v1.0.0 = ChatPage 补齐 + UI 优化。以下是待做工作：
-
-1. **ChatPage 系统提示优化** — 强调 sandbox 代码执行，而非容器管理
-2. **GUI Sandbox Dashboard** — 运行中沙盒的可视化面板
-3. **GUI MCP 配置导出** — Settings 页面一键导出 Claude Desktop 配置
-4. **跨平台验证** — Linux/Windows 端到端测试
-5. **API Key 加密** — 集成系统密钥链（macOS Keychain / Windows DPAPI）
+1. **合并到 master** — feat/chatpage-v1 → master
+2. **跨平台验证** — Linux/Windows 测试
+3. **版本号更新** — 0.9.0 → 1.0.0
 
 ### 可执行步骤
 
 ```
 1. 读取 AGENTS.md（产品方向 + 技术栈）
 2. 读取本文件（当前进度）
-3. 确认 runtime 可用：cratebay runtime status
-4. 根据用户需求选择 v1.0.0 待开发项
-5. 完成后更新本文件
+3. 读取 docs/chatpage-v1-plan.md（ChatPage 开发方案）
+4. 确认 runtime 可用：cratebay runtime status
+5. 合并分支或继续开发
 ```
 
 ### Runtime 移植方案概要（来自 runtime-dev 分析）
