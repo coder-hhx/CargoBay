@@ -106,7 +106,7 @@ Tauri v2 | React 19 | Rust | bollard | SQLite | pi-agent-core
 
 ## 状态
 
-v2.0 alpha — 核心沙盒功能完成，正在准备首次公开发布。
+v0.9.0 — 核心沙盒功能完成，正在迈向 v1.0 发布。
 
 详见 [docs/progress.md](docs/progress.md) 和 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

@@ -150,7 +150,7 @@ cratebay sandbox stop <id>
 
 ## Status
 
-v2.0 alpha — Core sandbox infrastructure complete, working toward first public release.
+v0.9.0 — Core sandbox infrastructure complete, working toward v1.0 release.
 
 See [docs/progress.md](docs/progress.md) for detailed development status and [docs/ROADMAP.md](docs/ROADMAP.md) for the release plan.
 

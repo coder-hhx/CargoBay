@@ -1,12 +1,10 @@
-# CrateBay v2.0 → v2.1-Alpha 用户可用版本执行计划
+# CrateBay v0.9.0 → v1.0.0 发布计划
 
-> **目标**：从当前的"功能完整但无法使用"升级到"用户装好就能用"的第一个可用版本。
+> **目标**：从当前的 v0.9.0（核心功能完成）升级到 v1.0.0（用户可用的完整产品）。
 >
 > **定位**：本地 AI Sandbox — 让任何 AI Agent 安全地在你的机器上运行代码。
 >
-> **交付物**：CrateBay v2.1-Alpha — Desktop App + MCP Server，用户可以通过 Claude Desktop / Cursor / Windsurf 给 AI 指示运行代码。
->
-> **时间估计**：2-3 周的高效开发
+> **交付物**：CrateBay v1.0.0 — Desktop App + MCP Server，ChatPage 补齐 + UI 优化完成。
 
 ---
 

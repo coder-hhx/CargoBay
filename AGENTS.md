@@ -1,6 +1,6 @@
 # AGENTS.md — CrateBay v2 Project Guide
 
-> **Version**: 2.1.0-alpha | **Branch**: `rewrite/v2` | **Last Updated**: 2026-03-29
+> **Version**: 0.9.0 | **Branch**: `master` | **Last Updated**: 2026-03-29
 >
 > This file is the **entry point** for all AI Agents working on this project.
 > Detailed specs are in `docs/specs/` — load them on-demand based on your task (see Spec Loading Protocol below).
