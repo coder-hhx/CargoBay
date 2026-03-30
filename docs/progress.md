@@ -9,13 +9,14 @@
 
 ## 产品方向（AI 必读 — CRITICAL）
 
-> **CrateBay = Local AI Sandbox**。不是容器管理工具，不是 Docker Desktop 替代品。
+> **CrateBay = 开源跨平台容器管理 + AI Sandbox**。两个支柱，都重要。
 >
-> 主入口是 MCP Server (`cratebay-mcp`)，不是 GUI。
-> 核心工具是 `sandbox_run_code`（一键执行代码），不是 `container_create`（低级操作）。
-> 竞品是 E2B / Modal / Daytona，不是 Docker Desktop / OrbStack。
+> **支柱一**：容器管理 — 对标 Docker Desktop / OrbStack，开源、跨平台、内置 Runtime
+> **支柱二**：AI Sandbox — 对标 E2B / Modal，本地执行、零成本、隐私优先
 >
-> **所有开发工作必须服务于这个定位。不要在 GUI 美化上浪费时间。**
+> 导航结构：Chat（AI 聊天）、Containers（容器管理）、Images（镜像管理）、Settings（配置，含 MCP/LLM/Runtime）
+>
+> **不要移除容器/镜像管理功能，它们是核心功能。**
 
 ## Runtime 策略（AI 必读）
 - **built-in runtime 是唯一路径**：已移除所有外部 Docker 支持（Colima/OrbStack/Docker Desktop/Podman）

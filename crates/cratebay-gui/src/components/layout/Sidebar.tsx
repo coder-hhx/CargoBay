@@ -7,18 +7,17 @@ import {
   MessageSquare,
   Box,
   Layers,
-  Plug,
   Settings,
   Plus,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
 
-type PageId = "chat" | "containers" | "images" | "mcp" | "settings";
+type PageId = "chat" | "containers" | "images" | "settings";
 
 interface NavItem {
   id: PageId;
-  labelKey: "chat" | "containers" | "images" | "mcp" | "settings";
+  labelKey: "chat" | "containers" | "images" | "settings";
   icon: LucideIcon;
 }
 
@@ -26,7 +25,6 @@ const navItems: NavItem[] = [
   { id: "chat", labelKey: "chat", icon: MessageSquare },
   { id: "containers", labelKey: "containers", icon: Box },
   { id: "images", labelKey: "images", icon: Layers },
-  { id: "mcp", labelKey: "mcp", icon: Plug },
   { id: "settings", labelKey: "settings", icon: Settings },
 ];
 
