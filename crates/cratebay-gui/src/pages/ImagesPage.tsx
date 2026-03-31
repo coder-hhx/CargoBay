@@ -343,7 +343,7 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
           {filteredImages.some((i) => isSystemImage(i)) && (
             <div>
               <h3 className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Sandbox Images
+                {t("images", "sandboxImages")}
               </h3>
               <div className="space-y-2">
                 {filteredImages.filter((i) => isSystemImage(i)).map((img) => (
@@ -364,7 +364,7 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
           {filteredImages.some((i) => !isSystemImage(i)) && (
             <div>
               <h3 className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                User Images
+                {t("images", "userImages")}
               </h3>
               <div className="space-y-2">
                 {filteredImages.filter((i) => !isSystemImage(i)).map((img) => (
@@ -597,7 +597,7 @@ function LocalImageRow({
           )}
           {isBuiltin && (
             <Badge variant="secondary" className="text-[10px]">
-              System
+              {t("images", "systemBadge")}
             </Badge>
           )}
         </div>

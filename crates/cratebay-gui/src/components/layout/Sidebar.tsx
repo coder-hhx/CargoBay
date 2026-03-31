@@ -43,7 +43,7 @@ export function Sidebar() {
   return (
     <div className="flex h-full w-full flex-col bg-card">
       {/* Logo header — aligned with TopBar breadcrumb row */}
-      <div className="flex items-center gap-2.5 px-3 pb-4 pt-[34px]" data-tauri-drag-region>
+      <div className="flex items-center gap-2.5 px-3 pb-4 pt-[42px]" data-tauri-drag-region>
         <img
           src="/logo.png"
           alt="CrateBay"
