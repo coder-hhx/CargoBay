@@ -507,6 +507,11 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
   );
 }
 
+/** Check whether an image is a CrateBay built-in sandbox image. */
+function isSystemImage(image: LocalImageInfo): boolean {
+  return image.repoTags.some((t) => t.startsWith("cratebay-"));
+}
+
 function LocalImageRow({
   image,
   selected,
@@ -522,6 +527,7 @@ function LocalImageRow({
 }) {
   const { t } = useI18n();
   const mainTag = image.repoTags[0] ?? "<none>";
+  const isBuiltin = isSystemImage(image);
   const additionalTags = image.repoTags.length > 1 ? image.repoTags.length - 1 : 0;
   const createdDate = new Date(image.created * 1000);
 
@@ -535,6 +541,7 @@ function LocalImageRow({
         checked={selected}
         onCheckedChange={onToggleSelect}
         className="flex-shrink-0"
+        disabled={isBuiltin}
       />
 
       {/* Icon */}
@@ -551,6 +558,11 @@ function LocalImageRow({
           {additionalTags > 0 && (
             <Badge variant="outline" className="text-[10px]">
               +{additionalTags} {t("images", "tags")}
+            </Badge>
+          )}
+          {isBuiltin && (
+            <Badge variant="secondary" className="text-[10px]">
+              System
             </Badge>
           )}
         </div>
@@ -572,15 +584,17 @@ function LocalImageRow({
         >
           <Eye className="h-3.5 w-3.5" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-destructive hover:text-destructive"
-          onClick={onRemove}
-          title={t("images", "removeImage")}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        {!isBuiltin && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-destructive hover:text-destructive"
+            onClick={onRemove}
+            title={t("images", "removeImage")}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
     </div>
   );
