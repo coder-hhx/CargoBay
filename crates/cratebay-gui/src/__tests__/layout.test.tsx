@@ -207,6 +207,6 @@ describe("StatusBar", () => {
 
   it("shows version number", () => {
     render(<StatusBar />);
-    expect(screen.getByText("v2.0.0")).toBeInTheDocument();
+    expect(screen.getByText("v0.9.0")).toBeInTheDocument();
   });
 });

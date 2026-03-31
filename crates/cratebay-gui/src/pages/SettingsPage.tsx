@@ -793,7 +793,7 @@ function AboutTab() {
 
       {/* Info rows */}
       <SettingRow label={t("common", "version")}>
-        <span className="text-sm font-mono text-muted-foreground">v2.0.0</span>
+        <span className="text-sm font-mono text-muted-foreground">v0.9.0</span>
       </SettingRow>
 
       <SettingRow label={t("settings", "builtWith")}>
