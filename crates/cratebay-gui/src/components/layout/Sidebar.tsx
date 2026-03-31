@@ -43,7 +43,7 @@ export function Sidebar() {
   return (
     <div className="flex h-full w-full flex-col bg-card">
       {/* Logo header — aligned with TopBar breadcrumb row */}
-      <div className="flex items-center gap-2.5 px-3 pb-[10px] pt-[34px]" data-tauri-drag-region>
+      <div className="flex items-center gap-2.5 px-3 pb-4 pt-[34px]" data-tauri-drag-region>
         <img
           src="/logo.png"
           alt="CrateBay"
@@ -60,7 +60,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation items */}
-      <nav className="flex flex-col gap-1 px-3">
+      <nav className="flex flex-col gap-1 px-3 pt-2">
         {navItems.map((item) => {
           const Icon = item.icon;
           const label = t("nav", item.labelKey);

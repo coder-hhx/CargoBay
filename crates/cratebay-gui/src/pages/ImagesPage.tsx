@@ -226,12 +226,13 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    const visibleIds = filteredImages.map((i) => i.id);
-    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+    const userImages = filteredImages.filter((i) => !isSystemImage(i));
+    const userIds = userImages.map((i) => i.id);
+    const allSelected = userIds.length > 0 && userIds.every((id) => selectedIds.has(id));
     if (allSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(visibleIds));
+      setSelectedIds(new Set(userIds));
     }
   }, [filteredImages, selectedIds]);
 
@@ -256,7 +257,10 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
     setBatchProgress({ done: 0, total: 0, failed: 0 });
   }, [selectedIds, fetchImages]);
 
-  const allVisibleSelected = filteredImages.length > 0 && filteredImages.every((i) => selectedIds.has(i.id));
+  const allVisibleSelected = (() => {
+    const userImages = filteredImages.filter((i) => !isSystemImage(i));
+    return userImages.length > 0 && userImages.every((i) => selectedIds.has(i.id));
+  })();
 
   // Inject toolbar controls into parent
   useEffect(() => {
@@ -334,17 +338,48 @@ function LocalImagesTab({ onRefreshRef, onToolbar }: { onRefreshRef: React.Mutab
           <p className="mt-1 text-xs">{t("images", "noImagesHint")}</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {filteredImages.map((img) => (
-            <LocalImageRow
-              key={img.id}
-              image={img}
-              selected={selectedIds.has(img.id)}
-              onToggleSelect={() => toggleSelect(img.id)}
-              onInspect={() => void handleInspect(img.id)}
-              onRemove={() => setRemoveConfirm(img.id)}
-            />
-          ))}
+        <div className="space-y-4">
+          {/* System images */}
+          {filteredImages.some((i) => isSystemImage(i)) && (
+            <div>
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Sandbox Images
+              </h3>
+              <div className="space-y-2">
+                {filteredImages.filter((i) => isSystemImage(i)).map((img) => (
+                  <LocalImageRow
+                    key={img.id}
+                    image={img}
+                    selected={false}
+                    onToggleSelect={() => {}}
+                    onInspect={() => void handleInspect(img.id)}
+                    onRemove={() => {}}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* User images */}
+          {filteredImages.some((i) => !isSystemImage(i)) && (
+            <div>
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                User Images
+              </h3>
+              <div className="space-y-2">
+                {filteredImages.filter((i) => !isSystemImage(i)).map((img) => (
+                  <LocalImageRow
+                    key={img.id}
+                    image={img}
+                    selected={selectedIds.has(img.id)}
+                    onToggleSelect={() => toggleSelect(img.id)}
+                    onInspect={() => void handleInspect(img.id)}
+                    onRemove={() => setRemoveConfirm(img.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
