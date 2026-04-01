@@ -1,6 +1,6 @@
 # AGENTS.md — CrateBay Project Guide
 
-> **Version**: 0.9.0 | **Branch**: `master` | **Last Updated**: 2026-03-29
+> **Version**: 0.9.0 | **Branch**: `feat/chatpage-v1` | **Last Updated**: 2026-04-01
 >
 > This file is the **entry point** for all AI Agents working on this project.
 > Detailed specs are in `docs/specs/` — load them on-demand based on your task (see Spec Loading Protocol below).
@@ -373,9 +373,9 @@ When a feature is completed, the responsible agent MUST check:
 
 ## Current Development Stage
 
-**Current**: v0.9.0 — MCP Sandbox core complete. Next: ChatPage polish + UI optimization → v1.0.0.
+**Current**: v0.9.0 — ChatPage v1.0 complete (sandbox tools + provider config + UI upgrade). Next: merge to master → v1.0.0.
 
-**Completed**: Phase 1 (docs) + Phase 2 (skeleton + core + frontend + runtime + MCP + tests + GUI polish).
+**Completed**: Phase 1 (docs) + Phase 2 (core + frontend + runtime + MCP + tests) + ChatPage v1.0 (sandbox Agent Tools, provider config, UI components, MCP→Settings merge, system image protection).
 
 See [docs/progress.md](docs/progress.md) for detailed progress and [docs/ROADMAP.md](docs/ROADMAP.md) for the release plan.
 

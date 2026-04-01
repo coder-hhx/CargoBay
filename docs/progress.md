@@ -397,9 +397,9 @@ pnpm run test               → ✅ 4 passed (Vitest)
 
 > **给 AI 的可执行指令** — 新会话启动后读取此段，按步骤执行。
 
-### 当前阶段：ChatPage v1.0 开发（2026-03-30）
+### 当前阶段：ChatPage v1.0 开发（2026-04-01）
 
-**版本**: v0.9.0 → v1.0.0 | **分支**: feat/chatpage-v1 | **定位**: AI 聊天 + 沙盒
+**版本**: v0.9.0 → v1.0.0 | **分支**: feat/chatpage-v1 | **定位**: 开源容器管理 + AI Sandbox
 
 ### ChatPage v1.0 已完成（本次会话 2026-03-30）
 
@@ -427,16 +427,23 @@ pnpm run test               → ✅ 4 passed (Vitest)
 - ✅ 欢迎页改造（代码执行场景建议卡片）
 - ✅ i18n 更新（en + zh-CN）
 
-**Phase D: 测试** ✅
+**Phase D: 测试 + UI 打磨** ✅
 - ✅ cargo test --workspace: 348 passed, 0 failed
 - ✅ pnpm build: 0 errors
 - ✅ cargo check --workspace: clean
+- ✅ MCP 页面合并到 Settings Tab（导航 5→4 页）
+- ✅ 产品定位更新（开源容器管理 + AI Sandbox）
+- ✅ APP_VERSION 修复为 0.9.0
+- ✅ 系统镜像保护（不可删除、不可勾选、System 标签）
+- ✅ 镜像页分区（沙盒镜像 / 用户镜像）+ i18n
+- ✅ Sidebar Logo 间距优化
 
 ### v1.0.0 剩余工作
 
 1. **合并到 master** — feat/chatpage-v1 → master
 2. **跨平台验证** — Linux/Windows 测试
 3. **版本号更新** — 0.9.0 → 1.0.0
+4. **系统镜像打包** — bundle-images tar.gz 打入发布包
 
 ### 可执行步骤
 
